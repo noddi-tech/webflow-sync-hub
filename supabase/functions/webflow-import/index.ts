@@ -85,7 +85,10 @@ async function logSync(
   operation: string,
   status: string,
   entityId?: string,
-  message?: string
+  message?: string,
+  batchId?: string,
+  currentItem?: number,
+  totalItems?: number
 ) {
   await supabase.from("sync_logs").insert({
     entity_type: entityType,
@@ -93,6 +96,9 @@ async function logSync(
     status,
     entity_id: entityId,
     message,
+    batch_id: batchId,
+    current_item: currentItem,
+    total_items: totalItems,
   });
 }
 
@@ -141,6 +147,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const entityType = body.entity_type || "all";
+    const batchId = crypto.randomUUID();
 
     const webflowApiToken = Deno.env.get("WEBFLOW_API_TOKEN");
     if (!webflowApiToken) {
@@ -165,7 +172,7 @@ Deno.serve(async (req) => {
       ]);
 
     const settingsMap: Record<string, string> = {};
-    settings?.forEach((s) => {
+    settings?.forEach((s: { key: string; value: string }) => {
       settingsMap[s.key] = s.value || "";
     });
 
@@ -193,6 +200,21 @@ Deno.serve(async (req) => {
         const items = await fetchAllCollectionItems(collectionId, webflowApiToken);
         console.log(`Found ${items.length} ${entity} items`);
 
+        // Log progress start
+        await logSync(
+          supabase,
+          entity,
+          "progress",
+          "in_progress",
+          undefined,
+          `Starting import of ${items.length} items`,
+          batchId,
+          0,
+          items.length
+        );
+
+        let processedCount = 0;
+
         for (const item of items) {
           const fieldData = item.fieldData;
           let upsertData: Record<string, unknown>;
@@ -214,7 +236,7 @@ Deno.serve(async (req) => {
                 .from("cities")
                 .select("id")
                 .eq("webflow_item_id", cityWebflowId)
-                .single();
+                .maybeSingle();
               cityId = city?.id;
             }
 
@@ -226,8 +248,10 @@ Deno.serve(async (req) => {
                 "import",
                 "skipped",
                 item.id,
-                `No matching city for webflow_id: ${cityWebflowId}`
+                `No matching city for webflow_id: ${cityWebflowId}`,
+                batchId
               );
+              processedCount++;
               continue;
             }
 
@@ -248,7 +272,7 @@ Deno.serve(async (req) => {
                 .from("districts")
                 .select("id")
                 .eq("webflow_item_id", districtWebflowId)
-                .single();
+                .maybeSingle();
               districtId = district?.id;
             }
 
@@ -260,8 +284,10 @@ Deno.serve(async (req) => {
                 "import",
                 "skipped",
                 item.id,
-                `No matching district for webflow_id: ${districtWebflowId}`
+                `No matching district for webflow_id: ${districtWebflowId}`,
+                batchId
               );
+              processedCount++;
               continue;
             }
 
@@ -291,7 +317,7 @@ Deno.serve(async (req) => {
             .from(entity)
             .select("id")
             .eq("webflow_item_id", item.id)
-            .single();
+            .maybeSingle();
 
           if (existing) {
             await supabase.from(entity).update(upsertData).eq("id", existing.id);
@@ -300,7 +326,22 @@ Deno.serve(async (req) => {
           }
 
           imported[entity]++;
-          await logSync(supabase, entity, "import", "success", item.id);
+          processedCount++;
+
+          // Log progress every 5 items
+          if (processedCount % 5 === 0 || processedCount === items.length) {
+            await logSync(
+              supabase,
+              entity,
+              "progress",
+              "in_progress",
+              undefined,
+              `Imported ${processedCount} of ${items.length}`,
+              batchId,
+              processedCount,
+              items.length
+            );
+          }
         }
 
         // Handle partner_areas for partners
@@ -313,7 +354,7 @@ Deno.serve(async (req) => {
               .from("partners")
               .select("id")
               .eq("webflow_item_id", item.id)
-              .single();
+              .maybeSingle();
 
             if (!partner) continue;
 
@@ -326,7 +367,7 @@ Deno.serve(async (req) => {
                 .from("areas")
                 .select("id")
                 .eq("webflow_item_id", areaWebflowId)
-                .single();
+                .maybeSingle();
 
               if (area) {
                 await supabase.from("partner_areas").insert({
@@ -337,6 +378,19 @@ Deno.serve(async (req) => {
             }
           }
         }
+
+        // Log entity completion
+        await logSync(
+          supabase,
+          entity,
+          "import",
+          "completed",
+          undefined,
+          `Imported ${imported[entity]} items`,
+          batchId,
+          items.length,
+          items.length
+        );
       } catch (error) {
         console.error(`Error importing ${entity}:`, error);
         await logSync(
@@ -345,12 +399,24 @@ Deno.serve(async (req) => {
           "import",
           "error",
           undefined,
-          error instanceof Error ? error.message : "Unknown error"
+          error instanceof Error ? error.message : "Unknown error",
+          batchId
         );
       }
     }
 
-    return new Response(JSON.stringify({ success: true, imported }), {
+    // Log batch completion
+    await logSync(
+      supabase,
+      "batch",
+      "batch_complete",
+      "completed",
+      undefined,
+      `Import completed`,
+      batchId
+    );
+
+    return new Response(JSON.stringify({ success: true, imported, batchId }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {

@@ -9,6 +9,7 @@ import {
   Users,
   Settings,
   LogOut,
+  History,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ const navigation = [
   { name: "Districts", href: "/districts", icon: Map },
   { name: "Areas", href: "/areas", icon: Layers },
   { name: "Partners", href: "/partners", icon: Users },
+  { name: "Sync History", href: "/sync-history", icon: History },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 

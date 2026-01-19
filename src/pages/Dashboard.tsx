@@ -1,14 +1,38 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Map, Layers, Users, RefreshCw, Upload, Loader2 } from "lucide-react";
+import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
+
+type EntityType = "all" | "cities" | "districts" | "areas" | "partners";
+
+const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
+  { value: "all", label: "All Entities" },
+  { value: "cities", label: "Cities" },
+  { value: "districts", label: "Districts" },
+  { value: "areas", label: "Areas" },
+  { value: "partners", label: "Partners" },
+];
 
 export default function Dashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  const [progressOpen, setProgressOpen] = useState(false);
+  const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+  const [currentOperation, setCurrentOperation] = useState<"import" | "sync">("import");
+  const [currentEntities, setCurrentEntities] = useState<string[]>([]);
 
   const { data: counts, isLoading } = useQuery({
     queryKey: ["entity-counts"],
@@ -42,22 +66,36 @@ export default function Dashboard() {
           "webflow_partners_collection_id",
         ]);
       
-      const configured = data?.filter((s) => s.value && s.value.trim() !== "");
+      const configured: Record<string, boolean> = {};
+      data?.forEach((s) => {
+        const entityType = s.key.replace("webflow_", "").replace("_collection_id", "");
+        configured[entityType] = Boolean(s.value && s.value.trim() !== "");
+      });
+      
       return {
-        hasCollectionIds: (configured?.length ?? 0) > 0,
-        configuredCount: configured?.length ?? 0,
+        hasCollectionIds: Object.values(configured).some(Boolean),
+        configuredEntities: configured,
       };
     },
   });
 
   const importMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (entityType: EntityType) => {
       const { data, error } = await supabase.functions.invoke("webflow-import", {
-        body: { entity_type: "all" },
+        body: { entity_type: entityType },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       return data;
+    },
+    onMutate: (entityType) => {
+      const entities = entityType === "all" 
+        ? ["cities", "districts", "areas", "partners"]
+        : [entityType];
+      setCurrentEntities(entities);
+      setCurrentOperation("import");
+      setCurrentBatchId(crypto.randomUUID());
+      setProgressOpen(true);
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
@@ -71,22 +109,35 @@ export default function Dashboard() {
       });
     },
     onError: (error: Error) => {
+      setProgressOpen(false);
       toast({
         title: "Import Failed",
         description: error.message,
         variant: "destructive",
       });
     },
+    onSettled: () => {
+      setTimeout(() => setProgressOpen(false), 1500);
+    },
   });
 
   const syncMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (entityType: EntityType) => {
       const { data, error } = await supabase.functions.invoke("webflow-sync", {
-        body: { entity_type: "all" },
+        body: { entity_type: entityType },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       return data;
+    },
+    onMutate: (entityType) => {
+      const entities = entityType === "all" 
+        ? ["cities", "districts", "areas", "partners"]
+        : [entityType];
+      setCurrentEntities(entities);
+      setCurrentOperation("sync");
+      setCurrentBatchId(crypto.randomUUID());
+      setProgressOpen(true);
     },
     onSuccess: (data) => {
       const synced = data.synced as Record<string, { created: number; updated: number }>;
@@ -98,11 +149,15 @@ export default function Dashboard() {
       });
     },
     onError: (error: Error) => {
+      setProgressOpen(false);
       toast({
         title: "Sync Failed",
         description: error.message,
         variant: "destructive",
       });
+    },
+    onSettled: () => {
+      setTimeout(() => setProgressOpen(false), 1500);
     },
   });
 
@@ -114,7 +169,13 @@ export default function Dashboard() {
   ];
 
   const isConfigured = settings?.hasCollectionIds ?? false;
+  const configuredEntities = settings?.configuredEntities ?? {};
   const isSyncing = importMutation.isPending || syncMutation.isPending;
+
+  const isEntityConfigured = (entity: EntityType) => {
+    if (entity === "all") return isConfigured;
+    return configuredEntities[entity] ?? false;
+  };
 
   return (
     <div className="p-8">
@@ -155,17 +216,35 @@ export default function Dashboard() {
             <p className="text-muted-foreground mb-4">
               Pull existing data from your Webflow CMS collections into the local database.
             </p>
-            <Button
-              onClick={() => importMutation.mutate()}
-              disabled={!isConfigured || isSyncing}
-            >
-              {importMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Upload className="mr-2 h-4 w-4" />
-              )}
-              Import Data
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button disabled={!isConfigured || isSyncing}>
+                  {importMutation.isPending ? (
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Upload className="mr-2 h-4 w-4" />
+                  )}
+                  Import Data
+                  <ChevronDown className="ml-2 h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                {ENTITY_OPTIONS.map((option, index) => (
+                  <div key={option.value}>
+                    {index === 1 && <DropdownMenuSeparator />}
+                    <DropdownMenuItem
+                      onClick={() => importMutation.mutate(option.value)}
+                      disabled={!isEntityConfigured(option.value)}
+                    >
+                      {option.label}
+                      {!isEntityConfigured(option.value) && option.value !== "all" && (
+                        <span className="ml-2 text-xs text-muted-foreground">(not configured)</span>
+                      )}
+                    </DropdownMenuItem>
+                  </div>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             {!isConfigured && (
               <p className="text-xs text-muted-foreground mt-2">
                 Configure Webflow collection IDs in Settings first
@@ -185,17 +264,35 @@ export default function Dashboard() {
             <p className="text-muted-foreground mb-4">
               Push local changes to your Webflow CMS collections.
             </p>
-            <Button
-              onClick={() => syncMutation.mutate()}
-              disabled={!isConfigured || isSyncing}
-            >
-              {syncMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="mr-2 h-4 w-4" />
-              )}
-              Sync Changes
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button disabled={!isConfigured || isSyncing}>
+                  {syncMutation.isPending ? (
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  Sync Changes
+                  <ChevronDown className="ml-2 h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                {ENTITY_OPTIONS.map((option, index) => (
+                  <div key={option.value}>
+                    {index === 1 && <DropdownMenuSeparator />}
+                    <DropdownMenuItem
+                      onClick={() => syncMutation.mutate(option.value)}
+                      disabled={!isEntityConfigured(option.value)}
+                    >
+                      {option.label}
+                      {!isEntityConfigured(option.value) && option.value !== "all" && (
+                        <span className="ml-2 text-xs text-muted-foreground">(not configured)</span>
+                      )}
+                    </DropdownMenuItem>
+                  </div>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             {!isConfigured && (
               <p className="text-xs text-muted-foreground mt-2">
                 Configure Webflow collection IDs in Settings first
@@ -204,6 +301,17 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <SyncProgressDialog
+        open={progressOpen}
+        onOpenChange={setProgressOpen}
+        batchId={currentBatchId}
+        operation={currentOperation}
+        entities={currentEntities}
+        onComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
+        }}
+      />
     </div>
   );
 }
