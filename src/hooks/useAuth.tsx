@@ -16,12 +16,21 @@ export function useAuth() {
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          // Check admin role using the has_role function
-          const { data } = await supabase.rpc('has_role', {
-            _user_id: session.user.id,
-            _role: 'admin'
-          });
-          setIsAdmin(data === true);
+          try {
+            const { data, error } = await supabase.rpc('has_role', {
+              _user_id: session.user.id,
+              _role: 'admin'
+            });
+            if (error) {
+              console.error('Error checking admin role:', error);
+              setIsAdmin(false);
+            } else {
+              setIsAdmin(data === true);
+            }
+          } catch (err) {
+            console.error('Error checking admin role:', err);
+            setIsAdmin(false);
+          }
         } else {
           setIsAdmin(false);
         }
@@ -30,22 +39,14 @@ export function useAuth() {
       }
     );
 
-    // Get initial session
+    // Get initial session - only handle no-session case
+    // onAuthStateChange will fire for session cases
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        supabase.rpc('has_role', {
-          _user_id: session.user.id,
-          _role: 'admin'
-        }).then(({ data }) => {
-          setIsAdmin(data === true);
-          setIsLoading(false);
-        });
-      } else {
+      if (!session) {
         setIsLoading(false);
       }
+    }).catch(() => {
+      setIsLoading(false);
     });
 
     return () => subscription.unsubscribe();
