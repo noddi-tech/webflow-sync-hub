@@ -233,31 +233,40 @@ export type Database = {
       }
       sync_logs: {
         Row: {
+          batch_id: string | null
           created_at: string
+          current_item: number | null
           entity_id: string | null
           entity_type: string
           id: string
           message: string | null
           operation: string
           status: string
+          total_items: number | null
         }
         Insert: {
+          batch_id?: string | null
           created_at?: string
+          current_item?: number | null
           entity_id?: string | null
           entity_type: string
           id?: string
           message?: string | null
           operation: string
           status: string
+          total_items?: number | null
         }
         Update: {
+          batch_id?: string | null
           created_at?: string
+          current_item?: number | null
           entity_id?: string | null
           entity_type?: string
           id?: string
           message?: string | null
           operation?: string
           status?: string
+          total_items?: number | null
         }
         Relationships: []
       }
