@@ -22,8 +22,8 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-export const Sidebar = React.forwardRef<HTMLDivElement>(
-  (props, ref) => {
+export const Sidebar = React.forwardRef<HTMLDivElement, object>(
+  function Sidebar(props, ref) {
     const location = useLocation();
     const { signOut, user } = useAuth();
 
