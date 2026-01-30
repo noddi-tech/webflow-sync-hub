@@ -1,59 +1,151 @@
 
+# System Health Dashboard with Automated Validation
 
-# Add "Fix All" Button and Improve Validation UI
+## Overview
 
-## Current State
+Transform the current modal-based Webflow validation into a persistent **System Health** dashboard that:
+1. Displays health status directly on the Dashboard (no modal)
+2. Stores validation results in the database for history and cron access
+3. Runs automatically via a daily cron job
+4. Provides actionable "Add to Mapping" buttons for unmapped extra fields
+5. Shows data completeness metrics (e.g., how many records have SEO fields populated)
 
-All 7 collections show **"Ready"** status, meaning the field mappings are correctly aligned. The "Extra Fields in Webflow (not mapped)" shown (like `districts-2`, `areas-2`, `noindex` in Cities) are simply fields that exist in Webflow but aren't used by our system - they're informational, not errors.
+## Architecture
 
-## Proposed Enhancement
+```text
++------------------+     +---------------------+     +------------------+
+|   Dashboard UI   | --> | webflow-validate    | --> | system_health    |
+|  (Health Panel)  |     | (Edge Function)     |     | (DB Table)       |
++------------------+     +---------------------+     +------------------+
+                                   ^
+                                   |
+                         +-------------------+
+                         | pg_cron (Daily)   |
+                         +-------------------+
+```
 
-Add a "Fix All" button that appears when there are issues, with the ability to:
-1. Auto-add missing fields to the expected mappings (for unmapped Webflow fields you want to use)
-2. Provide clearer guidance on what actions are needed
+## Implementation Plan
 
-## Implementation Details
+### Phase 1: Database Schema
 
-### 1. Update ValidationResultsDialog UI
+Create a new `system_health` table to store validation results and data completeness metrics.
 
-- Add a "Map Extra Fields" button for collections with unmapped Webflow fields (if user wants to use them)
-- Add an info tooltip explaining that "Extra Fields" are harmless and just informational
-- Add a "Suggest Mapping" feature that generates the code needed to add a field to the expected mappings
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID | Primary key |
+| check_type | TEXT | 'webflow_validation', 'data_completeness', etc. |
+| status | TEXT | 'healthy', 'warning', 'error' |
+| results | JSONB | Full validation results |
+| summary | JSONB | Quick summary stats |
+| checked_at | TIMESTAMP | When the check ran |
+| triggered_by | TEXT | 'cron', 'manual' |
 
-### 2. Improve Field Status Display
+### Phase 2: Update webflow-validate Edge Function
 
-- Make it clearer that "Extra Fields" are not errors
-- Add a visual indicator showing which fields are being actively used vs. ignored
-- Group fields by: Mapped & Found, Mapped & Missing, Unmapped in Webflow
+Modify to optionally store results in the `system_health` table and support being called without authentication (for cron).
 
-### 3. Add "Add to Mapping" Action (Future)
+- Add `store_results: boolean` parameter
+- Add `triggered_by: 'manual' | 'cron'` parameter
+- Insert results into `system_health` table when `store_results=true`
+- Add data completeness checks (count records with null SEO fields)
 
-For collections with "Missing Fields" status, provide a way to either:
-- Add the missing field to Webflow (external action with instructions)
-- Remove the field from expected mappings (if it's not needed)
+### Phase 3: Create System Health Dashboard Component
 
-## Files to Modify
+Replace the modal dialog with an inline dashboard panel showing:
 
-| File | Changes |
-|------|---------|
-| `src/components/settings/ValidationResultsDialog.tsx` | Add info tooltip for extra fields, improve grouping, add action buttons |
+- **Collection Status Cards**: 7 cards showing each collection's health status
+- **Data Completeness Metrics**: % of records with SEO fields populated per entity
+- **Last Check Time**: When validation last ran
+- **Manual Trigger Button**: Run validation now
+- **Expandable Details**: Click to see field-level details for each collection
 
-## Why Extra Fields Exist
+### Phase 4: Add "Map This Field" Functionality
 
-Based on your Webflow collections, here's what those "extra" fields are:
+For each "Extra Field in Webflow", add a button that:
+1. Shows what code change is needed
+2. Copies the field slug to clipboard
+3. Opens instructions for adding to EXPECTED_FIELDS
 
-| Collection | Extra Field | Likely Purpose |
-|------------|-------------|----------------|
-| Cities | `districts-2` | Reverse reference to Districts collection |
-| Cities | `areas-2` | Reverse reference to Areas collection |
-| Cities | `noindex` | SEO setting (could be added to mapping if needed) |
+### Phase 5: Set Up Daily Cron Job
 
-These fields are **not causing any issues** - they're simply not being imported/synced by our system. If you want to use any of them, we can add them to the expected mappings.
+Configure pg_cron to call the validation function daily at a specified time.
 
-## Implementation
+## Files to Create/Modify
 
-Would you like me to:
-1. Add an info message explaining that "Extra Fields" are harmless
-2. Add a "Map This Field" action button for extra fields that generates the code to add them
-3. Add a "Fix All" button that appears only when there are actual missing required fields
+| File | Action | Purpose |
+|------|--------|---------|
+| `src/components/health/SystemHealthPanel.tsx` | Create | Main health dashboard component |
+| `src/components/health/CollectionHealthCard.tsx` | Create | Individual collection status card |
+| `src/components/health/DataCompletenessCard.tsx` | Create | Data completeness metrics |
+| `src/pages/Dashboard.tsx` | Modify | Add SystemHealthPanel to dashboard |
+| `supabase/functions/webflow-validate/index.ts` | Modify | Add DB storage and completeness checks |
+| `supabase/functions/webflow-health-cron/index.ts` | Create | Cron-callable health check function |
+| Database migration | Create | Add system_health table |
 
+## UI Design
+
+The System Health panel will appear on the Dashboard below the entity stats:
+
+```text
++-------------------------------------------------------+
+| System Health                    Last check: 2 min ago |
+|                                    [Run Check Now]     |
++-------------------------------------------------------+
+| Collection Mappings                                    |
+| +----------+ +----------+ +----------+ +----------+   |
+| | Cities   | |Districts | | Areas    | |Services  |   |
+| | Ready    | | Ready    | | Ready    | | Ready    |   |
+| | 10 flds  | | 11 flds  | | 12 flds  | | 10 flds  |   |
+| +----------+ +----------+ +----------+ +----------+   |
+|                                                        |
+| Data Completeness                                      |
+| +--------------------------------------------------+  |
+| | SEO Titles      [=============     ] 78% complete|  |
+| | Meta Desc       [===========       ] 65% complete|  |
+| | Intro Content   [========          ] 45% complete|  |
+| +--------------------------------------------------+  |
+|                                                        |
+| Extra Webflow Fields (not mapped - safe to ignore)    |
+| [ districts-2 ] [ areas-2 ] [ noindex ] [+3 more]     |
+| [Map Selected Fields]                                  |
++-------------------------------------------------------+
+```
+
+## Data Completeness Checks
+
+Query each entity table to calculate:
+
+| Metric | Query Logic |
+|--------|-------------|
+| SEO Title Coverage | `COUNT(*) WHERE seo_title IS NOT NULL / COUNT(*)` |
+| Meta Description Coverage | `COUNT(*) WHERE seo_meta_description IS NOT NULL / COUNT(*)` |
+| Intro Content Coverage | `COUNT(*) WHERE intro IS NOT NULL / COUNT(*)` |
+| Localized Fields | `COUNT(*) WHERE name_en IS NOT NULL / COUNT(*)` |
+
+These percentages help identify which data needs attention before syncing to Webflow.
+
+## Cron Job Setup
+
+After the migration, a SQL command will be run to set up the daily cron job:
+
+```sql
+SELECT cron.schedule(
+  'daily-system-health-check',
+  '0 6 * * *', -- Run at 6 AM daily
+  $$
+  SELECT net.http_post(
+    url:='https://aqnrvcjctfjocrpmknho.supabase.co/functions/v1/webflow-health-cron',
+    headers:='{"Content-Type": "application/json", "Authorization": "Bearer <anon_key>"}'::jsonb,
+    body:='{}'::jsonb
+  ) as request_id;
+  $$
+);
+```
+
+## Benefits
+
+1. **Visibility**: Health status is always visible on the Dashboard
+2. **Historical Data**: Track health over time via database records
+3. **Automated Monitoring**: Daily cron catches issues before they become problems
+4. **Actionable Insights**: Clear guidance on what fields need mapping or data
+5. **Data Quality**: Completeness metrics show where content is missing
