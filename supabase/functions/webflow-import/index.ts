@@ -6,18 +6,25 @@ const corsHeaders = {
 };
 
 const WEBFLOW_API_BASE = "https://api.webflow.com/v2";
-const RATE_LIMIT_DELAY = 900; // 900ms between requests
+const RATE_LIMIT_DELAY = 900;
 const MAX_RETRIES = 5;
 
 const LOCALES = {
-  norsk: "64e4857c2f099414c700c890",
-  english: "66f270e0051d1b43823c01d9",
-  svensk: "66f270e0051d1b43823c01da",
+  no: "64e4857c2f099414c700c890",
+  en: "66f270e0051d1b43823c01d9",
+  sv: "66f270e0051d1b43823c01da",
 };
 
 interface WebflowItem {
   id: string;
   fieldData: Record<string, unknown>;
+}
+
+interface LocalizedRecord {
+  id: string;
+  no: Record<string, unknown>;
+  en: Record<string, unknown>;
+  sv: Record<string, unknown>;
 }
 
 async function delay(ms: number): Promise<void> {
@@ -44,7 +51,8 @@ async function rateLimitedFetch(
 
 async function fetchAllCollectionItems(
   collectionId: string,
-  apiToken: string
+  apiToken: string,
+  localeId: string
 ): Promise<WebflowItem[]> {
   const items: WebflowItem[] = [];
   let offset = 0;
@@ -52,7 +60,7 @@ async function fetchAllCollectionItems(
   let hasMore = true;
 
   while (hasMore) {
-    const url = `${WEBFLOW_API_BASE}/collections/${collectionId}/items?offset=${offset}&limit=${limit}&locale=${LOCALES.norsk}`;
+    const url = `${WEBFLOW_API_BASE}/collections/${collectionId}/items?offset=${offset}&limit=${limit}&locale=${localeId}`;
     const response = await rateLimitedFetch(url, {
       method: "GET",
       headers: {
@@ -79,6 +87,33 @@ async function fetchAllCollectionItems(
   return items;
 }
 
+async function fetchLocalizedItems(
+  collectionId: string,
+  apiToken: string
+): Promise<Map<string, LocalizedRecord>> {
+  const localizedMap = new Map<string, LocalizedRecord>();
+
+  for (const [locale, localeId] of Object.entries(LOCALES)) {
+    console.log(`Fetching ${locale} locale items...`);
+    const items = await fetchAllCollectionItems(collectionId, apiToken, localeId);
+    
+    for (const item of items) {
+      if (!localizedMap.has(item.id)) {
+        localizedMap.set(item.id, {
+          id: item.id,
+          no: {},
+          en: {},
+          sv: {},
+        });
+      }
+      const record = localizedMap.get(item.id)!;
+      record[locale as keyof Pick<LocalizedRecord, 'no' | 'en' | 'sv'>] = item.fieldData;
+    }
+  }
+
+  return localizedMap;
+}
+
 async function logSync(
   supabase: any,
   entityType: string,
@@ -102,6 +137,29 @@ async function logSync(
   });
 }
 
+function getLocalizedField(
+  record: LocalizedRecord,
+  fieldName: string,
+  locale: 'no' | 'en' | 'sv'
+): unknown {
+  return record[locale]?.[fieldName];
+}
+
+function getString(value: unknown): string | null {
+  if (typeof value === 'string') return value || null;
+  return null;
+}
+
+function getBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  return null;
+}
+
+function getNumber(value: unknown): number | null {
+  if (typeof value === 'number') return value;
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -122,7 +180,6 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    // Verify JWT and check admin role
     const token = authHeader.replace("Bearer ", "");
     const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
     if (claimsError || !claimsData?.claims) {
@@ -160,11 +217,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch collection IDs from settings
     const { data: settings } = await supabase
       .from("settings")
       .select("key, value")
       .in("key", [
+        "webflow_service_categories_collection_id",
+        "webflow_services_collection_id",
         "webflow_cities_collection_id",
         "webflow_districts_collection_id",
         "webflow_areas_collection_id",
@@ -177,19 +235,24 @@ Deno.serve(async (req) => {
     });
 
     const imported: Record<string, number> = {
+      service_categories: 0,
+      services: 0,
       cities: 0,
       districts: 0,
       areas: 0,
       partners: 0,
     };
 
-    const entitiesToImport =
-      entityType === "all"
-        ? ["cities", "districts", "areas", "partners"]
-        : [entityType];
+    // Import order is critical for references
+    const allEntities = ["service_categories", "services", "cities", "districts", "areas", "partners"];
+    const entitiesToImport = entityType === "all" ? allEntities : [entityType];
 
     for (const entity of entitiesToImport) {
-      const collectionId = settingsMap[`webflow_${entity}_collection_id`];
+      const collectionKey = entity === "service_categories" 
+        ? "webflow_service_categories_collection_id"
+        : `webflow_${entity}_collection_id`;
+      const collectionId = settingsMap[collectionKey];
+      
       if (!collectionId) {
         console.log(`Skipping ${entity}: no collection ID configured`);
         continue;
@@ -197,39 +260,120 @@ Deno.serve(async (req) => {
 
       try {
         console.log(`Importing ${entity} from collection ${collectionId}...`);
-        const items = await fetchAllCollectionItems(collectionId, webflowApiToken);
-        console.log(`Found ${items.length} ${entity} items`);
+        const localizedItems = await fetchLocalizedItems(collectionId, webflowApiToken);
+        console.log(`Found ${localizedItems.size} ${entity} items`);
 
-        // Log progress start
         await logSync(
           supabase,
           entity,
           "progress",
           "in_progress",
           undefined,
-          `Starting import of ${items.length} items`,
+          `Starting import of ${localizedItems.size} items`,
           batchId,
           0,
-          items.length
+          localizedItems.size
         );
 
         let processedCount = 0;
 
-        for (const item of items) {
-          const fieldData = item.fieldData;
+        for (const [webflowId, record] of localizedItems) {
+          const noData = record.no;
+          const enData = record.en;
+          const svData = record.sv;
+          
           let upsertData: Record<string, unknown>;
 
-          if (entity === "cities") {
+          if (entity === "service_categories") {
             upsertData = {
-              webflow_item_id: item.id,
-              name: fieldData.name || "",
-              slug: fieldData.slug || "",
-              short_description: fieldData["short-description"] || null,
-              is_delivery: fieldData["is-delivery"] ?? null,
+              webflow_item_id: webflowId,
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              name: getString(noData.name) || "",
+              name_en: getString(enData.name),
+              name_sv: getString(svData.name),
+              slug: getString(noData.slug) || "",
+              slug_en: getString(enData.slug),
+              slug_sv: getString(svData.slug),
+              description: getString(noData.description),
+              description_en: getString(enData.description),
+              description_sv: getString(svData.description),
+              seo_title: getString(noData["seo-title"]),
+              seo_title_en: getString(enData["seo-title"]),
+              seo_title_sv: getString(svData["seo-title"]),
+              seo_meta_description: getString(noData["seo-meta-description"]),
+              seo_meta_description_en: getString(enData["seo-meta-description"]),
+              seo_meta_description_sv: getString(svData["seo-meta-description"]),
+              intro: getString(noData.intro),
+              intro_en: getString(enData.intro),
+              intro_sv: getString(svData.intro),
+              icon_url: getString(noData["icon-url"]),
+              sort_order: getNumber(noData["sort-order"]) ?? 0,
+              active: getBoolean(noData.active) ?? true,
+            };
+          } else if (entity === "services") {
+            // Look up service_category_id
+            const categoryWebflowId = noData["service-category"] || noData.category;
+            let serviceCategoryId = null;
+            if (categoryWebflowId) {
+              const { data: cat } = await supabase
+                .from("service_categories")
+                .select("id")
+                .eq("webflow_item_id", categoryWebflowId)
+                .maybeSingle();
+              serviceCategoryId = cat?.id;
+            }
+
+            upsertData = {
+              webflow_item_id: webflowId,
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              service_category_id: serviceCategoryId,
+              name: getString(noData.name) || "",
+              name_en: getString(enData.name),
+              name_sv: getString(svData.name),
+              slug: getString(noData.slug) || "",
+              slug_en: getString(enData.slug),
+              slug_sv: getString(svData.slug),
+              description: getString(noData.description),
+              description_en: getString(enData.description),
+              description_sv: getString(svData.description),
+              seo_title: getString(noData["seo-title"]),
+              seo_title_en: getString(enData["seo-title"]),
+              seo_title_sv: getString(svData["seo-title"]),
+              seo_meta_description: getString(noData["seo-meta-description"]),
+              seo_meta_description_en: getString(enData["seo-meta-description"]),
+              seo_meta_description_sv: getString(svData["seo-meta-description"]),
+              intro: getString(noData.intro),
+              intro_en: getString(enData.intro),
+              intro_sv: getString(svData.intro),
+              icon_url: getString(noData["icon-url"]),
+              sort_order: getNumber(noData["sort-order"]) ?? 0,
+              active: getBoolean(noData.active) ?? true,
+            };
+          } else if (entity === "cities") {
+            upsertData = {
+              webflow_item_id: webflowId,
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              name: getString(noData.name) || "",
+              name_en: getString(enData.name),
+              name_sv: getString(svData.name),
+              slug: getString(noData.slug) || "",
+              slug_en: getString(enData.slug),
+              slug_sv: getString(svData.slug),
+              short_description: getString(noData["short-description"]),
+              is_delivery: getBoolean(noData["is-delivery"]),
+              seo_title: getString(noData["seo-title"]),
+              seo_title_en: getString(enData["seo-title"]),
+              seo_title_sv: getString(svData["seo-title"]),
+              seo_meta_description: getString(noData["seo-meta-description"]),
+              seo_meta_description_en: getString(enData["seo-meta-description"]),
+              seo_meta_description_sv: getString(svData["seo-meta-description"]),
+              intro: getString(noData.intro),
+              intro_en: getString(enData.intro),
+              intro_sv: getString(svData.intro),
+              sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.7,
             };
           } else if (entity === "districts") {
-            // For districts, we need to look up the city_id by webflow_item_id
-            const cityWebflowId = fieldData.city;
+            const cityWebflowId = noData.city;
             let cityId = null;
             if (cityWebflowId) {
               const { data: city } = await supabase
@@ -241,86 +385,135 @@ Deno.serve(async (req) => {
             }
 
             if (!cityId) {
-              console.log(`Skipping district ${fieldData.name}: no matching city found`);
-              await logSync(
-                supabase,
-                entity,
-                "import",
-                "skipped",
-                item.id,
-                `No matching city for webflow_id: ${cityWebflowId}`,
-                batchId
-              );
+              console.log(`Skipping district ${noData.name}: no matching city found`);
+              await logSync(supabase, entity, "import", "skipped", webflowId, `No matching city`, batchId);
               processedCount++;
               continue;
             }
 
             upsertData = {
-              webflow_item_id: item.id,
-              name: fieldData.name || "",
-              slug: fieldData.slug || "",
-              short_description: fieldData["short-description"] || null,
-              is_delivery: fieldData["is-delivery"] ?? null,
+              webflow_item_id: webflowId,
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
               city_id: cityId,
+              name: getString(noData.name) || "",
+              name_en: getString(enData.name),
+              name_sv: getString(svData.name),
+              slug: getString(noData.slug) || "",
+              slug_en: getString(enData.slug),
+              slug_sv: getString(svData.slug),
+              short_description: getString(noData["short-description"]),
+              is_delivery: getBoolean(noData["is-delivery"]),
+              seo_title: getString(noData["seo-title"]),
+              seo_title_en: getString(enData["seo-title"]),
+              seo_title_sv: getString(svData["seo-title"]),
+              seo_meta_description: getString(noData["seo-meta-description"]),
+              seo_meta_description_en: getString(enData["seo-meta-description"]),
+              seo_meta_description_sv: getString(svData["seo-meta-description"]),
+              intro: getString(noData.intro),
+              intro_en: getString(enData.intro),
+              intro_sv: getString(svData.intro),
+              sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.6,
             };
           } else if (entity === "areas") {
-            // For areas, we need to look up the district_id by webflow_item_id
-            const districtWebflowId = fieldData.district;
+            const districtWebflowId = noData.district;
             let districtId = null;
+            let cityId = null;
+            
             if (districtWebflowId) {
               const { data: district } = await supabase
                 .from("districts")
-                .select("id")
+                .select("id, city_id")
                 .eq("webflow_item_id", districtWebflowId)
                 .maybeSingle();
               districtId = district?.id;
+              cityId = district?.city_id;
             }
 
             if (!districtId) {
-              console.log(`Skipping area ${fieldData.name}: no matching district found`);
-              await logSync(
-                supabase,
-                entity,
-                "import",
-                "skipped",
-                item.id,
-                `No matching district for webflow_id: ${districtWebflowId}`,
-                batchId
-              );
+              console.log(`Skipping area ${noData.name}: no matching district found`);
+              await logSync(supabase, entity, "import", "skipped", webflowId, `No matching district`, batchId);
               processedCount++;
               continue;
             }
 
             upsertData = {
-              webflow_item_id: item.id,
-              name: fieldData.name || "",
-              slug: fieldData.slug || "",
-              short_description: fieldData["short-description"] || null,
-              is_delivery: fieldData["is-delivery"] ?? null,
+              webflow_item_id: webflowId,
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
               district_id: districtId,
+              city_id: cityId,
+              name: getString(noData.name) || "",
+              name_en: getString(enData.name),
+              name_sv: getString(svData.name),
+              slug: getString(noData.slug) || "",
+              slug_en: getString(enData.slug),
+              slug_sv: getString(svData.slug),
+              short_description: getString(noData["short-description"]),
+              is_delivery: getBoolean(noData["is-delivery"]),
+              seo_title: getString(noData["seo-title"]),
+              seo_title_en: getString(enData["seo-title"]),
+              seo_title_sv: getString(svData["seo-title"]),
+              seo_meta_description: getString(noData["seo-meta-description"]),
+              seo_meta_description_en: getString(enData["seo-meta-description"]),
+              seo_meta_description_sv: getString(svData["seo-meta-description"]),
+              intro: getString(noData.intro),
+              intro_en: getString(enData.intro),
+              intro_sv: getString(svData.intro),
+              sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.5,
             };
           } else if (entity === "partners") {
             upsertData = {
-              webflow_item_id: item.id,
-              name: fieldData.name || "",
-              slug: fieldData.slug || "",
-              email: fieldData.email || null,
-              phone: fieldData.phone || null,
-              address: fieldData.address || null,
+              webflow_item_id: webflowId,
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              name: getString(noData.name) || "",
+              name_en: getString(enData.name),
+              name_sv: getString(svData.name),
+              slug: getString(noData.slug) || "",
+              slug_en: getString(enData.slug),
+              slug_sv: getString(svData.slug),
+              email: getString(noData.email),
+              phone: getString(noData.phone),
+              address: getString(noData.address),
+              description: getString(noData.description),
+              description_en: getString(enData.description),
+              description_sv: getString(svData.description),
+              description_summary: getString(noData["description-summary"]),
+              heading_text: getString(noData["heading-text"]),
+              logo_url: getString(noData["logo-url"]) || getString(noData.logo),
+              noddi_logo_url: getString(noData["noddi-logo-url"]),
+              website_url: getString(noData["website-url"]) || getString(noData.website),
+              instagram_url: getString(noData["instagram-url"]),
+              facebook_url: getString(noData["facebook-url"]),
+              rating: getNumber(noData.rating),
+              active: getBoolean(noData.active) ?? true,
             };
           } else {
             continue;
           }
 
-          // Upsert by webflow_item_id
-          const { data: existing } = await supabase
-            .from(entity)
-            .select("id")
-            .eq("webflow_item_id", item.id)
-            .maybeSingle();
+          // Upsert: first try by shared_key, then by webflow_item_id
+          const sharedKey = upsertData.shared_key as string | null;
+          let existingId: string | null = null;
+          
+          if (sharedKey) {
+            const { data: bySharedKey } = await supabase
+              .from(entity)
+              .select("id")
+              .eq("shared_key", sharedKey)
+              .maybeSingle();
+            existingId = bySharedKey?.id;
+          }
+          
+          if (!existingId) {
+            const { data: byWebflowId } = await supabase
+              .from(entity)
+              .select("id")
+              .eq("webflow_item_id", webflowId)
+              .maybeSingle();
+            existingId = byWebflowId?.id;
+          }
 
-          if (existing) {
-            await supabase.from(entity).update(upsertData).eq("id", existing.id);
+          if (existingId) {
+            await supabase.from(entity).update(upsertData).eq("id", existingId);
           } else {
             await supabase.from(entity).insert(upsertData);
           }
@@ -328,58 +521,100 @@ Deno.serve(async (req) => {
           imported[entity]++;
           processedCount++;
 
-          // Log progress every 5 items
-          if (processedCount % 5 === 0 || processedCount === items.length) {
+          if (processedCount % 5 === 0 || processedCount === localizedItems.size) {
             await logSync(
               supabase,
               entity,
               "progress",
               "in_progress",
               undefined,
-              `Imported ${processedCount} of ${items.length}`,
+              `Imported ${processedCount} of ${localizedItems.size}`,
               batchId,
               processedCount,
-              items.length
+              localizedItems.size
             );
           }
         }
 
-        // Handle partner_areas for partners
+        // Handle junction tables for partners
         if (entity === "partners") {
-          for (const item of items) {
-            const areaWebflowIds = item.fieldData.areas as string[] | undefined;
-            if (!areaWebflowIds?.length) continue;
-
+          for (const [webflowId, record] of localizedItems) {
+            const noData = record.no;
+            
             const { data: partner } = await supabase
               .from("partners")
               .select("id")
-              .eq("webflow_item_id", item.id)
+              .eq("webflow_item_id", webflowId)
               .maybeSingle();
 
             if (!partner) continue;
 
-            // Delete existing partner_areas
-            await supabase.from("partner_areas").delete().eq("partner_id", partner.id);
+            // Handle partner_areas
+            const areaWebflowIds = noData.areas as string[] | undefined;
+            if (areaWebflowIds?.length) {
+              await supabase.from("partner_areas").delete().eq("partner_id", partner.id);
+              for (const areaWebflowId of areaWebflowIds) {
+                const { data: area } = await supabase
+                  .from("areas")
+                  .select("id")
+                  .eq("webflow_item_id", areaWebflowId)
+                  .maybeSingle();
+                if (area) {
+                  await supabase.from("partner_areas").insert({ partner_id: partner.id, area_id: area.id });
+                }
+              }
+            }
 
-            // Insert new partner_areas
-            for (const areaWebflowId of areaWebflowIds) {
-              const { data: area } = await supabase
-                .from("areas")
-                .select("id")
-                .eq("webflow_item_id", areaWebflowId)
-                .maybeSingle();
+            // Handle partner_cities
+            const cityWebflowIds = noData.cities as string[] | undefined;
+            if (cityWebflowIds?.length) {
+              await supabase.from("partner_cities").delete().eq("partner_id", partner.id);
+              for (const cityWebflowId of cityWebflowIds) {
+                const { data: city } = await supabase
+                  .from("cities")
+                  .select("id")
+                  .eq("webflow_item_id", cityWebflowId)
+                  .maybeSingle();
+                if (city) {
+                  await supabase.from("partner_cities").insert({ partner_id: partner.id, city_id: city.id });
+                }
+              }
+            }
 
-              if (area) {
-                await supabase.from("partner_areas").insert({
-                  partner_id: partner.id,
-                  area_id: area.id,
-                });
+            // Handle partner_districts
+            const districtWebflowIds = noData.districts as string[] | undefined;
+            if (districtWebflowIds?.length) {
+              await supabase.from("partner_districts").delete().eq("partner_id", partner.id);
+              for (const districtWebflowId of districtWebflowIds) {
+                const { data: district } = await supabase
+                  .from("districts")
+                  .select("id")
+                  .eq("webflow_item_id", districtWebflowId)
+                  .maybeSingle();
+                if (district) {
+                  await supabase.from("partner_districts").insert({ partner_id: partner.id, district_id: district.id });
+                }
+              }
+            }
+
+            // Handle partner_services
+            const serviceWebflowIds = noData.services as string[] | undefined;
+            if (serviceWebflowIds?.length) {
+              await supabase.from("partner_services").delete().eq("partner_id", partner.id);
+              for (const serviceWebflowId of serviceWebflowIds) {
+                const { data: service } = await supabase
+                  .from("services")
+                  .select("id")
+                  .eq("webflow_item_id", serviceWebflowId)
+                  .maybeSingle();
+                if (service) {
+                  await supabase.from("partner_services").insert({ partner_id: partner.id, service_id: service.id });
+                }
               }
             }
           }
         }
 
-        // Log entity completion
         await logSync(
           supabase,
           entity,
@@ -388,8 +623,8 @@ Deno.serve(async (req) => {
           undefined,
           `Imported ${imported[entity]} items`,
           batchId,
-          items.length,
-          items.length
+          localizedItems.size,
+          localizedItems.size
         );
       } catch (error) {
         console.error(`Error importing ${entity}:`, error);
@@ -405,7 +640,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Log batch completion
     await logSync(
       supabase,
       "batch",
