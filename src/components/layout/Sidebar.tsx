@@ -10,6 +10,8 @@ import {
   Settings,
   LogOut,
   History,
+  FolderTree,
+  Wrench,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -19,6 +21,8 @@ const navigation = [
   { name: "Cities", href: "/cities", icon: MapPin },
   { name: "Districts", href: "/districts", icon: Map },
   { name: "Areas", href: "/areas", icon: Layers },
+  { name: "Service Categories", href: "/service-categories", icon: FolderTree },
+  { name: "Services", href: "/services", icon: Wrench },
   { name: "Partners", href: "/partners", icon: Users },
   { name: "Sync History", href: "/sync-history", icon: History },
   { name: "Settings", href: "/settings", icon: Settings },
