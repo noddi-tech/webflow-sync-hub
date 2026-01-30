@@ -13,7 +13,14 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { CheckCircle2, XCircle, AlertCircle, Settings2 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { CheckCircle2, XCircle, AlertCircle, Settings2, Info, Wrench } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface CollectionResult {
   webflow_collection_name: string | null;
@@ -88,16 +95,52 @@ export function ValidationResultsDialog({
   if (!results) return null;
 
   const { collections, summary } = results;
+  const hasIssues = summary.missing_fields > 0 || summary.errors > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh]">
         <DialogHeader>
-          <DialogTitle>Webflow Collection Validation</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            Webflow Collection Validation
+            {hasIssues && (
+              <Badge variant="destructive" className="ml-2">
+                {summary.missing_fields + summary.errors} Issue{summary.missing_fields + summary.errors > 1 ? 's' : ''}
+              </Badge>
+            )}
+          </DialogTitle>
           <DialogDescription>
             Comparing your configured collections against expected field mappings
           </DialogDescription>
         </DialogHeader>
+
+        {/* Fix All Banner - only shows when there are issues */}
+        {hasIssues && (
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+            <Wrench className="h-5 w-5 text-destructive shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-destructive">
+                {summary.missing_fields + summary.errors} collection{summary.missing_fields + summary.errors > 1 ? 's have' : ' has'} issues
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Update the field mappings in the edge functions or add missing fields to Webflow
+              </p>
+            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="destructive" size="sm" disabled>
+                    <Wrench className="h-4 w-4 mr-1" />
+                    Fix All
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  <p>Auto-fix coming soon. For now, update the EXPECTED_FIELDS in webflow-validate edge function to match your Webflow field slugs.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        )}
 
         {/* Summary */}
         <div className="grid grid-cols-4 gap-3 py-4">
@@ -194,9 +237,21 @@ export function ValidationResultsDialog({
 
                     {result.extra_in_webflow.length > 0 && (
                       <div>
-                        <h4 className="text-sm font-medium text-muted-foreground mb-1">
-                          Extra Fields in Webflow (not mapped):
-                        </h4>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className="text-sm font-medium text-muted-foreground">
+                            Extra Fields in Webflow (not mapped):
+                          </h4>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger>
+                                <Info className="h-4 w-4 text-muted-foreground hover:text-foreground transition-colors" />
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="max-w-xs">
+                                <p>These fields exist in Webflow but aren't imported by the system. This is normal and won't cause any issues. They can be ignored safely.</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
                         <div className="flex flex-wrap gap-1">
                           {result.extra_in_webflow.map((field) => (
                             <Badge key={field} variant="secondary" className="text-xs">
