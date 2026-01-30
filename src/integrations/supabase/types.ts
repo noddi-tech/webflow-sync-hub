@@ -995,6 +995,39 @@ export type Database = {
         }
         Relationships: []
       }
+      system_health: {
+        Row: {
+          check_type: string
+          checked_at: string
+          created_at: string
+          id: string
+          results: Json | null
+          status: string
+          summary: Json | null
+          triggered_by: string
+        }
+        Insert: {
+          check_type: string
+          checked_at?: string
+          created_at?: string
+          id?: string
+          results?: Json | null
+          status: string
+          summary?: Json | null
+          triggered_by?: string
+        }
+        Update: {
+          check_type?: string
+          checked_at?: string
+          created_at?: string
+          id?: string
+          results?: Json | null
+          status?: string
+          summary?: Json | null
+          triggered_by?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string

@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
+import { SystemHealthPanel } from "@/components/health/SystemHealthPanel";
 
 type EntityType = "all" | "service_categories" | "services" | "cities" | "districts" | "areas" | "partners" | "service_locations";
 
@@ -224,6 +225,9 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+
+      {/* System Health Panel */}
+      <SystemHealthPanel />
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

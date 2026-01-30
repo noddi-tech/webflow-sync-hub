@@ -106,6 +106,17 @@ const COLLECTION_SETTINGS_MAP: Record<string, string> = {
   service_locations: "webflow_service_locations_collection_id",
 };
 
+// Entity tables to check for data completeness
+const ENTITY_TABLES = [
+  "cities",
+  "districts", 
+  "areas",
+  "service_categories",
+  "services",
+  "partners",
+  "service_locations",
+];
+
 interface CollectionValidationResult {
   webflow_collection_name: string | null;
   collection_id: string | null;
@@ -123,6 +134,15 @@ interface WebflowField {
   type: string;
   isRequired: boolean;
   displayName: string;
+}
+
+interface DataCompletenessStats {
+  total: number;
+  seo_title: number;
+  seo_meta_description: number;
+  intro: number;
+  name_en: number;
+  name_sv: number;
 }
 
 async function fetchCollectionSchema(
@@ -151,6 +171,92 @@ async function fetchCollectionSchema(
   };
 }
 
+async function fetchDataCompleteness(
+  supabase: any
+): Promise<Record<string, DataCompletenessStats>> {
+  const results: Record<string, DataCompletenessStats> = {};
+
+  for (const table of ENTITY_TABLES) {
+    try {
+      // Get total count
+      const { count: total } = await supabase
+        .from(table)
+        .select("*", { count: "exact", head: true });
+
+      if (total === null || total === 0) {
+        results[table] = {
+          total: 0,
+          seo_title: 0,
+          seo_meta_description: 0,
+          intro: 0,
+          name_en: 0,
+          name_sv: 0,
+        };
+        continue;
+      }
+
+      // Determine the correct column names based on table
+      const seoTitleCol = table === "service_locations" ? "seo_title" : "seo_title";
+      const seoMetaCol = table === "service_locations" ? "seo_meta_description" : "seo_meta_description";
+      const introCol = table === "service_locations" ? "hero_content" : "intro";
+      const nameEnCol = table === "service_locations" ? "seo_title_en" : "name_en";
+      const nameSvCol = table === "service_locations" ? "seo_title_sv" : "name_sv";
+
+      // Get counts for each field
+      const { count: seoTitle } = await supabase
+        .from(table)
+        .select("*", { count: "exact", head: true })
+        .not(seoTitleCol, "is", null)
+        .neq(seoTitleCol, "");
+
+      const { count: seoMeta } = await supabase
+        .from(table)
+        .select("*", { count: "exact", head: true })
+        .not(seoMetaCol, "is", null)
+        .neq(seoMetaCol, "");
+
+      const { count: intro } = await supabase
+        .from(table)
+        .select("*", { count: "exact", head: true })
+        .not(introCol, "is", null)
+        .neq(introCol, "");
+
+      const { count: nameEn } = await supabase
+        .from(table)
+        .select("*", { count: "exact", head: true })
+        .not(nameEnCol, "is", null)
+        .neq(nameEnCol, "");
+
+      const { count: nameSv } = await supabase
+        .from(table)
+        .select("*", { count: "exact", head: true })
+        .not(nameSvCol, "is", null)
+        .neq(nameSvCol, "");
+
+      results[table] = {
+        total: total ?? 0,
+        seo_title: seoTitle ?? 0,
+        seo_meta_description: seoMeta ?? 0,
+        intro: intro ?? 0,
+        name_en: nameEn ?? 0,
+        name_sv: nameSv ?? 0,
+      };
+    } catch (error) {
+      console.error(`Error fetching completeness for ${table}:`, error);
+      results[table] = {
+        total: 0,
+        seo_title: 0,
+        seo_meta_description: 0,
+        intro: 0,
+        name_en: 0,
+        name_sv: 0,
+      };
+    }
+  }
+
+  return results;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -168,6 +274,18 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Parse request body
+    let storeResults = false;
+    let triggeredBy = "manual";
+    
+    try {
+      const body = await req.json();
+      storeResults = body?.store_results ?? false;
+      triggeredBy = body?.triggered_by ?? "manual";
+    } catch {
+      // No body or invalid JSON, use defaults
+    }
 
     // Fetch all settings
     const { data: settings, error: settingsError } = await supabase
@@ -263,8 +381,42 @@ serve(async (req) => {
       errors: Object.values(results).filter((r) => r.status === "error").length,
     };
 
+    // Fetch data completeness
+    const dataCompleteness = await fetchDataCompleteness(supabase);
+
+    // Determine overall status
+    let overallStatus: "healthy" | "warning" | "error" = "healthy";
+    if (summary.errors > 0) {
+      overallStatus = "error";
+    } else if (summary.missing_fields > 0 || summary.not_configured > 0) {
+      overallStatus = "warning";
+    }
+
+    const responseData = {
+      collections: results,
+      summary,
+      data_completeness: dataCompleteness,
+    };
+
+    // Store results if requested
+    if (storeResults) {
+      const { error: insertError } = await supabase
+        .from("system_health")
+        .insert({
+          check_type: "webflow_validation",
+          status: overallStatus,
+          results: responseData,
+          summary: summary,
+          triggered_by: triggeredBy,
+        });
+
+      if (insertError) {
+        console.error("Failed to store health check results:", insertError);
+      }
+    }
+
     return new Response(
-      JSON.stringify({ collections: results, summary }),
+      JSON.stringify(responseData),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
