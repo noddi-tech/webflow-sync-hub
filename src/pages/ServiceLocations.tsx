@@ -43,6 +43,7 @@ interface ServiceLocation {
 }
 
 export default function ServiceLocations() {
+  const ALL = "__all__";
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filterService, setFilterService] = useState<string>("");
@@ -193,24 +194,30 @@ export default function ServiceLocations() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Select value={filterService} onValueChange={setFilterService}>
+            <Select
+              value={filterService || ALL}
+              onValueChange={(v) => setFilterService(v === ALL ? "" : v)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="All Services" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All Services</SelectItem>
+                <SelectItem value={ALL}>All Services</SelectItem>
                 {services?.map((s) => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
-            <Select value={filterCity} onValueChange={setFilterCity}>
+            <Select
+              value={filterCity || ALL}
+              onValueChange={(v) => setFilterCity(v === ALL ? "" : v)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="All Cities" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All Cities</SelectItem>
+                <SelectItem value={ALL}>All Cities</SelectItem>
                 {cities?.map((c) => (
                   <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                 ))}
