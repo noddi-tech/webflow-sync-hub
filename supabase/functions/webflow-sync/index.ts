@@ -650,38 +650,38 @@ async function syncServiceLocationsToWebflow(
       .map((slp: any) => slp.partners?.webflow_item_id)
       .filter(Boolean);
     
-    // Build localized field data
+    // Build localized field data - using actual Webflow field slugs
     const localizedFields = buildLocalizedFields(sl, {
       slug: "slug",
-      seo_title: "seo-title",
-      seo_meta_description: "seo-meta-description",
-      hero_content: "hero-content",
-      canonical_url: "canonical-url",
-      structured_data_json: "structured-data-json"
+      seo_title: "seo-title-2",
+      seo_meta_description: "seo-meta-description-2",
+      hero_content: "hero-intro-content-2",
+      canonical_url: "canonical-path-2",
+      structured_data_json: "json-ld-structured-data-2"
     });
     
     // Build base field data (Norwegian + non-localized fields)
     const baseFieldData: Record<string, unknown> = {
       ...localizedFields.no,
-      "sitemap-priority": sl.sitemap_priority ?? 0.5,
-      "noindex": sl.noindex ?? false,
+      "sitemap-priority-2": sl.sitemap_priority ?? 0.5,
+      "noindex-2": sl.noindex ?? false,
     };
     
-    // Add references
+    // Add references using actual Webflow field slugs
     if (sl.services?.webflow_item_id) {
       baseFieldData["service"] = sl.services.webflow_item_id;
     }
     if (sl.cities?.webflow_item_id) {
-      baseFieldData["city"] = sl.cities.webflow_item_id;
+      baseFieldData["city-2"] = sl.cities.webflow_item_id;
     }
     if (sl.districts?.webflow_item_id) {
-      baseFieldData["district"] = sl.districts.webflow_item_id;
+      baseFieldData["district-2"] = sl.districts.webflow_item_id;
     }
     if (sl.areas?.webflow_item_id) {
-      baseFieldData["area"] = sl.areas.webflow_item_id;
+      baseFieldData["area-2"] = sl.areas.webflow_item_id;
     }
     if (partnerWebflowIds.length > 0) {
-      baseFieldData["partners"] = partnerWebflowIds;
+      baseFieldData["partners-2"] = partnerWebflowIds;
     }
     
     const itemId = sl.id as string;
@@ -904,10 +904,9 @@ Deno.serve(async (req) => {
           fieldMappings = {
             name: "name",
             slug: "slug",
-            description: "description",
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
-            intro: "intro",
+            intro: "intro-content",
           };
         } else if (entity === "services") {
           const { data } = await supabase
@@ -917,10 +916,9 @@ Deno.serve(async (req) => {
           fieldMappings = {
             name: "name",
             slug: "slug",
-            description: "description",
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
-            intro: "intro",
+            intro: "service-intro-seo",
           };
         } else if (entity === "cities") {
           const { data } = await supabase.from("cities").select("*");
@@ -930,7 +928,7 @@ Deno.serve(async (req) => {
             slug: "slug",
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
-            intro: "intro",
+            intro: "intro-content",
           };
         } else if (entity === "districts") {
           const { data } = await supabase
@@ -942,7 +940,7 @@ Deno.serve(async (req) => {
             slug: "slug",
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
-            intro: "intro",
+            intro: "intro-content",
           };
         } else if (entity === "areas") {
           const { data } = await supabase
@@ -954,7 +952,7 @@ Deno.serve(async (req) => {
             slug: "slug",
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
-            intro: "intro",
+            intro: "intro-content",
           };
         } else if (entity === "partners") {
           const { data } = await supabase
@@ -970,7 +968,7 @@ Deno.serve(async (req) => {
           fieldMappings = {
             name: "name",
             slug: "slug",
-            description: "description",
+            description: "client-information",
           };
         }
 
@@ -996,31 +994,25 @@ Deno.serve(async (req) => {
           // Build base field data (non-localized fields + Norwegian as primary)
           let baseFieldData: Record<string, unknown> = { ...localizedFields.no };
           
-          // Add non-localized fields based on entity type
+          // Add non-localized fields based on entity type - using actual Webflow slugs
           if (entity === "service_categories") {
-            baseFieldData["shared-key"] = item.shared_key || item.slug;
-            baseFieldData["icon-url"] = item.icon_url || "";
+            baseFieldData["shared-key-service-category"] = item.shared_key || item.slug;
+            baseFieldData["icon"] = item.icon_url || "";
             baseFieldData["sort-order"] = item.sort_order ?? 0;
             baseFieldData["active"] = item.active ?? true;
           } else if (entity === "services") {
             const categoryWebflowId = (item as any).service_categories?.webflow_item_id;
-            baseFieldData["shared-key"] = item.shared_key || item.slug;
-            baseFieldData["icon-url"] = item.icon_url || "";
+            baseFieldData["icon"] = item.icon_url || "";
             baseFieldData["sort-order"] = item.sort_order ?? 0;
-            baseFieldData["active"] = item.active ?? true;
             if (categoryWebflowId) {
               baseFieldData["service-category"] = categoryWebflowId;
             }
           } else if (entity === "cities") {
-            baseFieldData["shared-key"] = item.shared_key || item.slug;
-            baseFieldData["short-description"] = item.short_description || "";
-            baseFieldData["is-delivery"] = item.is_delivery ?? false;
+            baseFieldData["shared-key-city"] = item.shared_key || item.slug;
             baseFieldData["sitemap-priority"] = item.sitemap_priority ?? 0.7;
           } else if (entity === "districts") {
             const cityWebflowId = (item as any).cities?.webflow_item_id;
-            baseFieldData["shared-key"] = item.shared_key || item.slug;
-            baseFieldData["short-description"] = item.short_description || "";
-            baseFieldData["is-delivery"] = item.is_delivery ?? false;
+            baseFieldData["shared-key-district"] = item.shared_key || item.slug;
             baseFieldData["sitemap-priority"] = item.sitemap_priority ?? 0.6;
             if (cityWebflowId) {
               baseFieldData["city"] = cityWebflowId;
@@ -1028,15 +1020,13 @@ Deno.serve(async (req) => {
           } else if (entity === "areas") {
             const districtWebflowId = (item as any).districts?.webflow_item_id;
             const cityWebflowId = (item as any).cities?.webflow_item_id;
-            baseFieldData["shared-key"] = item.shared_key || item.slug;
-            baseFieldData["short-description"] = item.short_description || "";
-            baseFieldData["is-delivery"] = item.is_delivery ?? false;
+            baseFieldData["shared-key-area"] = item.shared_key || item.slug;
             baseFieldData["sitemap-priority"] = item.sitemap_priority ?? 0.5;
             if (districtWebflowId) {
               baseFieldData["district"] = districtWebflowId;
             }
             if (cityWebflowId) {
-              baseFieldData["city"] = cityWebflowId;
+              baseFieldData["city-2"] = cityWebflowId;
             }
           } else if (entity === "partners") {
             const areaWebflowIds = ((item as any).partner_areas || [])
@@ -1045,31 +1035,24 @@ Deno.serve(async (req) => {
             const cityWebflowIds = ((item as any).partner_cities || [])
               .map((pc: any) => pc.cities?.webflow_item_id)
               .filter(Boolean);
-            const districtWebflowIds = ((item as any).partner_districts || [])
-              .map((pd: any) => pd.districts?.webflow_item_id)
-              .filter(Boolean);
             const serviceWebflowIds = ((item as any).partner_services || [])
               .map((ps: any) => ps.services?.webflow_item_id)
               .filter(Boolean);
             
-            baseFieldData["shared-key"] = item.shared_key || item.slug;
+            baseFieldData["shared-key-partner"] = item.shared_key || item.slug;
             baseFieldData["email"] = item.email || "";
-            baseFieldData["phone"] = item.phone || "";
-            baseFieldData["address"] = item.address || "";
-            baseFieldData["description-summary"] = item.description_summary || "";
+            baseFieldData["phone-number"] = item.phone || "";
+            baseFieldData["client-information-summary"] = item.description_summary || "";
             baseFieldData["heading-text"] = item.heading_text || "";
-            baseFieldData["logo-url"] = item.logo_url || "";
-            baseFieldData["noddi-logo-url"] = item.noddi_logo_url || "";
-            baseFieldData["website-url"] = item.website_url || "";
-            baseFieldData["instagram-url"] = item.instagram_url || "";
-            baseFieldData["facebook-url"] = item.facebook_url || "";
-            baseFieldData["rating"] = item.rating ?? 0;
-            baseFieldData["active"] = item.active ?? true;
+            baseFieldData["client-logo"] = item.logo_url || "";
+            baseFieldData["noddi-logo"] = item.noddi_logo_url || "";
+            baseFieldData["website-link"] = item.website_url || "";
+            baseFieldData["facebook-link"] = item.facebook_url || "";
+            baseFieldData["partner-active"] = item.active ?? true;
             
-            if (areaWebflowIds.length) baseFieldData["areas"] = areaWebflowIds;
-            if (cityWebflowIds.length) baseFieldData["cities"] = cityWebflowIds;
-            if (districtWebflowIds.length) baseFieldData["districts"] = districtWebflowIds;
-            if (serviceWebflowIds.length) baseFieldData["services"] = serviceWebflowIds;
+            if (areaWebflowIds.length) baseFieldData["service-areas-optional"] = areaWebflowIds;
+            if (cityWebflowIds.length) baseFieldData["primary-city"] = cityWebflowIds;
+            if (serviceWebflowIds.length) baseFieldData["services-provided"] = serviceWebflowIds;
           }
 
           const itemId = item.id as string;

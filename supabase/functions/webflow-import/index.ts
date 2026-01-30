@@ -286,26 +286,26 @@ Deno.serve(async (req) => {
           if (entity === "service_categories") {
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              shared_key: getString(noData["shared-key-service-category"]) || getString(noData.slug),
               name: getString(noData.name) || "",
               name_en: getString(enData.name),
               name_sv: getString(svData.name),
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              description: getString(noData.description),
-              description_en: getString(enData.description),
-              description_sv: getString(svData.description),
+              description: null, // Not present in Webflow
+              description_en: null,
+              description_sv: null,
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
               seo_meta_description: getString(noData["seo-meta-description"]),
               seo_meta_description_en: getString(enData["seo-meta-description"]),
               seo_meta_description_sv: getString(svData["seo-meta-description"]),
-              intro: getString(noData.intro),
-              intro_en: getString(enData.intro),
-              intro_sv: getString(svData.intro),
-              icon_url: getString(noData["icon-url"]),
+              intro: getString(noData["intro-content"]),
+              intro_en: getString(enData["intro-content"]),
+              intro_sv: getString(svData["intro-content"]),
+              icon_url: getString(noData["icon"]),
               sort_order: getNumber(noData["sort-order"]) ?? 0,
               active: getBoolean(noData.active) ?? true,
             };
@@ -324,7 +324,7 @@ Deno.serve(async (req) => {
 
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              shared_key: getString(noData.slug), // shared-key not present in Webflow services
               service_category_id: serviceCategoryId,
               name: getString(noData.name) || "",
               name_en: getString(enData.name),
@@ -332,43 +332,43 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              description: getString(noData.description),
-              description_en: getString(enData.description),
-              description_sv: getString(svData.description),
+              description: null, // Not present in Webflow
+              description_en: null,
+              description_sv: null,
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
               seo_meta_description: getString(noData["seo-meta-description"]),
               seo_meta_description_en: getString(enData["seo-meta-description"]),
               seo_meta_description_sv: getString(svData["seo-meta-description"]),
-              intro: getString(noData.intro),
-              intro_en: getString(enData.intro),
-              intro_sv: getString(svData.intro),
-              icon_url: getString(noData["icon-url"]),
+              intro: getString(noData["service-intro-seo"]),
+              intro_en: getString(enData["service-intro-seo"]),
+              intro_sv: getString(svData["service-intro-seo"]),
+              icon_url: getString(noData["icon"]),
               sort_order: getNumber(noData["sort-order"]) ?? 0,
-              active: getBoolean(noData.active) ?? true,
+              active: true, // Not present in Webflow, default to true
             };
           } else if (entity === "cities") {
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              shared_key: getString(noData["shared-key-city"]) || getString(noData.slug),
               name: getString(noData.name) || "",
               name_en: getString(enData.name),
               name_sv: getString(svData.name),
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              short_description: getString(noData["short-description"]),
-              is_delivery: getBoolean(noData["is-delivery"]),
+              short_description: null, // Not present in Webflow
+              is_delivery: null, // Not present in Webflow
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
               seo_meta_description: getString(noData["seo-meta-description"]),
               seo_meta_description_en: getString(enData["seo-meta-description"]),
               seo_meta_description_sv: getString(svData["seo-meta-description"]),
-              intro: getString(noData.intro),
-              intro_en: getString(enData.intro),
-              intro_sv: getString(svData.intro),
+              intro: getString(noData["intro-content"]),
+              intro_en: getString(enData["intro-content"]),
+              intro_sv: getString(svData["intro-content"]),
               sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.7,
             };
           } else if (entity === "districts") {
@@ -392,7 +392,7 @@ Deno.serve(async (req) => {
 
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              shared_key: getString(noData["shared-key-district"]) || getString(noData.slug),
               city_id: cityId,
               name: getString(noData.name) || "",
               name_en: getString(enData.name),
@@ -400,17 +400,17 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              short_description: getString(noData["short-description"]),
-              is_delivery: getBoolean(noData["is-delivery"]),
+              short_description: null, // Not present in Webflow
+              is_delivery: null, // Not present in Webflow
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
               seo_meta_description: getString(noData["seo-meta-description"]),
               seo_meta_description_en: getString(enData["seo-meta-description"]),
               seo_meta_description_sv: getString(svData["seo-meta-description"]),
-              intro: getString(noData.intro),
-              intro_en: getString(enData.intro),
-              intro_sv: getString(svData.intro),
+              intro: getString(noData["intro-content"]),
+              intro_en: getString(enData["intro-content"]),
+              intro_sv: getString(svData["intro-content"]),
               sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.6,
             };
           } else if (entity === "areas") {
@@ -428,6 +428,17 @@ Deno.serve(async (req) => {
               cityId = district?.city_id;
             }
 
+            // Also check city-2 reference if present
+            const cityWebflowId = noData["city-2"];
+            if (cityWebflowId && !cityId) {
+              const { data: city } = await supabase
+                .from("cities")
+                .select("id")
+                .eq("webflow_item_id", cityWebflowId)
+                .maybeSingle();
+              cityId = city?.id;
+            }
+
             if (!districtId) {
               console.log(`Skipping area ${noData.name}: no matching district found`);
               await logSync(supabase, entity, "import", "skipped", webflowId, `No matching district`, batchId);
@@ -437,7 +448,7 @@ Deno.serve(async (req) => {
 
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              shared_key: getString(noData["shared-key-area"]) || getString(noData.slug),
               district_id: districtId,
               city_id: cityId,
               name: getString(noData.name) || "",
@@ -446,23 +457,23 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              short_description: getString(noData["short-description"]),
-              is_delivery: getBoolean(noData["is-delivery"]),
+              short_description: null, // Not present in Webflow
+              is_delivery: null, // Not present in Webflow
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
               seo_meta_description: getString(noData["seo-meta-description"]),
               seo_meta_description_en: getString(enData["seo-meta-description"]),
               seo_meta_description_sv: getString(svData["seo-meta-description"]),
-              intro: getString(noData.intro),
-              intro_en: getString(enData.intro),
-              intro_sv: getString(svData.intro),
+              intro: getString(noData["intro-content"]),
+              intro_en: getString(enData["intro-content"]),
+              intro_sv: getString(svData["intro-content"]),
               sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.5,
             };
           } else if (entity === "partners") {
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
+              shared_key: getString(noData["shared-key-partner"]) || getString(noData.slug),
               name: getString(noData.name) || "",
               name_en: getString(enData.name),
               name_sv: getString(svData.name),
@@ -470,20 +481,20 @@ Deno.serve(async (req) => {
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
               email: getString(noData.email),
-              phone: getString(noData.phone),
-              address: getString(noData.address),
-              description: getString(noData.description),
-              description_en: getString(enData.description),
-              description_sv: getString(svData.description),
-              description_summary: getString(noData["description-summary"]),
+              phone: getString(noData["phone-number"]),
+              address: null, // Not present in Webflow
+              description: getString(noData["client-information"]),
+              description_en: getString(enData["client-information"]),
+              description_sv: getString(svData["client-information"]),
+              description_summary: getString(noData["client-information-summary"]),
               heading_text: getString(noData["heading-text"]),
-              logo_url: getString(noData["logo-url"]) || getString(noData.logo),
-              noddi_logo_url: getString(noData["noddi-logo-url"]),
-              website_url: getString(noData["website-url"]) || getString(noData.website),
-              instagram_url: getString(noData["instagram-url"]),
-              facebook_url: getString(noData["facebook-url"]),
-              rating: getNumber(noData.rating),
-              active: getBoolean(noData.active) ?? true,
+              logo_url: getString(noData["client-logo"]),
+              noddi_logo_url: getString(noData["noddi-logo"]),
+              website_url: getString(noData["website-link"]),
+              instagram_url: null, // Not present in Webflow
+              facebook_url: getString(noData["facebook-link"]),
+              rating: null, // Not present in Webflow
+              active: getBoolean(noData["partner-active"]) ?? true,
             };
           } else {
             continue;
@@ -548,8 +559,8 @@ Deno.serve(async (req) => {
 
             if (!partner) continue;
 
-            // Handle partner_areas
-            const areaWebflowIds = noData.areas as string[] | undefined;
+            // Handle partner_areas (field: service-areas-optional)
+            const areaWebflowIds = noData["service-areas-optional"] as string[] | undefined;
             if (areaWebflowIds?.length) {
               await supabase.from("partner_areas").delete().eq("partner_id", partner.id);
               for (const areaWebflowId of areaWebflowIds) {
@@ -564,8 +575,8 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Handle partner_cities
-            const cityWebflowIds = noData.cities as string[] | undefined;
+            // Handle partner_cities (field: primary-city)
+            const cityWebflowIds = noData["primary-city"] as string[] | undefined;
             if (cityWebflowIds?.length) {
               await supabase.from("partner_cities").delete().eq("partner_id", partner.id);
               for (const cityWebflowId of cityWebflowIds) {
@@ -580,24 +591,10 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Handle partner_districts
-            const districtWebflowIds = noData.districts as string[] | undefined;
-            if (districtWebflowIds?.length) {
-              await supabase.from("partner_districts").delete().eq("partner_id", partner.id);
-              for (const districtWebflowId of districtWebflowIds) {
-                const { data: district } = await supabase
-                  .from("districts")
-                  .select("id")
-                  .eq("webflow_item_id", districtWebflowId)
-                  .maybeSingle();
-                if (district) {
-                  await supabase.from("partner_districts").insert({ partner_id: partner.id, district_id: district.id });
-                }
-              }
-            }
+            // Note: partner_districts not present in Webflow - skipping
 
-            // Handle partner_services
-            const serviceWebflowIds = noData.services as string[] | undefined;
+            // Handle partner_services (field: services-provided)
+            const serviceWebflowIds = noData["services-provided"] as string[] | undefined;
             if (serviceWebflowIds?.length) {
               await supabase.from("partner_services").delete().eq("partner_id", partner.id);
               for (const serviceWebflowId of serviceWebflowIds) {
