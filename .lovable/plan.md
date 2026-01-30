@@ -1,217 +1,121 @@
 
 
-# Webflow Collection Field Validation & Data Population Strategy
+# Fix Field Mapping Mismatches
 
-## Current Situation
+## The Problem
 
-Your system has field mappings defined in the edge functions, but before populating data you're right that we should verify these match your actual Webflow collections. There are two approaches:
+The validation found that your Webflow collections use different field slugs than what our system expects. This is a naming mismatch, not missing fields. For example:
 
----
+| Our Expected Slug | Your Webflow Slug |
+|-------------------|-------------------|
+| `shared-key` | `shared-key-city`, `shared-key-district`, etc. |
+| `intro` | `intro-content` |
+| `logo-url` | `client-logo` |
+| `city` | `city-2` (in some collections) |
 
-## Recommended Approach: Add a "Validate Collections" Feature
+## Recommended Solution
 
-### What It Does
-Create a new edge function that fetches the actual field schema from each Webflow collection and compares it against what we expect. This gives you a clear report before importing/syncing.
+Update the `EXPECTED_FIELDS` mapping in `webflow-validate/index.ts` and the corresponding field mappings in `webflow-import/index.ts` and `webflow-sync/index.ts` to match your actual Webflow field slugs.
 
-### How It Works
-1. Call Webflow API endpoint `GET /collections/{collection_id}` for each configured collection
-2. Extract the `fields` array which contains all field slugs, types, and whether they're required
-3. Compare against our expected field mappings
-4. Return a report showing:
-   - Fields we expect that exist in Webflow (ready)
-   - Fields we expect that are MISSING in Webflow (need to add in Webflow)
-   - Fields in Webflow we don't map (optional/unused)
+## Field Mapping Corrections
 
----
+Based on the validation results, here are the corrections needed:
 
-## Implementation Plan
+### Cities Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `shared-key` | `shared-key-city` | Update mapping |
+| `intro` | `intro-content` | Update mapping |
+| `short-description` | (not present) | Remove from expected |
+| `is-delivery` | (not present) | Remove from expected |
 
-### Step 1: Create New Edge Function - `webflow-validate`
-A new function that fetches collection schemas from Webflow and validates field mappings.
+### Districts Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `shared-key` | `shared-key-district` | Update mapping |
+| `intro` | `intro-content` | Update mapping |
+| `short-description` | (not present) | Remove from expected |
+| `is-delivery` | (not present) | Remove from expected |
 
-```text
-Expected output format:
-{
-  "collections": {
-    "cities": {
-      "webflow_collection_name": "Cities",
-      "status": "ok" | "missing_fields" | "not_configured",
-      "expected_fields": ["name", "slug", "seo-title", ...],
-      "found_fields": ["name", "slug", ...],
-      "missing_in_webflow": ["seo-title"],
-      "extra_in_webflow": ["legacy-field"]
-    },
-    ...
-  }
-}
-```
+### Areas Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `city` | `city-2` | Update mapping |
+| `shared-key` | `shared-key-area` | Update mapping |
+| `intro` | `intro-content` | Update mapping |
+| `short-description` | (not present) | Remove from expected |
 
-### Step 2: Add Validation UI to Settings Page
-- Add a "Validate Webflow Collections" button
-- Shows a dialog with validation results per collection
-- Color-coded: green (all good), yellow (extra fields), red (missing required fields)
+### Service Categories Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `shared-key` | `shared-key-service-category` | Update mapping |
+| `intro` | `intro-content` | Update mapping |
+| `description` | (not present) | Remove from expected |
+| `icon-url` | `icon` | Update mapping |
 
-### Step 3: Expected Field Mappings Reference
+### Services Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `shared-key` | (not present) | Remove from expected |
+| `intro` | `service-intro-seo` | Update mapping |
+| `description` | (not present) | Remove from expected |
+| `icon-url` | `icon` | Update mapping |
+| `active` | (not present) | Remove from expected |
 
-Based on current edge function code, here's what each collection needs:
+### Partners Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `shared-key` | `shared-key-partner` | Update mapping |
+| `phone` | `phone-number` | Update mapping |
+| `address` | (not present) | Remove from expected |
+| `description` | `client-information` | Update mapping |
+| `description-summary` | `client-information-summary` | Update mapping |
+| `logo-url` | `client-logo` | Update mapping |
+| `noddi-logo-url` | `noddi-logo` | Update mapping |
+| `website-url` | `website-link` | Update mapping |
+| `instagram-url` | (not present) | Remove from expected |
+| `facebook-url` | `facebook-link` | Update mapping |
+| `rating` | (not present) | Remove from expected |
+| `active` | `partner-active` | Update mapping |
+| `areas` | `service-areas-optional` | Update mapping |
+| `cities` | `primary-city` | Update mapping |
+| `districts` | (not present) | Remove from expected |
+| `services` | `services-provided` | Update mapping |
 
-**Cities Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| name | PlainText | Yes | Yes |
-| slug | PlainText | Yes | Yes |
-| shared-key | PlainText | No | No |
-| short-description | PlainText | No | No |
-| is-delivery | Switch | No | No |
-| seo-title | PlainText | Yes | No |
-| seo-meta-description | PlainText | Yes | No |
-| intro | RichText | Yes | No |
-| sitemap-priority | Number | No | No |
+### Service Locations Collection
+| Expected | Actual in Webflow | Action |
+|----------|-------------------|--------|
+| `city` | `city-2` | Update mapping |
+| `district` | `district-2` | Update mapping |
+| `area` | `area-2` | Update mapping |
+| `partners` | `partners-2` | Update mapping |
+| `seo-title` | `seo-title-2` | Update mapping |
+| `seo-meta-description` | `seo-meta-description-2` | Update mapping |
+| `hero-content` | `hero-intro-content-2` | Update mapping |
+| `canonical-url` | `canonical-path-2` | Update mapping |
+| `structured-data-json` | `json-ld-structured-data-2` | Update mapping |
+| `sitemap-priority` | `sitemap-priority-2` | Update mapping |
+| `noindex` | `noindex-2` | Update mapping |
 
-**Districts Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| name | PlainText | Yes | Yes |
-| slug | PlainText | Yes | Yes |
-| city | ItemRef (Cities) | No | Yes |
-| shared-key | PlainText | No | No |
-| short-description | PlainText | No | No |
-| is-delivery | Switch | No | No |
-| seo-title | PlainText | Yes | No |
-| seo-meta-description | PlainText | Yes | No |
-| intro | RichText | Yes | No |
-| sitemap-priority | Number | No | No |
+## Implementation Steps
 
-**Areas Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| name | PlainText | Yes | Yes |
-| slug | PlainText | Yes | Yes |
-| district | ItemRef (Districts) | No | Yes |
-| city | ItemRef (Cities) | No | No |
-| shared-key | PlainText | No | No |
-| short-description | PlainText | No | No |
-| is-delivery | Switch | No | No |
-| seo-title | PlainText | Yes | No |
-| seo-meta-description | PlainText | Yes | No |
-| intro | RichText | Yes | No |
-| sitemap-priority | Number | No | No |
+### Step 1: Update `webflow-validate/index.ts`
+Update the `EXPECTED_FIELDS` constant to use the actual Webflow field slugs.
 
-**Service Categories Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| name | PlainText | Yes | Yes |
-| slug | PlainText | Yes | Yes |
-| shared-key | PlainText | No | No |
-| description | RichText | Yes | No |
-| seo-title | PlainText | Yes | No |
-| seo-meta-description | PlainText | Yes | No |
-| intro | RichText | Yes | No |
-| icon-url | PlainText | No | No |
-| sort-order | Number | No | No |
-| active | Switch | No | No |
+### Step 2: Update `webflow-import/index.ts`
+Update field mappings in the import function to read from the correct Webflow fields.
 
-**Services Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| name | PlainText | Yes | Yes |
-| slug | PlainText | Yes | Yes |
-| service-category | ItemRef (Service Categories) | No | No |
-| shared-key | PlainText | No | No |
-| description | RichText | Yes | No |
-| seo-title | PlainText | Yes | No |
-| seo-meta-description | PlainText | Yes | No |
-| intro | RichText | Yes | No |
-| icon-url | PlainText | No | No |
-| sort-order | Number | No | No |
-| active | Switch | No | No |
+### Step 3: Update `webflow-sync/index.ts`
+Update field mappings in the sync function to write to the correct Webflow fields.
 
-**Partners Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| name | PlainText | Yes | Yes |
-| slug | PlainText | Yes | Yes |
-| shared-key | PlainText | No | No |
-| email | PlainText | No | No |
-| phone | PlainText | No | No |
-| address | PlainText | No | No |
-| description | RichText | Yes | No |
-| description-summary | PlainText | No | No |
-| heading-text | PlainText | No | No |
-| logo-url | PlainText | No | No |
-| noddi-logo-url | PlainText | No | No |
-| website-url | PlainText | No | No |
-| instagram-url | PlainText | No | No |
-| facebook-url | PlainText | No | No |
-| rating | Number | No | No |
-| active | Switch | No | No |
-| areas | ItemRefSet (Areas) | No | No |
-| cities | ItemRefSet (Cities) | No | No |
-| districts | ItemRefSet (Districts) | No | No |
-| services | ItemRefSet (Services) | No | No |
+### Step 4: Re-validate
+Run validation again to confirm all collections show "Ready" status.
 
-**Service Locations Collection**
-| Webflow Field Slug | Type | Localized | Required |
-|--------------------|------|-----------|----------|
-| slug | PlainText | Yes | Yes |
-| service | ItemRef (Services) | No | Yes |
-| city | ItemRef (Cities) | No | Yes |
-| district | ItemRef (Districts) | No | No |
-| area | ItemRef (Areas) | No | No |
-| seo-title | PlainText | Yes | No |
-| seo-meta-description | PlainText | Yes | No |
-| hero-content | RichText | Yes | No |
-| canonical-url | PlainText | Yes | No |
-| structured-data-json | PlainText | Yes | No |
-| sitemap-priority | Number | No | No |
-| noindex | Switch | No | No |
-| partners | ItemRefSet (Partners) | No | No |
+## Files to Modify
 
----
-
-## Suggested Workflow for Data Population
-
-### Phase 1: Validation (Before Any Data)
-1. Configure all Collection IDs in Settings
-2. Run the new "Validate Collections" feature
-3. Fix any missing fields in Webflow CMS
-4. Re-validate until all green
-
-### Phase 2: Import Existing Webflow Data
-1. Start with base entities: **Cities** first
-2. Then **Districts** (depends on Cities)
-3. Then **Areas** (depends on Districts)
-4. Then **Service Categories**
-5. Then **Services** (depends on Service Categories)
-6. Then **Partners** (imports junction table relationships)
-
-### Phase 3: Set Up Partner Coverage
-1. Go to Partner Service Locations page
-2. Add coverage entries for each partner (what services they offer, where)
-3. This is manual initially, or could be imported if you have a source
-
-### Phase 4: Generate & Sync Service Locations
-1. Click "Regenerate All" on Service Locations page
-2. This computes all unique service+location combos from partner coverage
-3. Then run "Sync to Webflow" to push to Webflow
-
----
-
-## Files to Create/Modify
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `supabase/functions/webflow-validate/index.ts` | Create | New edge function for schema validation |
-| `src/pages/Settings.tsx` | Modify | Add "Validate Collections" button and results dialog |
-| `src/components/settings/ValidationResultsDialog.tsx` | Create | Display validation results |
-
----
-
-## Questions Before Implementation
-
-1. **Do all your Webflow collections already exist?** If some are new, you'll need to create them in Webflow first with the fields listed above.
-
-2. **Is Service Locations a new collection?** This appears to be for SEO pages - if it doesn't exist yet, you'll need to create it in Webflow with all the fields listed.
-
-3. **Do you want to start with just validation, or implement the full workflow?**
+| File | Changes |
+|------|---------|
+| `supabase/functions/webflow-validate/index.ts` | Update EXPECTED_FIELDS to match actual Webflow slugs |
+| `supabase/functions/webflow-import/index.ts` | Update field mapping when reading from Webflow |
+| `supabase/functions/webflow-sync/index.ts` | Update field mapping when writing to Webflow |
 
