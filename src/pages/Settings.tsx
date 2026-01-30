@@ -9,10 +9,14 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, Save } from "lucide-react";
 
 const SETTING_KEYS = [
-  { key: "webflow_cities_collection_id", label: "Cities Collection ID" },
-  { key: "webflow_districts_collection_id", label: "Districts Collection ID" },
-  { key: "webflow_areas_collection_id", label: "Areas Collection ID" },
-  { key: "webflow_partners_collection_id", label: "Partners Collection ID" },
+  { key: "webflow_cities_collection_id", label: "Cities Collection ID", group: "collections" },
+  { key: "webflow_districts_collection_id", label: "Districts Collection ID", group: "collections" },
+  { key: "webflow_areas_collection_id", label: "Areas Collection ID", group: "collections" },
+  { key: "webflow_service_categories_collection_id", label: "Service Categories Collection ID", group: "collections" },
+  { key: "webflow_services_collection_id", label: "Services (Tjenester) Collection ID", group: "collections" },
+  { key: "webflow_partners_collection_id", label: "Partners Collection ID", group: "collections" },
+  { key: "webflow_service_locations_collection_id", label: "Service Locations Collection ID", group: "collections" },
+  { key: "base_url", label: "Base URL", group: "general", placeholder: "https://www.noddi.no" },
 ];
 
 export default function Settings() {
@@ -89,34 +93,65 @@ export default function Settings() {
         <p className="text-muted-foreground mt-1">Configure your Webflow integration</p>
       </div>
 
-      <Card className="max-w-2xl">
-        <CardHeader>
-          <CardTitle>Webflow Collection IDs</CardTitle>
-          <CardDescription>
-            Enter the Collection IDs from your Webflow CMS. You can find these in Webflow's CMS settings.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {SETTING_KEYS.map(({ key, label }) => (
-              <div key={key} className="space-y-2">
-                <Label htmlFor={key}>{label}</Label>
-                <Input
-                  id={key}
-                  placeholder="Enter collection ID..."
-                  value={formValues[key] ?? settings?.[key] ?? ""}
-                  onChange={(e) => handleChange(key, e.target.value)}
-                />
-              </div>
-            ))}
-            <Button type="submit" disabled={saveMutation.isPending}>
-              {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              <Save className="mr-2 h-4 w-4" />
-              Save Settings
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <div className="space-y-6 max-w-2xl">
+        <Card>
+          <CardHeader>
+            <CardTitle>General Settings</CardTitle>
+            <CardDescription>
+              Configure general settings for the sync system.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {SETTING_KEYS.filter(s => s.group === "general").map(({ key, label, placeholder }) => (
+                <div key={key} className="space-y-2">
+                  <Label htmlFor={key}>{label}</Label>
+                  <Input
+                    id={key}
+                    placeholder={placeholder || `Enter ${label.toLowerCase()}...`}
+                    value={formValues[key] ?? settings?.[key] ?? ""}
+                    onChange={(e) => handleChange(key, e.target.value)}
+                  />
+                </div>
+              ))}
+              <Button type="submit" disabled={saveMutation.isPending}>
+                {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Save className="mr-2 h-4 w-4" />
+                Save Settings
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Webflow Collection IDs</CardTitle>
+            <CardDescription>
+              Enter the Collection IDs from your Webflow CMS. You can find these in Webflow's CMS settings.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {SETTING_KEYS.filter(s => s.group === "collections").map(({ key, label, placeholder }) => (
+                <div key={key} className="space-y-2">
+                  <Label htmlFor={key}>{label}</Label>
+                  <Input
+                    id={key}
+                    placeholder={placeholder || "Enter collection ID..."}
+                    value={formValues[key] ?? settings?.[key] ?? ""}
+                    onChange={(e) => handleChange(key, e.target.value)}
+                  />
+                </div>
+              ))}
+              <Button type="submit" disabled={saveMutation.isPending}>
+                {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Save className="mr-2 h-4 w-4" />
+                Save Settings
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
