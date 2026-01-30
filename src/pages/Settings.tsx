@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, CheckCircle2 } from "lucide-react";
+import { ValidationResultsDialog } from "@/components/settings/ValidationResultsDialog";
 
 const SETTING_KEYS = [
   { key: "webflow_cities_collection_id", label: "Cities Collection ID", group: "collections" },
@@ -19,10 +20,33 @@ const SETTING_KEYS = [
   { key: "base_url", label: "Base URL", group: "general", placeholder: "https://www.noddi.no" },
 ];
 
+interface ValidationResults {
+  collections: Record<string, {
+    webflow_collection_name: string | null;
+    collection_id: string | null;
+    status: "ok" | "missing_fields" | "not_configured" | "error";
+    expected_fields: string[];
+    found_fields: string[];
+    missing_in_webflow: string[];
+    missing_required: string[];
+    extra_in_webflow: string[];
+    error_message?: string;
+  }>;
+  summary: {
+    total: number;
+    ok: number;
+    missing_fields: number;
+    not_configured: number;
+    errors: number;
+  };
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const [validationResults, setValidationResults] = useState<ValidationResults | null>(null);
+  const [validationDialogOpen, setValidationDialogOpen] = useState(false);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -59,6 +83,39 @@ export default function Settings() {
     onError: (error: any) => {
       toast({
         title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const validateMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("webflow-validate");
+      if (error) throw error;
+      return data as ValidationResults;
+    },
+    onSuccess: (data) => {
+      setValidationResults(data);
+      setValidationDialogOpen(true);
+      
+      const { summary } = data;
+      if (summary.ok === summary.total) {
+        toast({
+          title: "All collections validated!",
+          description: "All field mappings match your Webflow collections.",
+        });
+      } else if (summary.missing_fields > 0 || summary.errors > 0) {
+        toast({
+          title: "Validation complete",
+          description: `${summary.ok} ready, ${summary.missing_fields} missing fields, ${summary.not_configured} not configured`,
+          variant: "destructive",
+        });
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Validation failed",
         description: error.message,
         variant: "destructive",
       });
@@ -143,15 +200,36 @@ export default function Settings() {
                   />
                 </div>
               ))}
-              <Button type="submit" disabled={saveMutation.isPending}>
-                {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                <Save className="mr-2 h-4 w-4" />
-                Save Settings
-              </Button>
+              <div className="flex gap-3">
+                <Button type="submit" disabled={saveMutation.isPending}>
+                  {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Settings
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => validateMutation.mutate()}
+                  disabled={validateMutation.isPending}
+                >
+                  {validateMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                  )}
+                  Validate Collections
+                </Button>
+              </div>
             </form>
           </CardContent>
         </Card>
       </div>
+
+      <ValidationResultsDialog
+        open={validationDialogOpen}
+        onOpenChange={setValidationDialogOpen}
+        results={validationResults}
+      />
     </div>
   );
 }
