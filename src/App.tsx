@@ -11,6 +11,9 @@ import Districts from "./pages/Districts";
 import Areas from "./pages/Areas";
 import Partners from "./pages/Partners";
 import ServiceCategories from "./pages/ServiceCategories";
+import Services from "./pages/Services";
+import PartnerServiceLocations from "./pages/PartnerServiceLocations";
+import ServiceLocations from "./pages/ServiceLocations";
 import SyncHistory from "./pages/SyncHistory";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -31,7 +34,10 @@ const App = () => (
             <Route path="/districts" element={<Districts />} />
             <Route path="/areas" element={<Areas />} />
             <Route path="/service-categories" element={<ServiceCategories />} />
+            <Route path="/services" element={<Services />} />
             <Route path="/partners" element={<Partners />} />
+            <Route path="/partner-service-locations" element={<PartnerServiceLocations />} />
+            <Route path="/service-locations" element={<ServiceLocations />} />
             <Route path="/sync-history" element={<SyncHistory />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

@@ -12,19 +12,29 @@ import {
   History,
   FolderTree,
   Wrench,
+  Link2,
+  Globe,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { type: "separator" as const },
   { name: "Cities", href: "/cities", icon: MapPin },
   { name: "Districts", href: "/districts", icon: Map },
   { name: "Areas", href: "/areas", icon: Layers },
+  { type: "separator" as const },
   { name: "Service Categories", href: "/service-categories", icon: FolderTree },
   { name: "Services", href: "/services", icon: Wrench },
+  { type: "separator" as const },
   { name: "Partners", href: "/partners", icon: Users },
+  { name: "Partner Coverage", href: "/partner-service-locations", icon: Link2 },
+  { type: "separator" as const },
+  { name: "Service Locations", href: "/service-locations", icon: Globe },
   { name: "Sync History", href: "/sync-history", icon: History },
+  { type: "separator" as const },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -40,13 +50,18 @@ export const Sidebar = React.forwardRef<HTMLDivElement, object>(
           <p className="text-sm text-muted-foreground truncate mt-1">{user?.email}</p>
         </div>
         
-        <nav className="flex-1 space-y-1 px-3">
-          {navigation.map((item) => {
-            const isActive = location.pathname === item.href;
+        <nav className="flex-1 space-y-1 px-3 overflow-y-auto">
+          {navigation.map((item, index) => {
+            if ('type' in item && item.type === 'separator') {
+              return <Separator key={`sep-${index}`} className="my-2" />;
+            }
+            
+            const navItem = item as { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
+            const isActive = location.pathname === navItem.href;
             return (
               <Link
-                key={item.name}
-                to={item.href}
+                key={navItem.name}
+                to={navItem.href}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                   isActive
@@ -54,8 +69,8 @@ export const Sidebar = React.forwardRef<HTMLDivElement, object>(
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
-                <item.icon className="h-5 w-5" />
-                {item.name}
+                <navItem.icon className="h-5 w-5" />
+                {navItem.name}
               </Link>
             );
           })}
