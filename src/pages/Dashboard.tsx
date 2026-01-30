@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
 
-type EntityType = "all" | "service_categories" | "services" | "cities" | "districts" | "areas" | "partners";
+type EntityType = "all" | "service_categories" | "services" | "cities" | "districts" | "areas" | "partners" | "service_locations";
 
 const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
   { value: "all", label: "All Entities" },
@@ -25,6 +25,7 @@ const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
   { value: "districts", label: "Districts" },
   { value: "areas", label: "Areas" },
   { value: "partners", label: "Partners" },
+  { value: "service_locations", label: "Service Locations" },
 ];
 
 export default function Dashboard() {
@@ -76,6 +77,7 @@ export default function Dashboard() {
           "webflow_districts_collection_id",
           "webflow_areas_collection_id",
           "webflow_partners_collection_id",
+          "webflow_service_locations_collection_id",
         ]);
       
       const configured: Record<string, boolean> = {};
@@ -102,7 +104,7 @@ export default function Dashboard() {
     },
     onMutate: (entityType) => {
       const entities = entityType === "all" 
-        ? ["service_categories", "services", "cities", "districts", "areas", "partners"]
+        ? ["service_categories", "services", "cities", "districts", "areas", "partners", "service_locations"]
         : [entityType];
       setCurrentEntities(entities);
       setCurrentOperation("import");
@@ -144,7 +146,7 @@ export default function Dashboard() {
     },
     onMutate: (entityType) => {
       const entities = entityType === "all" 
-        ? ["service_categories", "services", "cities", "districts", "areas", "partners"]
+        ? ["service_categories", "services", "cities", "districts", "areas", "partners", "service_locations"]
         : [entityType];
       setCurrentEntities(entities);
       setCurrentOperation("sync");

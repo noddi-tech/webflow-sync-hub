@@ -152,6 +152,605 @@ function buildLocalizedFields(item: Record<string, unknown>, fieldMappings: Reco
   return result;
 }
 
+// SEO Content Generation Templates
+interface LocationData {
+  service: any;
+  city: any;
+  district?: any;
+  area?: any;
+}
+
+function generateSEOContent(data: LocationData): Record<string, { title: string; meta: string; intro: string }> {
+  const { service, city, district, area } = data;
+  const content: Record<string, { title: string; meta: string; intro: string }> = {};
+  
+  const locales = ['no', 'en', 'sv'] as const;
+  
+  for (const locale of locales) {
+    const suffix = locale === 'no' ? '' : `_${locale}`;
+    
+    const serviceName = locale === 'no' 
+      ? service.name 
+      : (service[`name_${locale}`] || service.name);
+    const cityName = locale === 'no' 
+      ? city.name 
+      : (city[`name_${locale}`] || city.name);
+    const districtName = district 
+      ? (locale === 'no' ? district.name : (district[`name_${locale}`] || district.name))
+      : null;
+    const areaName = area 
+      ? (locale === 'no' ? area.name : (area[`name_${locale}`] || area.name))
+      : null;
+    
+    let locationStr: string;
+    if (areaName && districtName) {
+      locationStr = `${areaName}, ${districtName}, ${cityName}`;
+    } else if (districtName) {
+      locationStr = `${districtName}, ${cityName}`;
+    } else {
+      locationStr = cityName;
+    }
+    
+    // Generate locale-specific content
+    if (locale === 'no') {
+      content[locale] = {
+        title: `${serviceName} i ${locationStr} - Finn partnere & bestill | Noddi`,
+        meta: `Sammenlign ${serviceName.toLowerCase()} i ${locationStr}, se priser, vurderinger og bestill direkte med lokale partnere.`,
+        intro: `<p>Mobil ${serviceName.toLowerCase()} i ${locationStr} - med erfarne partnere levert til deg. Finn tilbud, sammenlign priser og bestill i dag.</p>`
+      };
+    } else if (locale === 'en') {
+      content[locale] = {
+        title: `${serviceName} in ${locationStr} - Find Partners & Book | Noddi`,
+        meta: `Compare ${serviceName.toLowerCase()} in ${locationStr}, see prices, ratings and book directly with local partners.`,
+        intro: `<p>Mobile ${serviceName.toLowerCase()} in ${locationStr} - with experienced partners delivered to you. Find offers, compare prices and book today.</p>`
+      };
+    } else if (locale === 'sv') {
+      content[locale] = {
+        title: `${serviceName} i ${locationStr} - Hitta partners & boka | Noddi`,
+        meta: `Jämför ${serviceName.toLowerCase()} i ${locationStr}, se priser, betyg och boka direkt med lokala partners.`,
+        intro: `<p>Mobil ${serviceName.toLowerCase()} i ${locationStr} - med erfarna partners levererade till dig. Hitta erbjudanden, jämför priser och boka idag.</p>`
+      };
+    }
+  }
+  
+  return content;
+}
+
+function generateCanonicalUrls(
+  baseUrl: string,
+  service: any,
+  city: any,
+  district?: any,
+  area?: any
+): Record<string, string> {
+  const urls: Record<string, string> = {};
+  const locales = ['no', 'en', 'sv'] as const;
+  
+  for (const locale of locales) {
+    const serviceSlug = locale === 'no' 
+      ? service.slug 
+      : (service[`slug_${locale}`] || service.slug);
+    const citySlug = locale === 'no' 
+      ? city.slug 
+      : (city[`slug_${locale}`] || city.slug);
+    const districtSlug = district 
+      ? (locale === 'no' ? district.slug : (district[`slug_${locale}`] || district.slug))
+      : null;
+    const areaSlug = area 
+      ? (locale === 'no' ? area.slug : (area[`slug_${locale}`] || area.slug))
+      : null;
+    
+    // Build path parts
+    const pathParts = [serviceSlug, citySlug];
+    if (districtSlug) pathParts.push(districtSlug);
+    if (areaSlug) pathParts.push(areaSlug);
+    
+    // Add locale prefix for non-Norwegian
+    const localePrefix = locale === 'no' ? '' : `/${locale}`;
+    urls[locale] = `${baseUrl}${localePrefix}/${pathParts.join('/')}`;
+  }
+  
+  return urls;
+}
+
+function generateSlug(service: any, city: any, district?: any, area?: any, locale: string = 'no'): string {
+  const serviceSlug = locale === 'no' 
+    ? service.slug 
+    : (service[`slug_${locale}`] || service.slug);
+  const citySlug = locale === 'no' 
+    ? city.slug 
+    : (city[`slug_${locale}`] || city.slug);
+  const districtSlug = district 
+    ? (locale === 'no' ? district.slug : (district[`slug_${locale}`] || district.slug))
+    : null;
+  const areaSlug = area 
+    ? (locale === 'no' ? area.slug : (area[`slug_${locale}`] || area.slug))
+    : null;
+  
+  const parts = [serviceSlug, citySlug];
+  if (districtSlug) parts.push(districtSlug);
+  if (areaSlug) parts.push(areaSlug);
+  
+  return parts.join('-');
+}
+
+function generateStructuredData(
+  data: LocationData,
+  canonicalUrl: string,
+  partners: any[],
+  locale: string = 'no'
+): string {
+  const { service, city, district, area } = data;
+  
+  const serviceName = locale === 'no' 
+    ? service.name 
+    : (service[`name_${locale}`] || service.name);
+  const cityName = locale === 'no' 
+    ? city.name 
+    : (city[`name_${locale}`] || city.name);
+  const districtName = district 
+    ? (locale === 'no' ? district.name : (district[`name_${locale}`] || district.name))
+    : null;
+  const areaName = area 
+    ? (locale === 'no' ? area.name : (area[`name_${locale}`] || area.name))
+    : null;
+  
+  let locationName: string;
+  if (areaName && districtName) {
+    locationName = `${areaName}, ${districtName}, ${cityName}`;
+  } else if (districtName) {
+    locationName = `${districtName}, ${cityName}`;
+  } else {
+    locationName = cityName;
+  }
+  
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "name": `${serviceName} i ${locationName}`,
+    "serviceType": serviceName,
+    "provider": partners.slice(0, 10).map(p => ({
+      "@type": "LocalBusiness",
+      "name": p.name,
+      ...(p.website_url && { "url": p.website_url }),
+      ...(p.phone && { "telephone": p.phone }),
+      ...(p.rating && { 
+        "aggregateRating": { 
+          "@type": "AggregateRating", 
+          "ratingValue": p.rating,
+          "bestRating": 5
+        } 
+      })
+    })),
+    "areaServed": {
+      "@type": "City",
+      "name": cityName
+    },
+    "url": canonicalUrl
+  };
+  
+  return JSON.stringify(structuredData, null, 2);
+}
+
+interface ServiceLocationCombination {
+  service_id: string;
+  city_id: string;
+  district_id: string | null;
+  area_id: string | null;
+  partner_ids: string[];
+}
+
+async function generateServiceLocations(supabase: any, batchId: string): Promise<{ generated: number; updated: number }> {
+  console.log("Starting service location generation...");
+  
+  // Get base URL from settings
+  const { data: baseUrlSetting } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "base_url")
+    .single();
+  
+  const baseUrl = baseUrlSetting?.value || "https://www.noddi.no";
+  
+  // Get all partner_service_locations with related data
+  const { data: pslData, error: pslError } = await supabase
+    .from("partner_service_locations")
+    .select(`
+      partner_id,
+      service_id,
+      city_id,
+      district_id,
+      area_id
+    `);
+  
+  if (pslError) {
+    console.error("Error fetching partner_service_locations:", pslError);
+    throw pslError;
+  }
+  
+  console.log(`Found ${pslData?.length || 0} partner service locations`);
+  
+  if (!pslData || pslData.length === 0) {
+    return { generated: 0, updated: 0 };
+  }
+  
+  // Group by unique service+location combinations
+  const locationMap = new Map<string, ServiceLocationCombination>();
+  
+  for (const psl of pslData) {
+    const key = `${psl.service_id}-${psl.city_id}-${psl.district_id || 'null'}-${psl.area_id || 'null'}`;
+    
+    if (!locationMap.has(key)) {
+      locationMap.set(key, {
+        service_id: psl.service_id,
+        city_id: psl.city_id,
+        district_id: psl.district_id,
+        area_id: psl.area_id,
+        partner_ids: []
+      });
+    }
+    
+    locationMap.get(key)!.partner_ids.push(psl.partner_id);
+  }
+  
+  console.log(`Found ${locationMap.size} unique service location combinations`);
+  
+  // Fetch all required reference data
+  const { data: services } = await supabase.from("services").select("*");
+  const { data: cities } = await supabase.from("cities").select("*");
+  const { data: districts } = await supabase.from("districts").select("*");
+  const { data: areas } = await supabase.from("areas").select("*");
+  const { data: partners } = await supabase.from("partners").select("*");
+  
+  const servicesMap = new Map(services?.map((s: any) => [s.id, s]) || []);
+  const citiesMap = new Map(cities?.map((c: any) => [c.id, c]) || []);
+  const districtsMap = new Map(districts?.map((d: any) => [d.id, d]) || []);
+  const areasMap = new Map(areas?.map((a: any) => [a.id, a]) || []);
+  const partnersMap = new Map(partners?.map((p: any) => [p.id, p]) || []);
+  
+  let generated = 0;
+  let updated = 0;
+  
+  await logSync(
+    supabase,
+    "service_locations",
+    "generate",
+    "in_progress",
+    undefined,
+    `Generating ${locationMap.size} service locations`,
+    batchId,
+    0,
+    locationMap.size
+  );
+  
+  let processedCount = 0;
+  
+  for (const [key, combo] of locationMap) {
+    const service = servicesMap.get(combo.service_id);
+    const city = citiesMap.get(combo.city_id);
+    const district = combo.district_id ? districtsMap.get(combo.district_id) : undefined;
+    const area = combo.area_id ? areasMap.get(combo.area_id) : undefined;
+    
+    if (!service || !city) {
+      console.log(`Skipping location ${key}: missing service or city`);
+      continue;
+    }
+    
+    // Get partner data for this combination
+    const locationPartners = combo.partner_ids
+      .map(id => partnersMap.get(id))
+      .filter(Boolean);
+    
+    // Generate SEO content
+    const locationData: LocationData = { service, city, district, area };
+    const seoContent = generateSEOContent(locationData);
+    
+    // Generate canonical URLs
+    const canonicalUrls = generateCanonicalUrls(baseUrl, service, city, district, area);
+    
+    // Generate slugs
+    const slugNo = generateSlug(service, city, district, area, 'no');
+    const slugEn = generateSlug(service, city, district, area, 'en');
+    const slugSv = generateSlug(service, city, district, area, 'sv');
+    
+    // Generate structured data for each locale
+    const structuredDataNo = generateStructuredData(locationData, canonicalUrls.no, locationPartners, 'no');
+    const structuredDataEn = generateStructuredData(locationData, canonicalUrls.en, locationPartners, 'en');
+    const structuredDataSv = generateStructuredData(locationData, canonicalUrls.sv, locationPartners, 'sv');
+    
+    // Check if service_location already exists
+    const { data: existingLocation } = await supabase
+      .from("service_locations")
+      .select("id")
+      .eq("service_id", combo.service_id)
+      .eq("city_id", combo.city_id)
+      .is("district_id", combo.district_id)
+      .is("area_id", combo.area_id)
+      .maybeSingle();
+    
+    const serviceLocationData = {
+      service_id: combo.service_id,
+      city_id: combo.city_id,
+      district_id: combo.district_id,
+      area_id: combo.area_id,
+      slug: slugNo,
+      slug_en: slugEn,
+      slug_sv: slugSv,
+      canonical_url: canonicalUrls.no,
+      canonical_url_en: canonicalUrls.en,
+      canonical_url_sv: canonicalUrls.sv,
+      seo_title: seoContent.no.title,
+      seo_title_en: seoContent.en.title,
+      seo_title_sv: seoContent.sv.title,
+      seo_meta_description: seoContent.no.meta,
+      seo_meta_description_en: seoContent.en.meta,
+      seo_meta_description_sv: seoContent.sv.meta,
+      hero_content: seoContent.no.intro,
+      hero_content_en: seoContent.en.intro,
+      hero_content_sv: seoContent.sv.intro,
+      structured_data_json: structuredDataNo,
+      structured_data_json_en: structuredDataEn,
+      structured_data_json_sv: structuredDataSv,
+      sitemap_priority: area ? 0.4 : (district ? 0.5 : 0.6),
+      noindex: false,
+      updated_at: new Date().toISOString()
+    };
+    
+    let serviceLocationId: string;
+    
+    if (existingLocation) {
+      // Update existing
+      const { error: updateError } = await supabase
+        .from("service_locations")
+        .update(serviceLocationData)
+        .eq("id", existingLocation.id);
+      
+      if (updateError) {
+        console.error(`Error updating service_location ${existingLocation.id}:`, updateError);
+        continue;
+      }
+      
+      serviceLocationId = existingLocation.id;
+      updated++;
+    } else {
+      // Insert new
+      const { data: newLocation, error: insertError } = await supabase
+        .from("service_locations")
+        .insert(serviceLocationData)
+        .select("id")
+        .single();
+      
+      if (insertError) {
+        console.error(`Error creating service_location:`, insertError);
+        continue;
+      }
+      
+      serviceLocationId = newLocation.id;
+      generated++;
+    }
+    
+    // Update service_location_partners junction table
+    // First, delete existing entries
+    await supabase
+      .from("service_location_partners")
+      .delete()
+      .eq("service_location_id", serviceLocationId);
+    
+    // Insert new partner links
+    if (combo.partner_ids.length > 0) {
+      const partnerLinks = combo.partner_ids.map(partnerId => ({
+        service_location_id: serviceLocationId,
+        partner_id: partnerId
+      }));
+      
+      const { error: linkError } = await supabase
+        .from("service_location_partners")
+        .insert(partnerLinks);
+      
+      if (linkError) {
+        console.error(`Error linking partners to service_location ${serviceLocationId}:`, linkError);
+      }
+    }
+    
+    processedCount++;
+    
+    if (processedCount % 10 === 0 || processedCount === locationMap.size) {
+      await logSync(
+        supabase,
+        "service_locations",
+        "generate",
+        "in_progress",
+        undefined,
+        `Generated ${processedCount} of ${locationMap.size}`,
+        batchId,
+        processedCount,
+        locationMap.size
+      );
+    }
+  }
+  
+  await logSync(
+    supabase,
+    "service_locations",
+    "generate",
+    "completed",
+    undefined,
+    `Generated ${generated} new, updated ${updated} existing service locations`,
+    batchId,
+    locationMap.size,
+    locationMap.size
+  );
+  
+  console.log(`Service location generation complete: ${generated} new, ${updated} updated`);
+  
+  return { generated, updated };
+}
+
+async function syncServiceLocationsToWebflow(
+  supabase: any,
+  webflowApiToken: string,
+  collectionId: string,
+  batchId: string
+): Promise<{ created: number; updated: number }> {
+  console.log(`Syncing service_locations to collection ${collectionId}...`);
+  
+  // Fetch all service locations with related data
+  const { data: serviceLocations, error } = await supabase
+    .from("service_locations")
+    .select(`
+      *,
+      services(webflow_item_id),
+      cities(webflow_item_id),
+      districts(webflow_item_id),
+      areas(webflow_item_id),
+      service_location_partners(partners(webflow_item_id))
+    `);
+  
+  if (error) {
+    console.error("Error fetching service_locations:", error);
+    throw error;
+  }
+  
+  console.log(`Found ${serviceLocations?.length || 0} service locations to sync`);
+  
+  if (!serviceLocations || serviceLocations.length === 0) {
+    return { created: 0, updated: 0 };
+  }
+  
+  await logSync(
+    supabase,
+    "service_locations",
+    "sync",
+    "in_progress",
+    undefined,
+    `Starting sync of ${serviceLocations.length} items`,
+    batchId,
+    0,
+    serviceLocations.length
+  );
+  
+  let created = 0;
+  let updated = 0;
+  let processedCount = 0;
+  
+  for (const sl of serviceLocations) {
+    // Get partner webflow IDs
+    const partnerWebflowIds = (sl.service_location_partners || [])
+      .map((slp: any) => slp.partners?.webflow_item_id)
+      .filter(Boolean);
+    
+    // Build localized field data
+    const localizedFields = buildLocalizedFields(sl, {
+      slug: "slug",
+      seo_title: "seo-title",
+      seo_meta_description: "seo-meta-description",
+      hero_content: "hero-content",
+      canonical_url: "canonical-url",
+      structured_data_json: "structured-data-json"
+    });
+    
+    // Build base field data (Norwegian + non-localized fields)
+    const baseFieldData: Record<string, unknown> = {
+      ...localizedFields.no,
+      "sitemap-priority": sl.sitemap_priority ?? 0.5,
+      "noindex": sl.noindex ?? false,
+    };
+    
+    // Add references
+    if (sl.services?.webflow_item_id) {
+      baseFieldData["service"] = sl.services.webflow_item_id;
+    }
+    if (sl.cities?.webflow_item_id) {
+      baseFieldData["city"] = sl.cities.webflow_item_id;
+    }
+    if (sl.districts?.webflow_item_id) {
+      baseFieldData["district"] = sl.districts.webflow_item_id;
+    }
+    if (sl.areas?.webflow_item_id) {
+      baseFieldData["area"] = sl.areas.webflow_item_id;
+    }
+    if (partnerWebflowIds.length > 0) {
+      baseFieldData["partners"] = partnerWebflowIds;
+    }
+    
+    const itemId = sl.id as string;
+    const webflowItemId = sl.webflow_item_id as string | null;
+    
+    try {
+      if (webflowItemId) {
+        // Update existing item
+        await updateWebflowItem(collectionId, webflowItemId, webflowApiToken, baseFieldData, LOCALES.no);
+        
+        // Update English locale
+        if (Object.keys(localizedFields.en).length > 0) {
+          await updateWebflowItem(collectionId, webflowItemId, webflowApiToken, localizedFields.en, LOCALES.en);
+        }
+        
+        // Update Swedish locale
+        if (Object.keys(localizedFields.sv).length > 0) {
+          await updateWebflowItem(collectionId, webflowItemId, webflowApiToken, localizedFields.sv, LOCALES.sv);
+        }
+        
+        updated++;
+      } else {
+        // Create new item
+        const result = await createWebflowItem(collectionId, webflowApiToken, baseFieldData, LOCALES.no);
+        if (result?.id) {
+          // Save webflow_item_id back
+          await supabase
+            .from("service_locations")
+            .update({ webflow_item_id: result.id })
+            .eq("id", itemId);
+          
+          // Update with English locale
+          if (Object.keys(localizedFields.en).length > 0) {
+            await updateWebflowItem(collectionId, result.id, webflowApiToken, localizedFields.en, LOCALES.en);
+          }
+          
+          // Update with Swedish locale
+          if (Object.keys(localizedFields.sv).length > 0) {
+            await updateWebflowItem(collectionId, result.id, webflowApiToken, localizedFields.sv, LOCALES.sv);
+          }
+          
+          created++;
+        }
+      }
+    } catch (error) {
+      console.error(`Error syncing service_location ${itemId}:`, error);
+    }
+    
+    processedCount++;
+    
+    if (processedCount % 5 === 0 || processedCount === serviceLocations.length) {
+      await logSync(
+        supabase,
+        "service_locations",
+        "sync",
+        "in_progress",
+        undefined,
+        `Synced ${processedCount} of ${serviceLocations.length}`,
+        batchId,
+        processedCount,
+        serviceLocations.length
+      );
+    }
+  }
+  
+  await logSync(
+    supabase,
+    "service_locations",
+    "sync",
+    "completed",
+    undefined,
+    `Synced ${created} created, ${updated} updated`,
+    batchId,
+    serviceLocations.length,
+    serviceLocations.length
+  );
+  
+  return { created, updated };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -219,6 +818,8 @@ Deno.serve(async (req) => {
         "webflow_districts_collection_id",
         "webflow_areas_collection_id",
         "webflow_partners_collection_id",
+        "webflow_service_locations_collection_id",
+        "base_url",
       ]);
 
     const settingsMap: Record<string, string> = {};
@@ -233,13 +834,44 @@ Deno.serve(async (req) => {
       districts: { created: 0, updated: 0 },
       areas: { created: 0, updated: 0 },
       partners: { created: 0, updated: 0 },
+      service_locations: { created: 0, updated: 0 },
     };
 
     // Sync order is critical for references
-    const allEntities = ["service_categories", "services", "cities", "districts", "areas", "partners"];
+    const allEntities = ["service_categories", "services", "cities", "districts", "areas", "partners", "service_locations"];
     const entitiesToSync = entityType === "all" ? allEntities : [entityType];
 
     for (const entity of entitiesToSync) {
+      // Special handling for service_locations - generate first, then sync
+      if (entity === "service_locations") {
+        try {
+          // Generate service locations from partner_service_locations
+          const generateResult = await generateServiceLocations(supabase, batchId);
+          console.log(`Generated ${generateResult.generated} new, updated ${generateResult.updated} service locations`);
+          
+          // Then sync to Webflow if collection is configured
+          const collectionId = settingsMap["webflow_service_locations_collection_id"];
+          if (collectionId) {
+            const syncResult = await syncServiceLocationsToWebflow(supabase, webflowApiToken, collectionId, batchId);
+            synced.service_locations = syncResult;
+          } else {
+            console.log("Skipping service_locations Webflow sync: no collection ID configured");
+          }
+        } catch (error) {
+          console.error("Error processing service_locations:", error);
+          await logSync(
+            supabase,
+            "service_locations",
+            "sync",
+            "error",
+            undefined,
+            error instanceof Error ? error.message : "Unknown error",
+            batchId
+          );
+        }
+        continue;
+      }
+      
       const collectionKey = entity === "service_categories" 
         ? "webflow_service_categories_collection_id"
         : `webflow_${entity}_collection_id`;
