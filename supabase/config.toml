@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.webflow-sync]
 verify_jwt = false
+
+[functions.webflow-validate]
+verify_jwt = false
