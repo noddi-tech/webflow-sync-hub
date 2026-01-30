@@ -10,6 +10,7 @@ import Cities from "./pages/Cities";
 import Districts from "./pages/Districts";
 import Areas from "./pages/Areas";
 import Partners from "./pages/Partners";
+import ServiceCategories from "./pages/ServiceCategories";
 import SyncHistory from "./pages/SyncHistory";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -29,6 +30,7 @@ const App = () => (
             <Route path="/cities" element={<Cities />} />
             <Route path="/districts" element={<Districts />} />
             <Route path="/areas" element={<Areas />} />
+            <Route path="/service-categories" element={<ServiceCategories />} />
             <Route path="/partners" element={<Partners />} />
             <Route path="/sync-history" element={<SyncHistory />} />
             <Route path="/settings" element={<Settings />} />
