@@ -5,63 +5,78 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Loader2, Check, X } from "lucide-react";
 import { EntityTable } from "@/components/entities/EntityTable";
 import { DeleteDialog } from "@/components/entities/DeleteDialog";
 import { slugify } from "@/lib/slugify";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import type { Tables, TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 
-const districtSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  slug: z.string().min(1, "Slug is required"),
-  short_description: z.string().optional(),
-  is_delivery: z.boolean().default(false),
-  city_id: z.string().min(1, "City is required"),
-});
+type District = Tables<"districts"> & { cities?: { name: string } };
+type DistrictInsert = TablesInsert<"districts">;
+type DistrictUpdate = TablesUpdate<"districts">;
 
-type DistrictFormValues = z.infer<typeof districtSchema>;
-
-interface District {
-  id: string;
-  name: string;
-  slug: string;
-  short_description: string | null;
-  is_delivery: boolean | null;
+interface DistrictFormData {
   city_id: string;
-  webflow_item_id: string | null;
-  created_at: string;
-  updated_at: string;
-  cities?: { name: string };
+  name: string;
+  name_en: string;
+  name_sv: string;
+  slug: string;
+  slug_en: string;
+  slug_sv: string;
+  short_description: string;
+  intro: string;
+  intro_en: string;
+  intro_sv: string;
+  seo_title: string;
+  seo_title_en: string;
+  seo_title_sv: string;
+  seo_meta_description: string;
+  seo_meta_description_en: string;
+  seo_meta_description_sv: string;
+  sitemap_priority: number;
+  is_delivery: boolean;
 }
 
-interface City {
-  id: string;
-  name: string;
-}
+const emptyFormData: DistrictFormData = {
+  city_id: "",
+  name: "",
+  name_en: "",
+  name_sv: "",
+  slug: "",
+  slug_en: "",
+  slug_sv: "",
+  short_description: "",
+  intro: "",
+  intro_en: "",
+  intro_sv: "",
+  seo_title: "",
+  seo_title_en: "",
+  seo_title_sv: "",
+  seo_meta_description: "",
+  seo_meta_description_en: "",
+  seo_meta_description_sv: "",
+  sitemap_priority: 0.6,
+  is_delivery: false,
+};
 
 export default function Districts() {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [editingDistrict, setEditingDistrict] = useState<District | null>(null);
-  const [deleteDistrict, setDeleteDistrict] = useState<District | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-
-  const form = useForm<DistrictFormValues>({
-    resolver: zodResolver(districtSchema),
-    defaultValues: {
-      name: "",
-      slug: "",
-      short_description: "",
-      is_delivery: false,
-      city_id: "",
-    },
-  });
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [editingDistrict, setEditingDistrict] = useState<District | null>(null);
+  const [deletingDistrict, setDeletingDistrict] = useState<District | null>(null);
+  const [formData, setFormData] = useState<DistrictFormData>(emptyFormData);
 
   const { data: districts = [], isLoading } = useQuery({
     queryKey: ["districts"],
@@ -83,47 +98,38 @@ export default function Districts() {
         .select("id, name")
         .order("name");
       if (error) throw error;
-      return data as City[];
+      return data;
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: async (values: DistrictFormValues) => {
-      const { error } = await supabase.from("districts").insert({
-        name: values.name,
-        slug: values.slug,
-        short_description: values.short_description || null,
-        is_delivery: values.is_delivery,
-        city_id: values.city_id,
-      });
+    mutationFn: async (data: DistrictInsert) => {
+      const { error } = await supabase.from("districts").insert(data);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["districts"] });
       queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
-      setSheetOpen(false);
-      form.reset();
-      toast({ title: "District created" });
+      toast({ title: "District created successfully" });
+      closeDialog();
     },
-    onError: (error: any) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast({ title: "Error creating district", description: error.message, variant: "destructive" });
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, values }: { id: string; values: DistrictFormValues }) => {
-      const { error } = await supabase.from("districts").update(values).eq("id", id);
+    mutationFn: async ({ id, data }: { id: string; data: DistrictUpdate }) => {
+      const { error } = await supabase.from("districts").update(data).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["districts"] });
-      setSheetOpen(false);
-      setEditingDistrict(null);
-      form.reset();
-      toast({ title: "District updated" });
+      toast({ title: "District updated successfully" });
+      closeDialog();
     },
-    onError: (error: any) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast({ title: "Error updating district", description: error.message, variant: "destructive" });
     },
   });
 
@@ -135,38 +141,109 @@ export default function Districts() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["districts"] });
       queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
-      setDeleteDistrict(null);
-      toast({ title: "District deleted" });
+      toast({ title: "District deleted successfully" });
+      setIsDeleteDialogOpen(false);
+      setDeletingDistrict(null);
     },
-    onError: (error: any) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    onError: (error) => {
+      toast({ title: "Error deleting district", description: error.message, variant: "destructive" });
     },
   });
 
-  const handleEdit = (district: District) => {
-    setEditingDistrict(district);
-    form.reset({
-      name: district.name,
-      slug: district.slug,
-      short_description: district.short_description ?? "",
-      is_delivery: district.is_delivery ?? false,
-      city_id: district.city_id,
-    });
-    setSheetOpen(true);
+  const closeDialog = () => {
+    setIsDialogOpen(false);
+    setEditingDistrict(null);
+    setFormData(emptyFormData);
   };
 
-  const handleSubmit = (values: DistrictFormValues) => {
+  const openCreateDialog = () => {
+    setFormData(emptyFormData);
+    setEditingDistrict(null);
+    setIsDialogOpen(true);
+  };
+
+  const openEditDialog = (district: District) => {
+    setEditingDistrict(district);
+    setFormData({
+      city_id: district.city_id || "",
+      name: district.name || "",
+      name_en: district.name_en || "",
+      name_sv: district.name_sv || "",
+      slug: district.slug || "",
+      slug_en: district.slug_en || "",
+      slug_sv: district.slug_sv || "",
+      short_description: district.short_description || "",
+      intro: district.intro || "",
+      intro_en: district.intro_en || "",
+      intro_sv: district.intro_sv || "",
+      seo_title: district.seo_title || "",
+      seo_title_en: district.seo_title_en || "",
+      seo_title_sv: district.seo_title_sv || "",
+      seo_meta_description: district.seo_meta_description || "",
+      seo_meta_description_en: district.seo_meta_description_en || "",
+      seo_meta_description_sv: district.seo_meta_description_sv || "",
+      sitemap_priority: district.sitemap_priority ?? 0.6,
+      is_delivery: district.is_delivery ?? false,
+    });
+    setIsDialogOpen(true);
+  };
+
+  const openDeleteDialog = (district: District) => {
+    setDeletingDistrict(district);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const payload = {
+      city_id: formData.city_id,
+      name: formData.name,
+      name_en: formData.name_en || null,
+      name_sv: formData.name_sv || null,
+      slug: formData.slug,
+      slug_en: formData.slug_en || null,
+      slug_sv: formData.slug_sv || null,
+      short_description: formData.short_description || null,
+      intro: formData.intro || null,
+      intro_en: formData.intro_en || null,
+      intro_sv: formData.intro_sv || null,
+      seo_title: formData.seo_title || null,
+      seo_title_en: formData.seo_title_en || null,
+      seo_title_sv: formData.seo_title_sv || null,
+      seo_meta_description: formData.seo_meta_description || null,
+      seo_meta_description_en: formData.seo_meta_description_en || null,
+      seo_meta_description_sv: formData.seo_meta_description_sv || null,
+      sitemap_priority: formData.sitemap_priority,
+      is_delivery: formData.is_delivery,
+    };
+
     if (editingDistrict) {
-      updateMutation.mutate({ id: editingDistrict.id, values });
+      updateMutation.mutate({ id: editingDistrict.id, data: payload });
     } else {
-      createMutation.mutate(values);
+      createMutation.mutate(payload);
     }
   };
 
-  const handleNameChange = (name: string) => {
-    form.setValue("name", name);
-    if (!editingDistrict) {
-      form.setValue("slug", slugify(name));
+  const handleNameChange = (value: string, locale: "no" | "en" | "sv") => {
+    if (locale === "no") {
+      setFormData(prev => ({
+        ...prev,
+        name: value,
+        slug: slugify(value),
+      }));
+    } else if (locale === "en") {
+      setFormData(prev => ({
+        ...prev,
+        name_en: value,
+        slug_en: slugify(value),
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        name_sv: value,
+        slug_sv: slugify(value),
+      }));
     }
   };
 
@@ -176,7 +253,7 @@ export default function Districts() {
     {
       key: "cities",
       label: "City",
-      render: (_: any, row: District) => row.cities?.name ?? "-",
+      render: (_: unknown, row: District) => row.cities?.name ?? "-",
     },
     {
       key: "is_delivery",
@@ -190,133 +267,267 @@ export default function Districts() {
     },
   ];
 
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
   return (
-    <div className="p-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Districts</h1>
-          <p className="text-muted-foreground mt-1">Manage district records</p>
+          <h1 className="text-3xl font-bold">Districts</h1>
+          <p className="text-muted-foreground">Manage district records</p>
         </div>
-        <Sheet open={sheetOpen} onOpenChange={(open) => {
-          setSheetOpen(open);
-          if (!open) {
-            setEditingDistrict(null);
-            form.reset();
-          }
-        }}>
-          <SheetTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Add District
-            </Button>
-          </SheetTrigger>
-          <SheetContent>
-            <SheetHeader>
-              <SheetTitle>{editingDistrict ? "Edit District" : "Add District"}</SheetTitle>
-            </SheetHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4 mt-4">
-                <FormField
-                  control={form.control}
-                  name="city_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>City</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select a city" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {cities.map((city) => (
-                            <SelectItem key={city.id} value={city.id}>
-                              {city.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Name</FormLabel>
-                      <FormControl>
-                        <Input {...field} onChange={(e) => handleNameChange(e.target.value)} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="slug"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Slug</FormLabel>
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="short_description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Short Description</FormLabel>
-                      <FormControl>
-                        <Textarea {...field} rows={3} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="is_delivery"
-                  render={({ field }) => (
-                    <FormItem className="flex items-center justify-between">
-                      <FormLabel>Delivery Available</FormLabel>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <Button type="submit" className="w-full" disabled={createMutation.isPending || updateMutation.isPending}>
-                  {(createMutation.isPending || updateMutation.isPending) && (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  )}
-                  {editingDistrict ? "Update District" : "Create District"}
-                </Button>
-              </form>
-            </Form>
-          </SheetContent>
-        </Sheet>
+        <Button onClick={openCreateDialog}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add District
+        </Button>
       </div>
 
       <EntityTable
         columns={columns}
         data={districts}
         isLoading={isLoading}
-        onEdit={handleEdit}
-        onDelete={setDeleteDistrict}
+        onEdit={openEditDialog}
+        onDelete={openDeleteDialog}
       />
 
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingDistrict ? "Edit District" : "Create District"}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {editingDistrict?.shared_key && (
+              <div className="space-y-2">
+                <Label>Shared Key</Label>
+                <Input value={editingDistrict.shared_key} disabled className="bg-muted" />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="city_id">City *</Label>
+              <Select
+                value={formData.city_id}
+                onValueChange={(value) => setFormData(prev => ({ ...prev, city_id: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a city" />
+                </SelectTrigger>
+                <SelectContent>
+                  {cities.map((city) => (
+                    <SelectItem key={city.id} value={city.id}>
+                      {city.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="sitemap_priority">Sitemap Priority</Label>
+                <Input
+                  id="sitemap_priority"
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="1"
+                  value={formData.sitemap_priority}
+                  onChange={(e) => setFormData(prev => ({ ...prev, sitemap_priority: parseFloat(e.target.value) || 0.6 }))}
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-8">
+                <Switch
+                  id="is_delivery"
+                  checked={formData.is_delivery}
+                  onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_delivery: checked }))}
+                />
+                <Label htmlFor="is_delivery">Delivery Available</Label>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="short_description">Short Description</Label>
+              <Textarea
+                id="short_description"
+                value={formData.short_description}
+                onChange={(e) => setFormData(prev => ({ ...prev, short_description: e.target.value }))}
+                rows={2}
+              />
+            </div>
+
+            <Tabs defaultValue="no" className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="no">Norwegian</TabsTrigger>
+                <TabsTrigger value="en">English</TabsTrigger>
+                <TabsTrigger value="sv">Swedish</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="no" className="space-y-4 mt-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name *</Label>
+                    <Input
+                      id="name"
+                      value={formData.name}
+                      onChange={(e) => handleNameChange(e.target.value, "no")}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="slug">Slug *</Label>
+                    <Input
+                      id="slug"
+                      value={formData.slug}
+                      onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="intro">Intro</Label>
+                  <Textarea
+                    id="intro"
+                    value={formData.intro}
+                    onChange={(e) => setFormData(prev => ({ ...prev, intro: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_title">SEO Title</Label>
+                  <Input
+                    id="seo_title"
+                    value={formData.seo_title}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_title: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_meta_description">SEO Meta Description</Label>
+                  <Textarea
+                    id="seo_meta_description"
+                    value={formData.seo_meta_description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_meta_description: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="en" className="space-y-4 mt-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name_en">Name (EN)</Label>
+                    <Input
+                      id="name_en"
+                      value={formData.name_en}
+                      onChange={(e) => handleNameChange(e.target.value, "en")}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="slug_en">Slug (EN)</Label>
+                    <Input
+                      id="slug_en"
+                      value={formData.slug_en}
+                      onChange={(e) => setFormData(prev => ({ ...prev, slug_en: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="intro_en">Intro (EN)</Label>
+                  <Textarea
+                    id="intro_en"
+                    value={formData.intro_en}
+                    onChange={(e) => setFormData(prev => ({ ...prev, intro_en: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_title_en">SEO Title (EN)</Label>
+                  <Input
+                    id="seo_title_en"
+                    value={formData.seo_title_en}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_title_en: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_meta_description_en">SEO Meta Description (EN)</Label>
+                  <Textarea
+                    id="seo_meta_description_en"
+                    value={formData.seo_meta_description_en}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_meta_description_en: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="sv" className="space-y-4 mt-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name_sv">Name (SV)</Label>
+                    <Input
+                      id="name_sv"
+                      value={formData.name_sv}
+                      onChange={(e) => handleNameChange(e.target.value, "sv")}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="slug_sv">Slug (SV)</Label>
+                    <Input
+                      id="slug_sv"
+                      value={formData.slug_sv}
+                      onChange={(e) => setFormData(prev => ({ ...prev, slug_sv: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="intro_sv">Intro (SV)</Label>
+                  <Textarea
+                    id="intro_sv"
+                    value={formData.intro_sv}
+                    onChange={(e) => setFormData(prev => ({ ...prev, intro_sv: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_title_sv">SEO Title (SV)</Label>
+                  <Input
+                    id="seo_title_sv"
+                    value={formData.seo_title_sv}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_title_sv: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_meta_description_sv">SEO Meta Description (SV)</Label>
+                  <Textarea
+                    id="seo_meta_description_sv"
+                    value={formData.seo_meta_description_sv}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_meta_description_sv: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={closeDialog}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isPending}>
+                {isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {editingDistrict ? "Update" : "Create"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <DeleteDialog
-        open={!!deleteDistrict}
-        onOpenChange={() => setDeleteDistrict(null)}
-        onConfirm={() => deleteDistrict && deleteMutation.mutate(deleteDistrict.id)}
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+        onConfirm={() => deletingDistrict && deleteMutation.mutate(deletingDistrict.id)}
         title="Delete District"
-        description={`Are you sure you want to delete "${deleteDistrict?.name}"? This will also delete all associated areas.`}
+        description={`Are you sure you want to delete "${deletingDistrict?.name}"? This will also delete all associated areas.`}
+        isPending={deleteMutation.isPending}
       />
     </div>
   );
