@@ -40,6 +40,15 @@ const columns = [
       </span>
     ),
   },
+  {
+    key: "webflow_item_id",
+    label: "Synced",
+    render: (value: string | null) => (
+      <span className={value ? "text-green-600" : "text-muted-foreground"}>
+        {value ? "✓" : "—"}
+      </span>
+    ),
+  },
 ];
 
 export default function ServiceCategories() {
@@ -129,6 +138,7 @@ export default function ServiceCategories() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["service_categories"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
       toast({
         title: editingItem ? "Category updated" : "Category created",
         description: "Service category has been saved successfully.",
@@ -154,6 +164,7 @@ export default function ServiceCategories() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["service_categories"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
       toast({
         title: "Category deleted",
         description: "Service category has been removed.",

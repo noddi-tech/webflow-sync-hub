@@ -117,6 +117,7 @@ export default function Services() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["services"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
       toast({ title: "Service created successfully" });
       closeDialog();
     },
@@ -147,6 +148,7 @@ export default function Services() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["services"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
       toast({ title: "Service deleted successfully" });
       setIsDeleteDialogOpen(false);
       setDeletingService(null);
@@ -273,6 +275,15 @@ export default function Services() {
       label: "Active",
       render: (value: boolean) => value ? "Yes" : "No"
     },
+    {
+      key: "webflow_item_id",
+      label: "Synced",
+      render: (value: string | null) => (
+        <span className={value ? "text-green-600" : "text-muted-foreground"}>
+          {value ? "✓" : "—"}
+        </span>
+      ),
+    },
   ];
 
   const isPending = createMutation.isPending || updateMutation.isPending;
@@ -306,6 +317,18 @@ export default function Services() {
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-6">
+            {editingService?.shared_key && (
+              <div className="space-y-2">
+                <Label>Shared Key</Label>
+                <Input
+                  value={editingService.shared_key}
+                  disabled
+                  className="bg-muted"
+                />
+                <p className="text-xs text-muted-foreground">Read-only identifier used for syncing</p>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="service_category_id">Category</Label>

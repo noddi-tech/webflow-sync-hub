@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -17,10 +17,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Filter, ExternalLink, MapPin } from "lucide-react";
+import { Filter, ExternalLink, MapPin, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
 interface ServiceLocation {
   id: string;
@@ -42,6 +43,8 @@ interface ServiceLocation {
 }
 
 export default function ServiceLocations() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [filterService, setFilterService] = useState<string>("");
   const [filterCity, setFilterCity] = useState<string>("");
 
@@ -104,6 +107,38 @@ export default function ServiceLocations() {
     },
   });
 
+  // Regenerate mutation - calls sync with only service_locations
+  const regenerateMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("webflow-sync", {
+        body: { entity_type: "service_locations" },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["service-locations"] });
+      queryClient.invalidateQueries({ queryKey: ["service-location-partner-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
+      
+      const serviceLocations = data.synced?.service_locations;
+      toast({
+        title: "Regeneration Complete",
+        description: serviceLocations 
+          ? `Created ${serviceLocations.created} and updated ${serviceLocations.updated} service locations.`
+          : "Service locations regenerated successfully.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Regeneration Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const clearFilters = () => {
     setFilterService("");
     setFilterCity("");
@@ -116,11 +151,20 @@ export default function ServiceLocations() {
 
   return (
     <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Service Locations</h1>
-        <p className="text-muted-foreground mt-1">
-          Computed SEO pages based on partner coverage (read-only)
-        </p>
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Service Locations</h1>
+          <p className="text-muted-foreground mt-1">
+            Computed SEO pages based on partner coverage (read-only)
+          </p>
+        </div>
+        <Button 
+          onClick={() => regenerateMutation.mutate()}
+          disabled={regenerateMutation.isPending}
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${regenerateMutation.isPending ? "animate-spin" : ""}`} />
+          {regenerateMutation.isPending ? "Regenerating..." : "Regenerate All"}
+        </Button>
       </div>
 
       {/* Info Card */}
@@ -132,7 +176,7 @@ export default function ServiceLocations() {
               <p className="text-sm text-muted-foreground">
                 Service Locations are automatically computed based on Partner Service Locations. 
                 Each unique combination of Service + Location that has at least one partner creates a Service Location.
-                These are synced to Webflow as SEO-optimized landing pages.
+                These are synced to Webflow as SEO-optimized landing pages. Click "Regenerate All" to recompute from partner coverage.
               </p>
             </div>
           </div>
