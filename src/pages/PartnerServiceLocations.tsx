@@ -381,10 +381,10 @@ export default function PartnerServiceLocations() {
             <div className="space-y-2">
               <Label>District (optional)</Label>
               <Select
-                value={formData.district_id}
+                value={formData.district_id || "__none__"}
                 onValueChange={(v) => setFormData({ 
                   ...formData, 
-                  district_id: v, 
+                  district_id: v === "__none__" ? "" : v, 
                   area_id: "" 
                 })}
                 disabled={!formData.city_id}
@@ -393,7 +393,7 @@ export default function PartnerServiceLocations() {
                   <SelectValue placeholder="Select district" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="__none__">None</SelectItem>
                   {districts?.map((d) => (
                     <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
                   ))}
@@ -404,15 +404,15 @@ export default function PartnerServiceLocations() {
             <div className="space-y-2">
               <Label>Area (optional)</Label>
               <Select
-                value={formData.area_id}
-                onValueChange={(v) => setFormData({ ...formData, area_id: v })}
+                value={formData.area_id || "__none__"}
+                onValueChange={(v) => setFormData({ ...formData, area_id: v === "__none__" ? "" : v })}
                 disabled={!formData.district_id}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select area" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="__none__">None</SelectItem>
                   {areas?.map((a) => (
                     <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
                   ))}
