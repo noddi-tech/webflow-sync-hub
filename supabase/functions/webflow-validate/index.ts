@@ -145,6 +145,25 @@ interface DataCompletenessStats {
   name_sv: number;
 }
 
+interface SEOQualityIssue {
+  id: string;
+  slug: string;
+  seo_title?: string;
+  seo_meta_description?: string;
+  issue_type: string;
+}
+
+interface SEOQualityStats {
+  duplicate_seo_titles: number;
+  duplicate_meta_descriptions: number;
+  invalid_json_ld: number;
+  short_intro_content: number;
+  noindex_with_partners: number;
+  missing_canonical_urls: number;
+  issues: SEOQualityIssue[];
+  score: number;
+}
+
 async function fetchCollectionSchema(
   collectionId: string,
   apiToken: string
@@ -255,6 +274,254 @@ async function fetchDataCompleteness(
   }
 
   return results;
+}
+
+// Validate JSON-LD structure
+function validateJsonLd(jsonLdString: string | null): { valid: boolean; errors: string[] } {
+  if (!jsonLdString) {
+    return { valid: false, errors: ["Missing JSON-LD"] };
+  }
+
+  try {
+    const jsonLd = JSON.parse(jsonLdString);
+    const errors: string[] = [];
+
+    // Check required Schema.org fields
+    if (jsonLd["@context"] !== "https://schema.org") {
+      errors.push("Invalid @context");
+    }
+    if (!jsonLd["@type"]) {
+      errors.push("Missing @type");
+    }
+    if (!jsonLd.serviceType) {
+      errors.push("Missing serviceType");
+    }
+    if (!jsonLd.areaServed) {
+      errors.push("Missing areaServed");
+    }
+    if (!jsonLd.url) {
+      errors.push("Missing url");
+    }
+
+    return { valid: errors.length === 0, errors };
+  } catch {
+    return { valid: false, errors: ["Invalid JSON syntax"] };
+  }
+}
+
+// Count words in text (approximation)
+function countWords(text: string | null): number {
+  if (!text) return 0;
+  // Strip HTML tags for accurate word count
+  const stripped = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return stripped.split(" ").filter(w => w.length > 0).length;
+}
+
+async function fetchSEOQualityStats(supabase: any): Promise<SEOQualityStats> {
+  const issues: SEOQualityIssue[] = [];
+  let duplicateTitles = 0;
+  let duplicateDescriptions = 0;
+  let invalidJsonLd = 0;
+  let shortIntro = 0;
+  let noindexWithPartners = 0;
+  let missingCanonicalUrls = 0;
+
+  try {
+    // Fetch all service locations for analysis
+    const { data: serviceLocations, error } = await supabase
+      .from("service_locations")
+      .select(`
+        id,
+        slug,
+        seo_title,
+        seo_meta_description,
+        hero_content,
+        structured_data_json,
+        canonical_url,
+        noindex
+      `);
+
+    if (error) {
+      console.error("Error fetching service locations for SEO quality:", error);
+      return {
+        duplicate_seo_titles: 0,
+        duplicate_meta_descriptions: 0,
+        invalid_json_ld: 0,
+        short_intro_content: 0,
+        noindex_with_partners: 0,
+        missing_canonical_urls: 0,
+        issues: [],
+        score: 100,
+      };
+    }
+
+    if (!serviceLocations || serviceLocations.length === 0) {
+      return {
+        duplicate_seo_titles: 0,
+        duplicate_meta_descriptions: 0,
+        invalid_json_ld: 0,
+        short_intro_content: 0,
+        noindex_with_partners: 0,
+        missing_canonical_urls: 0,
+        issues: [],
+        score: 100,
+      };
+    }
+
+    // Check for duplicate SEO titles
+    const titleCounts = new Map<string, string[]>();
+    for (const sl of serviceLocations) {
+      if (sl.seo_title) {
+        const existing = titleCounts.get(sl.seo_title) || [];
+        existing.push(sl.id);
+        titleCounts.set(sl.seo_title, existing);
+      }
+    }
+    for (const [title, ids] of titleCounts) {
+      if (ids.length > 1) {
+        duplicateTitles += ids.length;
+        ids.forEach(id => {
+          const sl = serviceLocations.find((s: any) => s.id === id);
+          issues.push({
+            id,
+            slug: sl?.slug || "",
+            seo_title: title,
+            issue_type: "duplicate_title",
+          });
+        });
+      }
+    }
+
+    // Check for duplicate meta descriptions
+    const descCounts = new Map<string, string[]>();
+    for (const sl of serviceLocations) {
+      if (sl.seo_meta_description) {
+        const existing = descCounts.get(sl.seo_meta_description) || [];
+        existing.push(sl.id);
+        descCounts.set(sl.seo_meta_description, existing);
+      }
+    }
+    for (const [desc, ids] of descCounts) {
+      if (ids.length > 1) {
+        duplicateDescriptions += ids.length;
+        ids.forEach(id => {
+          const sl = serviceLocations.find((s: any) => s.id === id);
+          issues.push({
+            id,
+            slug: sl?.slug || "",
+            seo_meta_description: desc.substring(0, 50) + "...",
+            issue_type: "duplicate_description",
+          });
+        });
+      }
+    }
+
+    // Check JSON-LD validity
+    for (const sl of serviceLocations) {
+      const { valid } = validateJsonLd(sl.structured_data_json);
+      if (!valid) {
+        invalidJsonLd++;
+        issues.push({
+          id: sl.id,
+          slug: sl.slug || "",
+          issue_type: "invalid_json_ld",
+        });
+      }
+    }
+
+    // Check intro content length (should be ~200+ words)
+    const MIN_WORD_COUNT = 150;
+    for (const sl of serviceLocations) {
+      const wordCount = countWords(sl.hero_content);
+      if (wordCount < MIN_WORD_COUNT) {
+        shortIntro++;
+        issues.push({
+          id: sl.id,
+          slug: sl.slug || "",
+          issue_type: "short_intro",
+        });
+      }
+    }
+
+    // Check missing canonical URLs
+    for (const sl of serviceLocations) {
+      if (!sl.canonical_url) {
+        missingCanonicalUrls++;
+        issues.push({
+          id: sl.id,
+          slug: sl.slug || "",
+          issue_type: "missing_canonical",
+        });
+      }
+    }
+
+    // Check noindex pages with partners
+    const { data: serviceLocationPartners } = await supabase
+      .from("service_location_partners")
+      .select("service_location_id, partner_id");
+
+    const partnersByLocation = new Map<string, number>();
+    if (serviceLocationPartners) {
+      for (const slp of serviceLocationPartners) {
+        const count = partnersByLocation.get(slp.service_location_id) || 0;
+        partnersByLocation.set(slp.service_location_id, count + 1);
+      }
+    }
+
+    for (const sl of serviceLocations) {
+      if (sl.noindex && (partnersByLocation.get(sl.id) || 0) > 0) {
+        noindexWithPartners++;
+        issues.push({
+          id: sl.id,
+          slug: sl.slug || "",
+          issue_type: "noindex_with_partners",
+        });
+      }
+    }
+
+    // Calculate SEO score (0-100)
+    const totalLocations = serviceLocations.length;
+    const totalIssues = duplicateTitles + duplicateDescriptions + invalidJsonLd + shortIntro + noindexWithPartners + missingCanonicalUrls;
+    const issueWeight = {
+      duplicate_title: 5,
+      duplicate_description: 3,
+      invalid_json_ld: 10,
+      short_intro: 2,
+      noindex_with_partners: 4,
+      missing_canonical: 8,
+    };
+
+    let weightedIssues = 0;
+    for (const issue of issues) {
+      weightedIssues += issueWeight[issue.issue_type as keyof typeof issueWeight] || 1;
+    }
+
+    const maxPenalty = totalLocations * 10; // Max possible penalty
+    const score = Math.max(0, Math.round(100 - (weightedIssues / Math.max(maxPenalty, 1)) * 100));
+
+    return {
+      duplicate_seo_titles: duplicateTitles,
+      duplicate_meta_descriptions: duplicateDescriptions,
+      invalid_json_ld: invalidJsonLd,
+      short_intro_content: shortIntro,
+      noindex_with_partners: noindexWithPartners,
+      missing_canonical_urls: missingCanonicalUrls,
+      issues: issues.slice(0, 50), // Limit to first 50 issues for performance
+      score,
+    };
+  } catch (error) {
+    console.error("Error calculating SEO quality stats:", error);
+    return {
+      duplicate_seo_titles: 0,
+      duplicate_meta_descriptions: 0,
+      invalid_json_ld: 0,
+      short_intro_content: 0,
+      noindex_with_partners: 0,
+      missing_canonical_urls: 0,
+      issues: [],
+      score: 100,
+    };
+  }
 }
 
 serve(async (req) => {
@@ -384,11 +651,14 @@ serve(async (req) => {
     // Fetch data completeness
     const dataCompleteness = await fetchDataCompleteness(supabase);
 
+    // Fetch SEO quality stats
+    const seoQuality = await fetchSEOQualityStats(supabase);
+
     // Determine overall status
     let overallStatus: "healthy" | "warning" | "error" = "healthy";
-    if (summary.errors > 0) {
+    if (summary.errors > 0 || seoQuality.invalid_json_ld > 0) {
       overallStatus = "error";
-    } else if (summary.missing_fields > 0 || summary.not_configured > 0) {
+    } else if (summary.missing_fields > 0 || summary.not_configured > 0 || seoQuality.score < 80) {
       overallStatus = "warning";
     }
 
@@ -396,6 +666,7 @@ serve(async (req) => {
       collections: results,
       summary,
       data_completeness: dataCompleteness,
+      seo_quality: seoQuality,
     };
 
     // Store results if requested
