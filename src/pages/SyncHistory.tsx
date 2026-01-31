@@ -30,6 +30,7 @@ import { format, subDays, startOfDay, endOfDay } from "date-fns";
 import { CalendarIcon, ChevronLeft, ChevronRight, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DateRange } from "react-day-picker";
+import { SyncExportButtons } from "@/components/sync/SyncExportButtons";
 
 const PAGE_SIZE = 20;
 
@@ -124,8 +125,12 @@ export default function SyncHistory() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-lg">Filters</CardTitle>
+          <SyncExportButtons 
+            logs={data?.logs || []} 
+            isLoading={isLoading} 
+          />
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4">

@@ -158,17 +158,91 @@ interface LocationData {
   city: any;
   district?: any;
   area?: any;
+  partnerCount?: number;
+}
+
+// Service-specific content variations for richer SEO
+const SERVICE_CONTENT_TEMPLATES: Record<string, Record<string, { serviceDesc: string; callToAction: string }>> = {
+  no: {
+    default: {
+      serviceDesc: "profesjonelle tjenester",
+      callToAction: "Finn en partner som passer dine behov og bestill enkelt via Noddi."
+    },
+    dekkskift: {
+      serviceDesc: "profesjonelt dekkskift og dekkhotell",
+      callToAction: "Våre partnere kommer til deg med utstyr og ekspertise for et trygt og effektivt dekkskift."
+    },
+    bilvask: {
+      serviceDesc: "profesjonell bilvask og bilpleie",
+      callToAction: "Våre partnere tilbyr alt fra rask utvendig vask til komplett interiør- og eksteriørbehandling."
+    },
+    polering: {
+      serviceDesc: "profesjonell polering og lakkbeskyttelse",
+      callToAction: "Gi bilen din en ny glans med ekspert polering og beskyttende behandlinger."
+    }
+  },
+  en: {
+    default: {
+      serviceDesc: "professional services",
+      callToAction: "Find a partner that suits your needs and book easily via Noddi."
+    },
+    dekkskift: {
+      serviceDesc: "professional tire change and tire hotel services",
+      callToAction: "Our partners come to you with equipment and expertise for a safe and efficient tire change."
+    },
+    bilvask: {
+      serviceDesc: "professional car wash and car care",
+      callToAction: "Our partners offer everything from quick exterior wash to complete interior and exterior treatment."
+    },
+    polering: {
+      serviceDesc: "professional polishing and paint protection",
+      callToAction: "Give your car a new shine with expert polishing and protective treatments."
+    }
+  },
+  sv: {
+    default: {
+      serviceDesc: "professionella tjänster",
+      callToAction: "Hitta en partner som passar dina behov och boka enkelt via Noddi."
+    },
+    dekkskift: {
+      serviceDesc: "professionellt däckbyte och däckhotell",
+      callToAction: "Våra partners kommer till dig med utrustning och expertis för ett säkert och effektivt däckbyte."
+    },
+    bilvask: {
+      serviceDesc: "professionell biltvätt och bilvård",
+      callToAction: "Våra partners erbjuder allt från snabb utvändig tvätt till komplett interiör- och exteriörbehandling."
+    },
+    polering: {
+      serviceDesc: "professionell polering och lackskydd",
+      callToAction: "Ge din bil en ny glans med expertpolering och skyddande behandlingar."
+    }
+  }
+};
+
+function getServiceTemplate(locale: string, serviceSlug: string): { serviceDesc: string; callToAction: string } {
+  const localeTemplates = SERVICE_CONTENT_TEMPLATES[locale] || SERVICE_CONTENT_TEMPLATES.no;
+  const normalizedSlug = serviceSlug.toLowerCase();
+  
+  // Try exact match first
+  if (localeTemplates[normalizedSlug]) return localeTemplates[normalizedSlug];
+  
+  // Try partial match
+  for (const key of Object.keys(localeTemplates)) {
+    if (normalizedSlug.includes(key) || key.includes(normalizedSlug)) {
+      return localeTemplates[key];
+    }
+  }
+  
+  return localeTemplates.default;
 }
 
 function generateSEOContent(data: LocationData): Record<string, { title: string; meta: string; intro: string }> {
-  const { service, city, district, area } = data;
+  const { service, city, district, area, partnerCount = 0 } = data;
   const content: Record<string, { title: string; meta: string; intro: string }> = {};
   
   const locales = ['no', 'en', 'sv'] as const;
   
   for (const locale of locales) {
-    const suffix = locale === 'no' ? '' : `_${locale}`;
-    
     const serviceName = locale === 'no' 
       ? service.name 
       : (service[`name_${locale}`] || service.name);
@@ -191,24 +265,68 @@ function generateSEOContent(data: LocationData): Record<string, { title: string;
       locationStr = cityName;
     }
     
-    // Generate locale-specific content
+    const template = getServiceTemplate(locale, service.slug);
+    
+    // Generate locale-specific content with richer ~200+ word intro
     if (locale === 'no') {
+      const partnerText = partnerCount > 1 
+        ? `${partnerCount} kvalifiserte partnere` 
+        : (partnerCount === 1 ? 'en kvalifisert partner' : 'partnere');
+      
       content[locale] = {
         title: `${serviceName} i ${locationStr} - Finn partnere & bestill | Noddi`,
-        meta: `Sammenlign ${serviceName.toLowerCase()} i ${locationStr}, se priser, vurderinger og bestill direkte med lokale partnere.`,
-        intro: `<p>Mobil ${serviceName.toLowerCase()} i ${locationStr} - med erfarne partnere levert til deg. Finn tilbud, sammenlign priser og bestill i dag.</p>`
+        meta: `Sammenlign ${serviceName.toLowerCase()} i ${locationStr} fra ${partnerText}. Se priser, vurderinger og bestill direkte med lokale eksperter.`,
+        intro: `<h2>Mobil ${serviceName.toLowerCase()} i ${locationStr}</h2>
+<p>Leter du etter ${template.serviceDesc} i ${locationStr}? Noddi gjør det enkelt å sammenligne og bestille fra lokale partnere som tilbyr ${serviceName.toLowerCase()} rett der du er.</p>
+
+<h3>Hvorfor velge Noddi?</h3>
+<p>Vi samler de beste leverandørene av ${serviceName.toLowerCase()} i ${locationStr} på én plattform. Se priser, les kundeanmeldelser og book direkte – alt på få minutter. ${partnerCount > 0 ? `Vi har for øyeblikket ${partnerText} tilgjengelig i dette området.` : ''}</p>
+
+<h3>Hvordan det fungerer</h3>
+<p>Velg ønsket tjeneste og tidspunkt, sammenlign tilgjengelige partnere basert på pris og vurderinger, og fullfør bestillingen med noen få klikk. Våre partnere møter deg på avtalt sted, enten det er hjemme, på jobb eller et annet sted som passer deg.</p>
+
+<h3>Kvalitet og trygghet</h3>
+<p>Alle partnere på Noddi er nøye utvalgt for å sikre høy kvalitet og profesjonalitet. ${template.callToAction}</p>`
       };
     } else if (locale === 'en') {
+      const partnerText = partnerCount > 1 
+        ? `${partnerCount} qualified partners` 
+        : (partnerCount === 1 ? 'one qualified partner' : 'partners');
+      
       content[locale] = {
         title: `${serviceName} in ${locationStr} - Find Partners & Book | Noddi`,
-        meta: `Compare ${serviceName.toLowerCase()} in ${locationStr}, see prices, ratings and book directly with local partners.`,
-        intro: `<p>Mobile ${serviceName.toLowerCase()} in ${locationStr} - with experienced partners delivered to you. Find offers, compare prices and book today.</p>`
+        meta: `Compare ${serviceName.toLowerCase()} in ${locationStr} from ${partnerText}. See prices, ratings and book directly with local experts.`,
+        intro: `<h2>Mobile ${serviceName.toLowerCase()} in ${locationStr}</h2>
+<p>Looking for ${template.serviceDesc} in ${locationStr}? Noddi makes it easy to compare and book from local partners offering ${serviceName.toLowerCase()} right where you are.</p>
+
+<h3>Why choose Noddi?</h3>
+<p>We gather the best providers of ${serviceName.toLowerCase()} in ${locationStr} on one platform. See prices, read customer reviews, and book directly – all in just a few minutes. ${partnerCount > 0 ? `We currently have ${partnerText} available in this area.` : ''}</p>
+
+<h3>How it works</h3>
+<p>Select your desired service and time, compare available partners based on price and ratings, and complete your booking in just a few clicks. Our partners meet you at an agreed location, whether at home, at work, or another convenient place.</p>
+
+<h3>Quality and reliability</h3>
+<p>All partners on Noddi are carefully selected to ensure high quality and professionalism. ${template.callToAction}</p>`
       };
     } else if (locale === 'sv') {
+      const partnerText = partnerCount > 1 
+        ? `${partnerCount} kvalificerade partners` 
+        : (partnerCount === 1 ? 'en kvalificerad partner' : 'partners');
+      
       content[locale] = {
         title: `${serviceName} i ${locationStr} - Hitta partners & boka | Noddi`,
-        meta: `Jämför ${serviceName.toLowerCase()} i ${locationStr}, se priser, betyg och boka direkt med lokala partners.`,
-        intro: `<p>Mobil ${serviceName.toLowerCase()} i ${locationStr} - med erfarna partners levererade till dig. Hitta erbjudanden, jämför priser och boka idag.</p>`
+        meta: `Jämför ${serviceName.toLowerCase()} i ${locationStr} från ${partnerText}. Se priser, betyg och boka direkt med lokala experter.`,
+        intro: `<h2>Mobil ${serviceName.toLowerCase()} i ${locationStr}</h2>
+<p>Letar du efter ${template.serviceDesc} i ${locationStr}? Noddi gör det enkelt att jämföra och boka från lokala partners som erbjuder ${serviceName.toLowerCase()} precis där du är.</p>
+
+<h3>Varför välja Noddi?</h3>
+<p>Vi samlar de bästa leverantörerna av ${serviceName.toLowerCase()} i ${locationStr} på en plattform. Se priser, läs kundrecensioner och boka direkt – allt på några minuter. ${partnerCount > 0 ? `Vi har för närvarande ${partnerText} tillgängliga i detta område.` : ''}</p>
+
+<h3>Hur det fungerar</h3>
+<p>Välj önskad tjänst och tid, jämför tillgängliga partners baserat på pris och betyg, och slutför din bokning med några få klick. Våra partners möter dig på en överenskommen plats, oavsett om det är hemma, på jobbet eller en annan lämplig plats.</p>
+
+<h3>Kvalitet och tillförlitlighet</h3>
+<p>Alla partners på Noddi är noggrant utvalda för att säkerställa hög kvalitet och professionalism. ${template.callToAction}</p>`
       };
     }
   }
@@ -295,6 +413,40 @@ function generateStructuredData(
     ? (locale === 'no' ? area.name : (area[`name_${locale}`] || area.name))
     : null;
   
+  // Build nested areaServed structure
+  let areaServed: any;
+  if (areaName && districtName) {
+    areaServed = {
+      "@type": "AdministrativeArea",
+      "name": areaName,
+      "containedInPlace": {
+        "@type": "AdministrativeArea",
+        "name": districtName,
+        "containedInPlace": {
+          "@type": "City",
+          "name": cityName,
+          "addressCountry": "NO"
+        }
+      }
+    };
+  } else if (districtName) {
+    areaServed = {
+      "@type": "AdministrativeArea",
+      "name": districtName,
+      "containedInPlace": {
+        "@type": "City",
+        "name": cityName,
+        "addressCountry": "NO"
+      }
+    };
+  } else {
+    areaServed = {
+      "@type": "City",
+      "name": cityName,
+      "addressCountry": "NO"
+    };
+  }
+  
   let locationName: string;
   if (areaName && districtName) {
     locationName = `${areaName}, ${districtName}, ${cityName}`;
@@ -304,10 +456,14 @@ function generateStructuredData(
     locationName = cityName;
   }
   
-  const structuredData = {
+  const seoContent = generateSEOContent({ service, city, district, area, partnerCount: partners.length });
+  const metaDescription = seoContent[locale]?.meta || '';
+  
+  const structuredData: any = {
     "@context": "https://schema.org",
     "@type": "Service",
     "name": `${serviceName} i ${locationName}`,
+    "description": metaDescription,
     "serviceType": serviceName,
     "provider": partners.slice(0, 10).map(p => ({
       "@type": "LocalBusiness",
@@ -322,12 +478,18 @@ function generateStructuredData(
         } 
       })
     })),
-    "areaServed": {
-      "@type": "City",
-      "name": cityName
-    },
+    "areaServed": areaServed,
     "url": canonicalUrl
   };
+  
+  // Add AggregateOffer if there are partners
+  if (partners.length > 0) {
+    structuredData["offers"] = {
+      "@type": "AggregateOffer",
+      "offerCount": partners.length,
+      "availability": "https://schema.org/InStock"
+    };
+  }
   
   return JSON.stringify(structuredData, null, 2);
 }
@@ -433,16 +595,33 @@ async function generateServiceLocations(supabase: any, batchId: string): Promise
     
     if (!service || !city) {
       console.log(`Skipping location ${key}: missing service or city`);
+      await logSync(
+        supabase,
+        "service_locations",
+        "generate",
+        "skipped",
+        undefined,
+        `Skipped ${key}: missing service or city reference`,
+        batchId
+      );
       continue;
     }
     
-    // Get partner data for this combination
+    // Get partner data for this combination - only active partners
     const locationPartners = combo.partner_ids
       .map(id => partnersMap.get(id))
-      .filter(Boolean);
+      .filter((p: any) => p && p.active !== false);
     
-    // Generate SEO content
-    const locationData: LocationData = { service, city, district, area };
+    const hasActivePartners = locationPartners.length > 0;
+    
+    // Generate SEO content with partner count for richer content
+    const locationData: LocationData = { 
+      service, 
+      city, 
+      district, 
+      area,
+      partnerCount: locationPartners.length 
+    };
     const seoContent = generateSEOContent(locationData);
     
     // Generate canonical URLs
@@ -479,6 +658,12 @@ async function generateServiceLocations(supabase: any, batchId: string): Promise
     
     const { data: existingLocation } = await existingQuery.maybeSingle();
     
+    // Noindex logic: set noindex for pages with zero active partners
+    // Sitemap priority: lower for noindex pages
+    const sitemapPriority = hasActivePartners 
+      ? (area ? 0.4 : (district ? 0.5 : 0.6))
+      : 0.1; // Very low priority for noindex pages
+    
     const serviceLocationData = {
       service_id: combo.service_id,
       city_id: combo.city_id,
@@ -502,8 +687,8 @@ async function generateServiceLocations(supabase: any, batchId: string): Promise
       structured_data_json: structuredDataNo,
       structured_data_json_en: structuredDataEn,
       structured_data_json_sv: structuredDataSv,
-      sitemap_priority: area ? 0.4 : (district ? 0.5 : 0.6),
-      noindex: false,
+      sitemap_priority: sitemapPriority,
+      noindex: !hasActivePartners, // Noindex if no active partners
       updated_at: new Date().toISOString()
     };
     
@@ -597,12 +782,50 @@ async function generateServiceLocations(supabase: any, batchId: string): Promise
   return { generated, updated };
 }
 
+// Pre-sync validation: check if an item has all required localized fields
+interface ValidationResult {
+  valid: boolean;
+  missingFields: string[];
+}
+
+function validateServiceLocationBeforeSync(sl: any): ValidationResult {
+  const missingFields: string[] = [];
+  
+  // Required Norwegian fields
+  if (!sl.slug) missingFields.push('slug');
+  if (!sl.seo_title) missingFields.push('seo_title');
+  if (!sl.seo_meta_description) missingFields.push('seo_meta_description');
+  if (!sl.canonical_url) missingFields.push('canonical_url');
+  
+  // Required references
+  if (!sl.services?.webflow_item_id) missingFields.push('service_webflow_id');
+  if (!sl.cities?.webflow_item_id) missingFields.push('city_webflow_id');
+  
+  // Check English localized fields (warning if missing)
+  if (!sl.seo_title_en) missingFields.push('seo_title_en');
+  if (!sl.seo_meta_description_en) missingFields.push('seo_meta_description_en');
+  
+  // Check Swedish localized fields (warning if missing)
+  if (!sl.seo_title_sv) missingFields.push('seo_title_sv');
+  if (!sl.seo_meta_description_sv) missingFields.push('seo_meta_description_sv');
+  
+  // Critical fields that block sync
+  const criticalMissing = missingFields.filter(f => 
+    ['slug', 'seo_title', 'seo_meta_description', 'canonical_url', 'service_webflow_id', 'city_webflow_id'].includes(f)
+  );
+  
+  return {
+    valid: criticalMissing.length === 0,
+    missingFields
+  };
+}
+
 async function syncServiceLocationsToWebflow(
   supabase: any,
   webflowApiToken: string,
   collectionId: string,
   batchId: string
-): Promise<{ created: number; updated: number }> {
+): Promise<{ created: number; updated: number; skipped: number }> {
   console.log(`Syncing service_locations to collection ${collectionId}...`);
   
   // Fetch all service locations with related data
@@ -625,7 +848,7 @@ async function syncServiceLocationsToWebflow(
   console.log(`Found ${serviceLocations?.length || 0} service locations to sync`);
   
   if (!serviceLocations || serviceLocations.length === 0) {
-    return { created: 0, updated: 0 };
+    return { created: 0, updated: 0, skipped: 0 };
   }
   
   await logSync(
@@ -642,9 +865,32 @@ async function syncServiceLocationsToWebflow(
   
   let created = 0;
   let updated = 0;
+  let skipped = 0;
   let processedCount = 0;
   
   for (const sl of serviceLocations) {
+    // Pre-sync validation
+    const validation = validateServiceLocationBeforeSync(sl);
+    if (!validation.valid) {
+      console.log(`Skipping service_location ${sl.id}: missing critical fields: ${validation.missingFields.join(', ')}`);
+      await logSync(
+        supabase,
+        "service_locations",
+        "sync",
+        "skipped",
+        sl.id,
+        `Skipped: missing fields: ${validation.missingFields.join(', ')}`,
+        batchId
+      );
+      skipped++;
+      processedCount++;
+      continue;
+    }
+    
+    // Log warning for non-critical missing fields
+    if (validation.missingFields.length > 0) {
+      console.warn(`Service location ${sl.id} has incomplete localization: ${validation.missingFields.join(', ')}`);
+    }
     // Get partner webflow IDs
     const partnerWebflowIds = (sl.service_location_partners || [])
       .map((slp: any) => slp.partners?.webflow_item_id)
@@ -753,13 +999,13 @@ async function syncServiceLocationsToWebflow(
     "sync",
     "completed",
     undefined,
-    `Synced ${created} created, ${updated} updated`,
+    `Synced ${created} created, ${updated} updated, ${skipped} skipped`,
     batchId,
     serviceLocations.length,
     serviceLocations.length
   );
   
-  return { created, updated };
+  return { created, updated, skipped };
 }
 
 Deno.serve(async (req) => {
