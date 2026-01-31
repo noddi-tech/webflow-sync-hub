@@ -10,6 +10,15 @@ interface MissingFieldInfo {
   slug: string;
   type: string;
   required: boolean;
+  description?: string;
+}
+
+interface FoundFieldInfo {
+  slug: string;
+  type: string;
+  displayName: string;
+  helpText: string;
+  description: string;
 }
 
 interface CollectionHealthCardProps {
@@ -20,6 +29,7 @@ interface CollectionHealthCardProps {
     status: "ok" | "missing_fields" | "not_configured" | "error";
     expected_fields: string[];
     found_fields: string[];
+    found_fields_detailed?: FoundFieldInfo[];
     missing_in_webflow: string[];
     missing_in_webflow_typed?: MissingFieldInfo[];
     missing_required: string[];
@@ -62,8 +72,8 @@ function groupFieldsByType(fields: MissingFieldInfo[]): Record<string, MissingFi
 
 export function CollectionHealthCard({ name, collection }: CollectionHealthCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showAllFields, setShowAllFields] = useState(false);
   const { toast } = useToast();
-
   const getStatusIcon = () => {
     switch (collection.status) {
       case "ok":
@@ -109,7 +119,8 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
       text += `${webflowType} Fields:\n`;
       for (const field of fields) {
         const requiredLabel = field.required ? " (REQUIRED)" : "";
-        text += `- ${field.slug}${requiredLabel}\n`;
+        const desc = field.description ? ` - ${field.description}` : "";
+        text += `- ${field.slug}${requiredLabel}${desc}\n`;
       }
       text += "\n";
     }
@@ -121,12 +132,36 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
     });
   };
 
+  const getFieldDescription = (slug: string): string => {
+    // First check found_fields_detailed
+    const foundField = collection.found_fields_detailed?.find(f => f.slug === slug);
+    if (foundField?.description) return foundField.description;
+    if (foundField?.helpText) return foundField.helpText;
+    
+    // Then check missing_in_webflow_typed
+    const missingField = collection.missing_in_webflow_typed?.find(f => f.slug === slug);
+    if (missingField?.description) return missingField.description;
+    
+    return "";
+  };
+
+  const getFieldType = (slug: string): string => {
+    const foundField = collection.found_fields_detailed?.find(f => f.slug === slug);
+    if (foundField) return foundField.type;
+    
+    const missingField = collection.missing_in_webflow_typed?.find(f => f.slug === slug);
+    if (missingField) return missingField.type;
+    
+    return "";
+  };
   const hasDetails = collection.missing_in_webflow.length > 0 || 
                      collection.extra_in_webflow.length > 0 || 
                      collection.error_message;
 
   const typedMissingFields = collection.missing_in_webflow_typed || [];
   const groupedMissingFields = groupFieldsByType(typedMissingFields);
+
+  const foundFieldsDetailed = collection.found_fields_detailed || [];
 
   return (
     <div className="border rounded-lg p-3 bg-card hover:border-primary/30 transition-colors">
@@ -136,9 +171,16 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
             {getStatusIcon()}
             <div>
               <p className="font-medium text-sm">{COLLECTION_LABELS[name] || name}</p>
-              <p className="text-xs text-muted-foreground">
-                {collection.found_fields.length} fields mapped
-              </p>
+              <button 
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsExpanded(true);
+                  setShowAllFields(!showAllFields);
+                }}
+              >
+                {collection.found_fields.length} fields mapped {showAllFields ? "▲" : "▼"}
+              </button>
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -164,6 +206,45 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
             </div>
           )}
 
+          {/* Show All Mapped Fields */}
+          {showAllFields && foundFieldsDetailed.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 text-green-500" />
+                Mapped Fields ({foundFieldsDetailed.length})
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {foundFieldsDetailed.map((field) => {
+                  const webflowType = WEBFLOW_TYPE_LABELS[field.type] || field.type;
+                  const description = field.description || field.helpText;
+                  
+                  return (
+                    <TooltipProvider key={field.slug}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge 
+                            variant="outline" 
+                            className="text-xs cursor-help bg-green-500/10 border-green-500/20"
+                          >
+                            {field.slug}
+                            <Info className="h-2 w-2 ml-1 opacity-50" />
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs font-medium">{field.displayName || field.slug}</p>
+                          <p className="text-xs text-muted-foreground">Type: {webflowType}</p>
+                          {description && (
+                            <p className="text-xs mt-1">{description}</p>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {collection.missing_required.length > 0 && (
             <div className="space-y-1">
               <p className="text-xs font-medium text-destructive flex items-center gap-1">
@@ -173,10 +254,24 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
               <div className="flex flex-wrap gap-1">
                 {collection.missing_required.map((field) => {
                   const fieldInfo = typedMissingFields.find(f => f.slug === field);
+                  const description = fieldInfo?.description || "";
                   return (
-                    <Badge key={field} variant="destructive" className="text-xs">
-                      {field} {fieldInfo && `(${WEBFLOW_TYPE_LABELS[fieldInfo.type] || fieldInfo.type})`}
-                    </Badge>
+                    <TooltipProvider key={field}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="destructive" className="text-xs cursor-help">
+                            {field} {fieldInfo && `(${WEBFLOW_TYPE_LABELS[fieldInfo.type] || fieldInfo.type})`}
+                            <Info className="h-2 w-2 ml-1 opacity-50" />
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs font-medium">{field}</p>
+                          {description && (
+                            <p className="text-xs mt-1">{description}</p>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   );
                 })}
               </div>
