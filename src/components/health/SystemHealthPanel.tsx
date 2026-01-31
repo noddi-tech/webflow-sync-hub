@@ -34,6 +34,15 @@ interface MissingFieldInfo {
   slug: string;
   type: string;
   required: boolean;
+  description?: string;
+}
+
+interface FoundFieldInfo {
+  slug: string;
+  type: string;
+  displayName: string;
+  helpText: string;
+  description: string;
 }
 
 interface ValidationResults {
@@ -43,6 +52,7 @@ interface ValidationResults {
     status: "ok" | "missing_fields" | "not_configured" | "error";
     expected_fields: string[];
     found_fields: string[];
+    found_fields_detailed?: FoundFieldInfo[];
     missing_in_webflow: string[];
     missing_in_webflow_typed?: MissingFieldInfo[];
     missing_required: string[];

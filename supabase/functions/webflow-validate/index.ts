@@ -7,153 +7,152 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-// Expected field mappings for each collection (updated to match actual Webflow field slugs)
-// Complete field mappings for each Webflow collection - ALL fields from the SEO architecture
-const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; required: boolean }>> = {
+// Expected field mappings for each collection with descriptions
+const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; required: boolean; description: string }>> = {
   cities: [
     // Core fields
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: true, description: "The city's display name (localized). Used in page titles and headers." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the city page. Used in canonical URLs." },
     // Identity
-    { slug: "shared-key-city", type: "PlainText", required: false },
+    { slug: "shared-key-city", type: "PlainText", required: false, description: "Internal stable identifier for sync matching across locales." },
     // SEO fields
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
-    { slug: "intro-content", type: "RichText", required: false },
-    { slug: "sitemap-priority", type: "Number", required: false },
+    { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for this city page (localized)." },
+    { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description tag (localized) for search engines." },
+    { slug: "intro-content", type: "RichText", required: false, description: "Rich text description of the city for SEO and user context." },
+    { slug: "sitemap-priority", type: "Number", required: false, description: "Control over sitemap importance for search engines (0.0-1.0)." },
     // Control fields
-    { slug: "is-delivery", type: "Switch", required: false },
-    { slug: "noindex", type: "Switch", required: false },
+    { slug: "is-delivery", type: "Switch", required: false, description: "UI flag to control visibility in selection filters." },
+    { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed by search engines." },
     // Navigation multi-refs
-    { slug: "districts", type: "ItemRefSet", required: false },
-    { slug: "areas", type: "ItemRefSet", required: false },
+    { slug: "districts", type: "ItemRefSet", required: false, description: "Child districts for navigation and internal linking." },
+    { slug: "areas", type: "ItemRefSet", required: false, description: "Child areas for navigational context." },
   ],
   districts: [
     // Core fields
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: true, description: "The district's display name (localized)." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the district page." },
     // Reference
-    { slug: "city", type: "ItemRef", required: true },
+    { slug: "city", type: "ItemRef", required: true, description: "Parent city reference for breadcrumb and hierarchy." },
     // Identity
-    { slug: "shared-key-district", type: "PlainText", required: false },
+    { slug: "shared-key-district", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // SEO fields
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
-    { slug: "intro-content", type: "RichText", required: false },
-    { slug: "sitemap-priority", type: "Number", required: false },
+    { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for this district page." },
+    { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
+    { slug: "intro-content", type: "RichText", required: false, description: "Rich text description of the district." },
+    { slug: "sitemap-priority", type: "Number", required: false, description: "Sitemap priority value (0.0-1.0)." },
     // Control fields
-    { slug: "is-delivery", type: "Switch", required: false },
-    { slug: "noindex", type: "Switch", required: false },
+    { slug: "is-delivery", type: "Switch", required: false, description: "UI flag to control visibility in selection filters." },
+    { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed." },
     // Navigation multi-refs
-    { slug: "areas", type: "ItemRefSet", required: false },
+    { slug: "areas", type: "ItemRefSet", required: false, description: "Child areas for navigation." },
   ],
   areas: [
     // Core fields
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: true, description: "The area's display name (localized)." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the area page." },
     // References
-    { slug: "district", type: "ItemRef", required: true },
-    { slug: "city-2", type: "ItemRef", required: false },
+    { slug: "district", type: "ItemRef", required: true, description: "Parent district reference for hierarchy." },
+    { slug: "city-2", type: "ItemRef", required: false, description: "Denormalized city reference for simpler querying." },
     // Identity
-    { slug: "shared-key-area", type: "PlainText", required: false },
+    { slug: "shared-key-area", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // SEO fields
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
-    { slug: "intro-content", type: "RichText", required: false },
-    { slug: "sitemap-priority", type: "Number", required: false },
+    { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for this area page." },
+    { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
+    { slug: "intro-content", type: "RichText", required: false, description: "Rich text description of the area." },
+    { slug: "sitemap-priority", type: "Number", required: false, description: "Sitemap priority value (0.0-1.0)." },
     // Control fields
-    { slug: "is-delivery", type: "Switch", required: false },
-    { slug: "noindex", type: "Switch", required: false },
+    { slug: "is-delivery", type: "Switch", required: false, description: "UI flag to control visibility in filters." },
+    { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed." },
     // Reverse reference
-    { slug: "service-locations-reverse", type: "ItemRefSet", required: false },
+    { slug: "service-locations-reverse", type: "ItemRefSet", required: false, description: "Reverse reference listing Service Location pages in this area." },
   ],
   service_categories: [
     // Core fields
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: true, description: "Category display name (localized)." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the category page." },
     // Identity
-    { slug: "shared-key-service-category", type: "PlainText", required: false },
+    { slug: "shared-key-service-category", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // SEO fields
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
-    { slug: "intro-content", type: "RichText", required: false },
+    { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for this category page." },
+    { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
+    { slug: "intro-content", type: "RichText", required: false, description: "Rich text description of the category." },
     // Control fields
-    { slug: "icon", type: "PlainText", required: false },
-    { slug: "sort-order", type: "Number", required: false },
-    { slug: "active", type: "Switch", required: false },
+    { slug: "icon", type: "PlainText", required: false, description: "Visual categorization in UI (icon name or URL)." },
+    { slug: "sort-order", type: "Number", required: false, description: "Controls display order in menus/filters." },
+    { slug: "active", type: "Switch", required: false, description: "Toggle visibility for unpublished categories." },
     // Navigation multi-refs
-    { slug: "services", type: "ItemRefSet", required: false },
+    { slug: "services", type: "ItemRefSet", required: false, description: "Associated services in this category." },
   ],
   services: [
     // Core fields
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: true, description: "Service display name (localized)." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the service page." },
     // Reference
-    { slug: "service-category", type: "ItemRef", required: false },
+    { slug: "service-category", type: "ItemRef", required: false, description: "Parent category for navigation & filtering." },
     // Identity
-    { slug: "shared-key", type: "PlainText", required: false },
+    { slug: "shared-key", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // SEO fields
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
-    { slug: "service-intro-seo", type: "RichText", required: false },
+    { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for this service page." },
+    { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
+    { slug: "service-intro-seo", type: "RichText", required: false, description: "Rich text intro for SEO and user context." },
     // Content fields
-    { slug: "description", type: "PlainText", required: false },
+    { slug: "description", type: "PlainText", required: false, description: "Short description explaining the service." },
     // Control fields
-    { slug: "icon", type: "PlainText", required: false },
-    { slug: "sort-order", type: "Number", required: false },
-    { slug: "active", type: "Switch", required: false },
+    { slug: "icon", type: "PlainText", required: false, description: "Visual icon for the service." },
+    { slug: "sort-order", type: "Number", required: false, description: "Controls display order in listings." },
+    { slug: "active", type: "Switch", required: false, description: "Whether the service is currently offered/shown." },
   ],
   partners: [
     // Core fields
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: true, description: "Partner company/business name." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the partner page." },
     // Identity
-    { slug: "shared-key-partner", type: "PlainText", required: false },
+    { slug: "shared-key-partner", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // Contact fields
-    { slug: "email", type: "PlainText", required: false },
-    { slug: "phone-number", type: "PlainText", required: false },
-    { slug: "website-link", type: "PlainText", required: false },
-    { slug: "facebook-link", type: "PlainText", required: false },
-    { slug: "instagram-link", type: "PlainText", required: false },
+    { slug: "email", type: "PlainText", required: false, description: "Partner contact email address." },
+    { slug: "phone-number", type: "PlainText", required: false, description: "Partner contact phone number." },
+    { slug: "website-link", type: "PlainText", required: false, description: "Partner website URL." },
+    { slug: "facebook-link", type: "PlainText", required: false, description: "Partner Facebook page URL." },
+    { slug: "instagram-link", type: "PlainText", required: false, description: "Partner Instagram profile URL." },
     // Content fields
-    { slug: "client-information", type: "RichText", required: false },
-    { slug: "client-information-summary", type: "PlainText", required: false },
-    { slug: "heading-text", type: "PlainText", required: false },
+    { slug: "client-information", type: "RichText", required: false, description: "Rich text describing the partner for detail pages." },
+    { slug: "client-information-summary", type: "PlainText", required: false, description: "Short summary for service cards and listings." },
+    { slug: "heading-text", type: "PlainText", required: false, description: "Custom heading text for partner display." },
     // Branding fields
-    { slug: "client-logo", type: "PlainText", required: false },
-    { slug: "noddi-logo", type: "PlainText", required: false },
+    { slug: "client-logo", type: "PlainText", required: false, description: "Partner's company logo URL." },
+    { slug: "noddi-logo", type: "PlainText", required: false, description: "Noddi-specific partner logo URL." },
     // Control fields
-    { slug: "partner-active", type: "Switch", required: false },
+    { slug: "partner-active", type: "Switch", required: false, description: "Toggles whether partner shows in service lists." },
     // Reference multi-refs
-    { slug: "primary-city", type: "ItemRefSet", required: false },
-    { slug: "service-areas-optional", type: "ItemRefSet", required: false },
-    { slug: "services-provided", type: "ItemRefSet", required: false },
+    { slug: "primary-city", type: "ItemRefSet", required: false, description: "Cities where partner primarily operates." },
+    { slug: "service-areas-optional", type: "ItemRefSet", required: false, description: "Optional service areas for the partner." },
+    { slug: "services-provided", type: "ItemRefSet", required: false, description: "Services the partner offers." },
     // SEO fields
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
+    { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for partner page." },
+    { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
   ],
   service_locations: [
     // Core fields
-    { slug: "name", type: "PlainText", required: false },
-    { slug: "slug", type: "PlainText", required: true },
+    { slug: "name", type: "PlainText", required: false, description: "Internal label (e.g., 'Dekkskift i Oslo')." },
+    { slug: "slug", type: "PlainText", required: true, description: "URL fragment for this service location page." },
     // Identity
-    { slug: "shared-key-service-location", type: "PlainText", required: false },
+    { slug: "shared-key-service-location", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // References (using -2 suffix per Webflow convention)
-    { slug: "service", type: "ItemRef", required: true },
-    { slug: "city-2", type: "ItemRef", required: true },
-    { slug: "district-2", type: "ItemRef", required: false },
-    { slug: "area-2", type: "ItemRef", required: false },
-    { slug: "partners-2", type: "ItemRefSet", required: false },
+    { slug: "service", type: "ItemRef", required: true, description: "The service offered at this location." },
+    { slug: "city-2", type: "ItemRef", required: true, description: "City where the service is offered." },
+    { slug: "district-2", type: "ItemRef", required: false, description: "District (optional granularity)." },
+    { slug: "area-2", type: "ItemRef", required: false, description: "Area (finest granularity)." },
+    { slug: "partners-2", type: "ItemRefSet", required: false, description: "Partners that deliver this service in this location." },
     // SEO fields (using -2 suffix)
-    { slug: "seo-title-2", type: "PlainText", required: false },
-    { slug: "seo-meta-description-2", type: "PlainText", required: false },
-    { slug: "hero-intro-content-2", type: "RichText", required: false },
+    { slug: "seo-title-2", type: "PlainText", required: false, description: "The <title> tag for this page." },
+    { slug: "seo-meta-description-2", type: "PlainText", required: false, description: "Meta description for search engines." },
+    { slug: "hero-intro-content-2", type: "RichText", required: false, description: "Rich text with unique on-page content (~200 words)." },
     // Technical fields
-    { slug: "canonical-path-2", type: "PlainText", required: false },
-    { slug: "json-ld-structured-data-2", type: "PlainText", required: false },
-    { slug: "sitemap-priority-2", type: "Number", required: false },
+    { slug: "canonical-path-2", type: "PlainText", required: false, description: "The canonical URL path as computed by Lovable." },
+    { slug: "json-ld-structured-data-2", type: "PlainText", required: false, description: "Schema.org JSON-LD for rich search results." },
+    { slug: "sitemap-priority-2", type: "Number", required: false, description: "Sitemap priority value (0.0-1.0)." },
     // Control fields
-    { slug: "noindex-2", type: "Switch", required: false },
+    { slug: "noindex-2", type: "Switch", required: false, description: "Instructs search engines not to index (for sparse combos)." },
   ],
 };
 
@@ -183,6 +182,15 @@ interface MissingFieldInfo {
   slug: string;
   type: string;
   required: boolean;
+  description: string;
+}
+
+interface FoundFieldInfo {
+  slug: string;
+  type: string;
+  displayName: string;
+  helpText: string;
+  description: string;
 }
 
 interface CollectionValidationResult {
@@ -191,6 +199,7 @@ interface CollectionValidationResult {
   status: "ok" | "missing_fields" | "not_configured" | "error";
   expected_fields: string[];
   found_fields: string[];
+  found_fields_detailed: FoundFieldInfo[];
   missing_in_webflow: string[];
   missing_in_webflow_typed: MissingFieldInfo[];
   missing_required: string[];
@@ -203,6 +212,7 @@ interface WebflowField {
   type: string;
   isRequired: boolean;
   displayName: string;
+  helpText?: string;
 }
 
 interface DataCompletenessStats {
@@ -253,9 +263,19 @@ async function fetchCollectionSchema(
   }
 
   const data = await response.json();
+  
+  // Map fields with helpText
+  const fields = (data.fields || []).map((f: any) => ({
+    slug: f.slug,
+    type: f.type,
+    isRequired: f.isRequired || false,
+    displayName: f.displayName || f.slug,
+    helpText: f.helpText || "",
+  }));
+
   return {
     name: data.displayName || data.slug || "Unknown",
-    fields: data.fields || [],
+    fields,
   };
 }
 
@@ -651,11 +671,13 @@ serve(async (req) => {
           status: "not_configured",
           expected_fields: expectedFields.map((f) => f.slug),
           found_fields: [],
+          found_fields_detailed: [],
           missing_in_webflow: expectedFields.map((f) => f.slug),
           missing_in_webflow_typed: expectedFields.map((f) => ({
             slug: f.slug,
             type: f.type,
             required: f.required,
+            description: f.description,
           })),
           missing_required: expectedFields.filter((f) => f.required).map((f) => f.slug),
           extra_in_webflow: [],
@@ -668,6 +690,18 @@ serve(async (req) => {
         const foundFieldSlugs = fields.map((f: WebflowField) => f.slug);
         const expectedFieldSlugs = expectedFields.map((f) => f.slug);
 
+        // Build found_fields_detailed with descriptions from expected fields or helpText from Webflow
+        const foundFieldsDetailed: FoundFieldInfo[] = fields.map((wf: WebflowField) => {
+          const expectedField = expectedFields.find(ef => ef.slug === wf.slug);
+          return {
+            slug: wf.slug,
+            type: wf.type,
+            displayName: wf.displayName,
+            helpText: wf.helpText || "",
+            description: expectedField?.description || wf.helpText || "",
+          };
+        });
+
         const missingInWebflow = expectedFieldSlugs.filter(
           (slug) => !foundFieldSlugs.includes(slug)
         );
@@ -677,6 +711,7 @@ serve(async (req) => {
             slug: f.slug,
             type: f.type,
             required: f.required,
+            description: f.description,
           }));
         const missingRequired = expectedFields
           .filter((f) => f.required && !foundFieldSlugs.includes(f.slug))
@@ -698,6 +733,7 @@ serve(async (req) => {
           status,
           expected_fields: expectedFieldSlugs,
           found_fields: foundFieldSlugs,
+          found_fields_detailed: foundFieldsDetailed,
           missing_in_webflow: missingInWebflow,
           missing_in_webflow_typed: missingInWebflowTyped,
           missing_required: missingRequired,
@@ -713,6 +749,7 @@ serve(async (req) => {
           status: "error",
           expected_fields: expectedFields.map((f) => f.slug),
           found_fields: [],
+          found_fields_detailed: [],
           missing_in_webflow: [],
           missing_in_webflow_typed: [],
           missing_required: [],
