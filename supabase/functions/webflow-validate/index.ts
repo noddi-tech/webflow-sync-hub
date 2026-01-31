@@ -8,90 +8,152 @@ const corsHeaders = {
 };
 
 // Expected field mappings for each collection (updated to match actual Webflow field slugs)
+// Complete field mappings for each Webflow collection - ALL fields from the SEO architecture
 const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; required: boolean }>> = {
   cities: [
+    // Core fields
     { slug: "name", type: "PlainText", required: true },
     { slug: "slug", type: "PlainText", required: true },
+    // Identity
     { slug: "shared-key-city", type: "PlainText", required: false },
+    // SEO fields
     { slug: "seo-title", type: "PlainText", required: false },
     { slug: "seo-meta-description", type: "PlainText", required: false },
     { slug: "intro-content", type: "RichText", required: false },
     { slug: "sitemap-priority", type: "Number", required: false },
+    // Control fields
+    { slug: "is-delivery", type: "Switch", required: false },
+    { slug: "noindex", type: "Switch", required: false },
+    // Navigation multi-refs
+    { slug: "districts", type: "ItemRefSet", required: false },
+    { slug: "areas", type: "ItemRefSet", required: false },
   ],
   districts: [
+    // Core fields
     { slug: "name", type: "PlainText", required: true },
     { slug: "slug", type: "PlainText", required: true },
+    // Reference
     { slug: "city", type: "ItemRef", required: true },
+    // Identity
     { slug: "shared-key-district", type: "PlainText", required: false },
+    // SEO fields
     { slug: "seo-title", type: "PlainText", required: false },
     { slug: "seo-meta-description", type: "PlainText", required: false },
     { slug: "intro-content", type: "RichText", required: false },
     { slug: "sitemap-priority", type: "Number", required: false },
+    // Control fields
+    { slug: "is-delivery", type: "Switch", required: false },
+    { slug: "noindex", type: "Switch", required: false },
+    // Navigation multi-refs
+    { slug: "areas", type: "ItemRefSet", required: false },
   ],
   areas: [
+    // Core fields
     { slug: "name", type: "PlainText", required: true },
     { slug: "slug", type: "PlainText", required: true },
+    // References
     { slug: "district", type: "ItemRef", required: true },
     { slug: "city-2", type: "ItemRef", required: false },
+    // Identity
     { slug: "shared-key-area", type: "PlainText", required: false },
+    // SEO fields
     { slug: "seo-title", type: "PlainText", required: false },
     { slug: "seo-meta-description", type: "PlainText", required: false },
     { slug: "intro-content", type: "RichText", required: false },
     { slug: "sitemap-priority", type: "Number", required: false },
+    // Control fields
+    { slug: "is-delivery", type: "Switch", required: false },
+    { slug: "noindex", type: "Switch", required: false },
+    // Reverse reference
+    { slug: "service-locations-reverse", type: "ItemRefSet", required: false },
   ],
   service_categories: [
+    // Core fields
     { slug: "name", type: "PlainText", required: true },
     { slug: "slug", type: "PlainText", required: true },
+    // Identity
     { slug: "shared-key-service-category", type: "PlainText", required: false },
+    // SEO fields
     { slug: "seo-title", type: "PlainText", required: false },
     { slug: "seo-meta-description", type: "PlainText", required: false },
     { slug: "intro-content", type: "RichText", required: false },
+    // Control fields
+    { slug: "icon", type: "PlainText", required: false },
+    { slug: "sort-order", type: "Number", required: false },
+    { slug: "active", type: "Switch", required: false },
+    // Navigation multi-refs
+    { slug: "services", type: "ItemRefSet", required: false },
+  ],
+  services: [
+    // Core fields
+    { slug: "name", type: "PlainText", required: true },
+    { slug: "slug", type: "PlainText", required: true },
+    // Reference
+    { slug: "service-category", type: "ItemRef", required: false },
+    // Identity
+    { slug: "shared-key", type: "PlainText", required: false },
+    // SEO fields
+    { slug: "seo-title", type: "PlainText", required: false },
+    { slug: "seo-meta-description", type: "PlainText", required: false },
+    { slug: "service-intro-seo", type: "RichText", required: false },
+    // Content fields
+    { slug: "description", type: "PlainText", required: false },
+    // Control fields
     { slug: "icon", type: "PlainText", required: false },
     { slug: "sort-order", type: "Number", required: false },
     { slug: "active", type: "Switch", required: false },
   ],
-  services: [
-    { slug: "name", type: "PlainText", required: true },
-    { slug: "slug", type: "PlainText", required: true },
-    { slug: "service-category", type: "ItemRef", required: false },
-    { slug: "seo-title", type: "PlainText", required: false },
-    { slug: "seo-meta-description", type: "PlainText", required: false },
-    { slug: "service-intro-seo", type: "RichText", required: false },
-    { slug: "icon", type: "PlainText", required: false },
-    { slug: "sort-order", type: "Number", required: false },
-  ],
   partners: [
+    // Core fields
     { slug: "name", type: "PlainText", required: true },
     { slug: "slug", type: "PlainText", required: true },
+    // Identity
     { slug: "shared-key-partner", type: "PlainText", required: false },
+    // Contact fields
     { slug: "email", type: "PlainText", required: false },
     { slug: "phone-number", type: "PlainText", required: false },
+    { slug: "website-link", type: "PlainText", required: false },
+    { slug: "facebook-link", type: "PlainText", required: false },
+    { slug: "instagram-link", type: "PlainText", required: false },
+    // Content fields
     { slug: "client-information", type: "RichText", required: false },
     { slug: "client-information-summary", type: "PlainText", required: false },
     { slug: "heading-text", type: "PlainText", required: false },
+    // Branding fields
     { slug: "client-logo", type: "PlainText", required: false },
     { slug: "noddi-logo", type: "PlainText", required: false },
-    { slug: "website-link", type: "PlainText", required: false },
-    { slug: "facebook-link", type: "PlainText", required: false },
+    // Control fields
     { slug: "partner-active", type: "Switch", required: false },
-    { slug: "service-areas-optional", type: "ItemRefSet", required: false },
+    // Reference multi-refs
     { slug: "primary-city", type: "ItemRefSet", required: false },
+    { slug: "service-areas-optional", type: "ItemRefSet", required: false },
     { slug: "services-provided", type: "ItemRefSet", required: false },
+    // SEO fields
+    { slug: "seo-title", type: "PlainText", required: false },
+    { slug: "seo-meta-description", type: "PlainText", required: false },
   ],
   service_locations: [
+    // Core fields
+    { slug: "name", type: "PlainText", required: false },
     { slug: "slug", type: "PlainText", required: true },
+    // Identity
+    { slug: "shared-key-service-location", type: "PlainText", required: false },
+    // References (using -2 suffix per Webflow convention)
     { slug: "service", type: "ItemRef", required: true },
     { slug: "city-2", type: "ItemRef", required: true },
     { slug: "district-2", type: "ItemRef", required: false },
     { slug: "area-2", type: "ItemRef", required: false },
+    { slug: "partners-2", type: "ItemRefSet", required: false },
+    // SEO fields (using -2 suffix)
     { slug: "seo-title-2", type: "PlainText", required: false },
     { slug: "seo-meta-description-2", type: "PlainText", required: false },
     { slug: "hero-intro-content-2", type: "RichText", required: false },
+    // Technical fields
     { slug: "canonical-path-2", type: "PlainText", required: false },
     { slug: "json-ld-structured-data-2", type: "PlainText", required: false },
     { slug: "sitemap-priority-2", type: "Number", required: false },
+    // Control fields
     { slug: "noindex-2", type: "Switch", required: false },
-    { slug: "partners-2", type: "ItemRefSet", required: false },
   ],
 };
 
