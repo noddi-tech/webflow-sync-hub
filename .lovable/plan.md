@@ -1,151 +1,200 @@
 
-# System Health Dashboard with Automated Validation
 
-## Overview
+# SEO Architecture Gap Analysis and Implementation Plan
 
-Transform the current modal-based Webflow validation into a persistent **System Health** dashboard that:
-1. Displays health status directly on the Dashboard (no modal)
-2. Stores validation results in the database for history and cron access
-3. Runs automatically via a daily cron job
-4. Provides actionable "Add to Mapping" buttons for unmapped extra fields
-5. Shows data completeness metrics (e.g., how many records have SEO fields populated)
+## Current State vs. Requirements
 
-## Architecture
+Based on your detailed SEO architecture document, I've identified several areas where the current implementation needs enhancement to fully match your requirements.
 
-```text
-+------------------+     +---------------------+     +------------------+
-|   Dashboard UI   | --> | webflow-validate    | --> | system_health    |
-|  (Health Panel)  |     | (Edge Function)     |     | (DB Table)       |
-+------------------+     +---------------------+     +------------------+
-                                   ^
-                                   |
-                         +-------------------+
-                         | pg_cron (Daily)   |
-                         +-------------------+
-```
+### What's Already Implemented
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Service Location generation | Implemented | Based on `partner_service_locations` |
+| Three-level location depth | Implemented | City, District, Area supported |
+| Basic SEO title/meta generation | Implemented | Template-based in `webflow-sync` |
+| Canonical URL generation | Implemented | Per-locale URLs generated |
+| JSON-LD structured data | Implemented | Basic Schema.org Service type |
+| Sitemap priority | Implemented | 0.6/0.5/0.4 for City/District/Area |
+| Partner list logic | Implemented | Correct filtering by coverage |
+| Localization (NO/EN/SV) | Implemented | All three locales supported |
+| System Health dashboard | Implemented | With data completeness metrics |
+
+### Gaps Identified
+
+| Requirement | Gap | Priority |
+|------------|-----|----------|
+| Noindex for zero-partner pages | Missing logic to set `noindex=true` | High |
+| Richer SEO content (200+ words) | Current intro is ~30 words | High |
+| Unique content per page | Template-based, not truly unique | Medium |
+| Sync skip for incomplete items | Missing validation before publish | High |
+| Sync report (CSV/JSON export) | Dashboard shows but no export | Medium |
+| FAQ snippet generation | Not implemented | Low |
+| OG meta description | Not implemented | Low |
+| Internal linking suggestions | Not implemented | Low |
+
+---
 
 ## Implementation Plan
 
-### Phase 1: Database Schema
+### Phase 1: Enhanced Content Quality
 
-Create a new `system_health` table to store validation results and data completeness metrics.
+Improve the SEO content generation to produce richer, more unique content.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | UUID | Primary key |
-| check_type | TEXT | 'webflow_validation', 'data_completeness', etc. |
-| status | TEXT | 'healthy', 'warning', 'error' |
-| results | JSONB | Full validation results |
-| summary | JSONB | Quick summary stats |
-| checked_at | TIMESTAMP | When the check ran |
-| triggered_by | TEXT | 'cron', 'manual' |
-
-### Phase 2: Update webflow-validate Edge Function
-
-Modify to optionally store results in the `system_health` table and support being called without authentication (for cron).
-
-- Add `store_results: boolean` parameter
-- Add `triggered_by: 'manual' | 'cron'` parameter
-- Insert results into `system_health` table when `store_results=true`
-- Add data completeness checks (count records with null SEO fields)
-
-### Phase 3: Create System Health Dashboard Component
-
-Replace the modal dialog with an inline dashboard panel showing:
-
-- **Collection Status Cards**: 7 cards showing each collection's health status
-- **Data Completeness Metrics**: % of records with SEO fields populated per entity
-- **Last Check Time**: When validation last ran
-- **Manual Trigger Button**: Run validation now
-- **Expandable Details**: Click to see field-level details for each collection
-
-### Phase 4: Add "Map This Field" Functionality
-
-For each "Extra Field in Webflow", add a button that:
-1. Shows what code change is needed
-2. Copies the field slug to clipboard
-3. Opens instructions for adding to EXPECTED_FIELDS
-
-### Phase 5: Set Up Daily Cron Job
-
-Configure pg_cron to call the validation function daily at a specified time.
-
-## Files to Create/Modify
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `src/components/health/SystemHealthPanel.tsx` | Create | Main health dashboard component |
-| `src/components/health/CollectionHealthCard.tsx` | Create | Individual collection status card |
-| `src/components/health/DataCompletenessCard.tsx` | Create | Data completeness metrics |
-| `src/pages/Dashboard.tsx` | Modify | Add SystemHealthPanel to dashboard |
-| `supabase/functions/webflow-validate/index.ts` | Modify | Add DB storage and completeness checks |
-| `supabase/functions/webflow-health-cron/index.ts` | Create | Cron-callable health check function |
-| Database migration | Create | Add system_health table |
-
-## UI Design
-
-The System Health panel will appear on the Dashboard below the entity stats:
-
-```text
-+-------------------------------------------------------+
-| System Health                    Last check: 2 min ago |
-|                                    [Run Check Now]     |
-+-------------------------------------------------------+
-| Collection Mappings                                    |
-| +----------+ +----------+ +----------+ +----------+   |
-| | Cities   | |Districts | | Areas    | |Services  |   |
-| | Ready    | | Ready    | | Ready    | | Ready    |   |
-| | 10 flds  | | 11 flds  | | 12 flds  | | 10 flds  |   |
-| +----------+ +----------+ +----------+ +----------+   |
-|                                                        |
-| Data Completeness                                      |
-| +--------------------------------------------------+  |
-| | SEO Titles      [=============     ] 78% complete|  |
-| | Meta Desc       [===========       ] 65% complete|  |
-| | Intro Content   [========          ] 45% complete|  |
-| +--------------------------------------------------+  |
-|                                                        |
-| Extra Webflow Fields (not mapped - safe to ignore)    |
-| [ districts-2 ] [ areas-2 ] [ noindex ] [+3 more]     |
-| [Map Selected Fields]                                  |
-+-------------------------------------------------------+
+**Current SEO Title Template:**
+```
+{Service} i {Location} - Finn partnere & bestill | Noddi
 ```
 
-## Data Completeness Checks
+**Proposed Enhancement:**
+- Add service-specific variations (e.g., "Mobil dekkskift" vs "Dekkskift")
+- Include partner count in meta description
+- Add price range hints if available from partner data
 
-Query each entity table to calculate:
-
-| Metric | Query Logic |
-|--------|-------------|
-| SEO Title Coverage | `COUNT(*) WHERE seo_title IS NOT NULL / COUNT(*)` |
-| Meta Description Coverage | `COUNT(*) WHERE seo_meta_description IS NOT NULL / COUNT(*)` |
-| Intro Content Coverage | `COUNT(*) WHERE intro IS NOT NULL / COUNT(*)` |
-| Localized Fields | `COUNT(*) WHERE name_en IS NOT NULL / COUNT(*)` |
-
-These percentages help identify which data needs attention before syncing to Webflow.
-
-## Cron Job Setup
-
-After the migration, a SQL command will be run to set up the daily cron job:
-
-```sql
-SELECT cron.schedule(
-  'daily-system-health-check',
-  '0 6 * * *', -- Run at 6 AM daily
-  $$
-  SELECT net.http_post(
-    url:='https://aqnrvcjctfjocrpmknho.supabase.co/functions/v1/webflow-health-cron',
-    headers:='{"Content-Type": "application/json", "Authorization": "Bearer <anon_key>"}'::jsonb,
-    body:='{}'::jsonb
-  ) as request_id;
-  $$
-);
+**Current Intro Content (~30 words):**
+```html
+<p>Mobil {service} i {location} - med erfarne partnere levert til deg. 
+Finn tilbud, sammenlign priser og bestill i dag.</p>
 ```
 
-## Benefits
+**Proposed Enhancement (~200+ words):**
+Generate multi-paragraph rich text with:
+1. Opening paragraph (what the service is)
+2. Location context (about the area)
+3. Partner availability (how many, what to expect)
+4. Call-to-action paragraph
 
-1. **Visibility**: Health status is always visible on the Dashboard
-2. **Historical Data**: Track health over time via database records
-3. **Automated Monitoring**: Daily cron catches issues before they become problems
-4. **Actionable Insights**: Clear guidance on what fields need mapping or data
-5. **Data Quality**: Completeness metrics show where content is missing
+### Phase 2: Noindex Logic for Low-Value Pages
+
+Add logic to automatically set `noindex=true` for pages with zero partners.
+
+**Implementation:**
+In `webflow-sync/index.ts`, within `generateServiceLocations()`:
+
+```typescript
+// Set noindex if no active partners
+const hasActivePartners = combo.partner_ids.length > 0;
+const serviceLocationData = {
+  // ... existing fields
+  noindex: !hasActivePartners,
+  sitemap_priority: hasActivePartners 
+    ? (area ? 0.4 : (district ? 0.5 : 0.6))
+    : 0.1, // Low priority for noindex pages
+};
+```
+
+### Phase 3: Pre-Sync Validation
+
+Add validation before publishing to ensure all required localized fields are complete.
+
+**Implementation:**
+Create a `validateBeforeSync()` function that checks:
+1. All localized name fields populated
+2. SEO title present for all locales
+3. Meta description present for all locales
+4. References resolved (service, city have Webflow IDs)
+
+Items failing validation will be:
+- Logged with specific missing fields
+- Skipped from sync
+- Reported in sync summary
+
+### Phase 4: Sync Report Export
+
+Add exportable sync reports to the Sync History page.
+
+**Implementation:**
+- Add "Export CSV" and "Export JSON" buttons to Sync History
+- Include fields: entity, operation, status, created_at, message
+- Filter by date range and entity type
+
+### Phase 5: Enhanced JSON-LD Structured Data
+
+Improve the structured data to include more Schema.org properties.
+
+**Current Structure:**
+```json
+{
+  "@type": "Service",
+  "serviceType": "...",
+  "areaServed": { "@type": "City" },
+  "provider": [...]
+}
+```
+
+**Proposed Enhancement:**
+```json
+{
+  "@context": "https://schema.org",
+  "@type": "Service",
+  "serviceType": "Dekkskift",
+  "name": "Dekkskift i Vikåsen, Østbyen, Oslo",
+  "description": "Sammenlign mobil dekkskift...",
+  "areaServed": {
+    "@type": "AdministrativeArea",
+    "name": "Vikåsen",
+    "containedInPlace": {
+      "@type": "AdministrativeArea",
+      "name": "Østbyen",
+      "containedInPlace": {
+        "@type": "City",
+        "name": "Oslo",
+        "addressCountry": "NO"
+      }
+    }
+  },
+  "provider": [...],
+  "offers": {
+    "@type": "AggregateOffer",
+    "offerCount": 5,
+    "availability": "https://schema.org/InStock"
+  },
+  "url": "https://www.noddi.no/no/dekkskift/oslo/ostbyen/vikasen"
+}
+```
+
+---
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `supabase/functions/webflow-sync/index.ts` | Enhanced SEO content generation, noindex logic, pre-sync validation |
+| `src/pages/SyncHistory.tsx` | Add export functionality |
+| `src/components/health/SystemHealthPanel.tsx` | Add export for health reports |
+
+---
+
+## Quality Assurance Checklist
+
+After implementation, these automated checks will be added to the System Health panel:
+
+**Structure Checks:**
+- All expected Service Locations exist (based on partner coverage)
+- No duplicate pages (unique service+location combinations)
+
+**SEO Checks:**
+- Each page has a canonical URL
+- Localized slugs exist for all three locales
+- SEO Title/Meta Description are non-empty
+- JSON-LD validates (basic structure check)
+
+**Partner Checks:**
+- Each partner on Service Location page matches source data
+- No partner appears on pages they don't serve
+
+**Sitemap Checks:**
+- All non-noindex Service Locations included
+- Correct priority values assigned
+
+---
+
+## Summary of Deliverables
+
+1. **Enhanced SEO Content** - Richer, ~200+ word intro content with service-specific templates
+2. **Noindex Logic** - Automatic noindex for zero-partner pages
+3. **Pre-Sync Validation** - Skip items with missing required fields
+4. **Sync Report Export** - CSV/JSON download from Sync History
+5. **Enhanced JSON-LD** - More complete Schema.org structured data
+6. **Quality Checks** - Automated validation in System Health panel
+
