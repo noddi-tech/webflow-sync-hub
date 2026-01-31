@@ -516,6 +516,9 @@ export type Database = {
           heading_text: string | null
           id: string
           instagram_url: string | null
+          intro: string | null
+          intro_en: string | null
+          intro_sv: string | null
           logo_url: string | null
           name: string
           name_en: string | null
@@ -523,6 +526,12 @@ export type Database = {
           noddi_logo_url: string | null
           phone: string | null
           rating: number | null
+          seo_meta_description: string | null
+          seo_meta_description_en: string | null
+          seo_meta_description_sv: string | null
+          seo_title: string | null
+          seo_title_en: string | null
+          seo_title_sv: string | null
           shared_key: string | null
           slug: string
           slug_en: string | null
@@ -544,6 +553,9 @@ export type Database = {
           heading_text?: string | null
           id?: string
           instagram_url?: string | null
+          intro?: string | null
+          intro_en?: string | null
+          intro_sv?: string | null
           logo_url?: string | null
           name: string
           name_en?: string | null
@@ -551,6 +563,12 @@ export type Database = {
           noddi_logo_url?: string | null
           phone?: string | null
           rating?: number | null
+          seo_meta_description?: string | null
+          seo_meta_description_en?: string | null
+          seo_meta_description_sv?: string | null
+          seo_title?: string | null
+          seo_title_en?: string | null
+          seo_title_sv?: string | null
           shared_key?: string | null
           slug: string
           slug_en?: string | null
@@ -572,6 +590,9 @@ export type Database = {
           heading_text?: string | null
           id?: string
           instagram_url?: string | null
+          intro?: string | null
+          intro_en?: string | null
+          intro_sv?: string | null
           logo_url?: string | null
           name?: string
           name_en?: string | null
@@ -579,6 +600,12 @@ export type Database = {
           noddi_logo_url?: string | null
           phone?: string | null
           rating?: number | null
+          seo_meta_description?: string | null
+          seo_meta_description_en?: string | null
+          seo_meta_description_sv?: string | null
+          seo_title?: string | null
+          seo_title_en?: string | null
+          seo_title_sv?: string | null
           shared_key?: string | null
           slug?: string
           slug_en?: string | null

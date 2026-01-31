@@ -48,8 +48,21 @@ interface PartnerFormData {
   noddi_logo_url: string;
   rating: number | null;
   active: boolean;
+  // SEO fields
+  seo_title: string;
+  seo_title_en: string;
+  seo_title_sv: string;
+  seo_meta_description: string;
+  seo_meta_description_en: string;
+  seo_meta_description_sv: string;
+  intro: string;
+  intro_en: string;
+  intro_sv: string;
+  // Junction table IDs
   area_ids: string[];
   service_ids: string[];
+  city_ids: string[];
+  district_ids: string[];
 }
 
 const emptyFormData: PartnerFormData = {
@@ -74,8 +87,21 @@ const emptyFormData: PartnerFormData = {
   noddi_logo_url: "",
   rating: null,
   active: true,
+  // SEO fields
+  seo_title: "",
+  seo_title_en: "",
+  seo_title_sv: "",
+  seo_meta_description: "",
+  seo_meta_description_en: "",
+  seo_meta_description_sv: "",
+  intro: "",
+  intro_en: "",
+  intro_sv: "",
+  // Junction table IDs
   area_ids: [],
   service_ids: [],
+  city_ids: [],
+  district_ids: [],
 };
 
 export default function Partners() {
@@ -124,6 +150,30 @@ export default function Partners() {
     },
   });
 
+  const { data: cities = [] } = useQuery({
+    queryKey: ["cities-select"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("cities")
+        .select("id, name")
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const { data: districts = [] } = useQuery({
+    queryKey: ["districts-select"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("districts")
+        .select("id, name, cities(name)")
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const { data: partnerAreas } = useQuery({
     queryKey: ["partner-areas", editingPartner?.id],
     queryFn: async () => {
@@ -152,6 +202,34 @@ export default function Partners() {
     enabled: !!editingPartner,
   });
 
+  const { data: partnerCities } = useQuery({
+    queryKey: ["partner-cities", editingPartner?.id],
+    queryFn: async () => {
+      if (!editingPartner) return [];
+      const { data, error } = await supabase
+        .from("partner_cities")
+        .select("city_id")
+        .eq("partner_id", editingPartner.id);
+      if (error) throw error;
+      return data.map((pc) => pc.city_id);
+    },
+    enabled: !!editingPartner,
+  });
+
+  const { data: partnerDistricts } = useQuery({
+    queryKey: ["partner-districts", editingPartner?.id],
+    queryFn: async () => {
+      if (!editingPartner) return [];
+      const { data, error } = await supabase
+        .from("partner_districts")
+        .select("district_id")
+        .eq("partner_id", editingPartner.id);
+      if (error) throw error;
+      return data.map((pd) => pd.district_id);
+    },
+    enabled: !!editingPartner,
+  });
+
   useEffect(() => {
     if (partnerAreas && editingPartner) {
       setFormData(prev => ({ ...prev, area_ids: partnerAreas }));
@@ -164,9 +242,21 @@ export default function Partners() {
     }
   }, [partnerServices, editingPartner]);
 
+  useEffect(() => {
+    if (partnerCities && editingPartner) {
+      setFormData(prev => ({ ...prev, city_ids: partnerCities }));
+    }
+  }, [partnerCities, editingPartner]);
+
+  useEffect(() => {
+    if (partnerDistricts && editingPartner) {
+      setFormData(prev => ({ ...prev, district_ids: partnerDistricts }));
+    }
+  }, [partnerDistricts, editingPartner]);
+
   const createMutation = useMutation({
     mutationFn: async (values: PartnerFormData) => {
-      const { area_ids, service_ids, ...partnerData } = values;
+      const { area_ids, service_ids, city_ids, district_ids, ...partnerData } = values;
       const { data: partner, error } = await supabase
         .from("partners")
         .insert({
@@ -191,6 +281,20 @@ export default function Partners() {
           .insert(service_ids.map((service_id) => ({ partner_id: partner.id, service_id })));
         if (serviceError) throw serviceError;
       }
+
+      if (city_ids.length > 0) {
+        const { error: cityError } = await supabase
+          .from("partner_cities")
+          .insert(city_ids.map((city_id) => ({ partner_id: partner.id, city_id })));
+        if (cityError) throw cityError;
+      }
+
+      if (district_ids.length > 0) {
+        const { error: districtError } = await supabase
+          .from("partner_districts")
+          .insert(district_ids.map((district_id) => ({ partner_id: partner.id, district_id })));
+        if (districtError) throw districtError;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["partners"] });
@@ -205,7 +309,7 @@ export default function Partners() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, values }: { id: string; values: PartnerFormData }) => {
-      const { area_ids, service_ids, ...partnerData } = values;
+      const { area_ids, service_ids, city_ids, district_ids, ...partnerData } = values;
       const { error } = await supabase
         .from("partners")
         .update({
@@ -233,11 +337,31 @@ export default function Partners() {
           .insert(service_ids.map((service_id) => ({ partner_id: id, service_id })));
         if (serviceError) throw serviceError;
       }
+
+      // Update cities
+      await supabase.from("partner_cities").delete().eq("partner_id", id);
+      if (city_ids.length > 0) {
+        const { error: cityError } = await supabase
+          .from("partner_cities")
+          .insert(city_ids.map((city_id) => ({ partner_id: id, city_id })));
+        if (cityError) throw cityError;
+      }
+
+      // Update districts
+      await supabase.from("partner_districts").delete().eq("partner_id", id);
+      if (district_ids.length > 0) {
+        const { error: districtError } = await supabase
+          .from("partner_districts")
+          .insert(district_ids.map((district_id) => ({ partner_id: id, district_id })));
+        if (districtError) throw districtError;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["partners"] });
       queryClient.invalidateQueries({ queryKey: ["partner-areas"] });
       queryClient.invalidateQueries({ queryKey: ["partner-services"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-cities"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-districts"] });
       toast({ title: "Partner updated successfully" });
       closeDialog();
     },
@@ -299,8 +423,21 @@ export default function Partners() {
       noddi_logo_url: partner.noddi_logo_url || "",
       rating: partner.rating ?? null,
       active: partner.active ?? true,
+      // SEO fields - cast needed until types regenerate
+      seo_title: (partner as any).seo_title || "",
+      seo_title_en: (partner as any).seo_title_en || "",
+      seo_title_sv: (partner as any).seo_title_sv || "",
+      seo_meta_description: (partner as any).seo_meta_description || "",
+      seo_meta_description_en: (partner as any).seo_meta_description_en || "",
+      seo_meta_description_sv: (partner as any).seo_meta_description_sv || "",
+      intro: (partner as any).intro || "",
+      intro_en: (partner as any).intro_en || "",
+      intro_sv: (partner as any).intro_sv || "",
+      // Junction IDs will be populated by useEffects
       area_ids: [],
       service_ids: [],
+      city_ids: [],
+      district_ids: [],
     });
     setIsDialogOpen(true);
   };
@@ -342,7 +479,7 @@ export default function Partners() {
     }
   };
 
-  const toggleSelection = (id: string, field: "area_ids" | "service_ids") => {
+  const toggleSelection = (id: string, field: "area_ids" | "service_ids" | "city_ids" | "district_ids") => {
     setFormData(prev => ({
       ...prev,
       [field]: prev[field].includes(id)
@@ -557,7 +694,36 @@ export default function Partners() {
                     id="description"
                     value={formData.description}
                     onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                    rows={4}
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_title">SEO Title</Label>
+                  <Input
+                    id="seo_title"
+                    value={formData.seo_title}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_title: e.target.value }))}
+                    placeholder="Page title for search engines"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_meta_description">SEO Meta Description</Label>
+                  <Textarea
+                    id="seo_meta_description"
+                    value={formData.seo_meta_description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_meta_description: e.target.value }))}
+                    rows={2}
+                    placeholder="Meta description for search engines"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="intro">Intro Content</Label>
+                  <Textarea
+                    id="intro"
+                    value={formData.intro}
+                    onChange={(e) => setFormData(prev => ({ ...prev, intro: e.target.value }))}
+                    rows={3}
+                    placeholder="Rich text intro content"
                   />
                 </div>
               </TabsContent>
@@ -587,7 +753,33 @@ export default function Partners() {
                     id="description_en"
                     value={formData.description_en}
                     onChange={(e) => setFormData(prev => ({ ...prev, description_en: e.target.value }))}
-                    rows={4}
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_title_en">SEO Title (EN)</Label>
+                  <Input
+                    id="seo_title_en"
+                    value={formData.seo_title_en}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_title_en: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_meta_description_en">SEO Meta Description (EN)</Label>
+                  <Textarea
+                    id="seo_meta_description_en"
+                    value={formData.seo_meta_description_en}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_meta_description_en: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="intro_en">Intro Content (EN)</Label>
+                  <Textarea
+                    id="intro_en"
+                    value={formData.intro_en}
+                    onChange={(e) => setFormData(prev => ({ ...prev, intro_en: e.target.value }))}
+                    rows={3}
                   />
                 </div>
               </TabsContent>
@@ -617,7 +809,33 @@ export default function Partners() {
                     id="description_sv"
                     value={formData.description_sv}
                     onChange={(e) => setFormData(prev => ({ ...prev, description_sv: e.target.value }))}
-                    rows={4}
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_title_sv">SEO Title (SV)</Label>
+                  <Input
+                    id="seo_title_sv"
+                    value={formData.seo_title_sv}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_title_sv: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="seo_meta_description_sv">SEO Meta Description (SV)</Label>
+                  <Textarea
+                    id="seo_meta_description_sv"
+                    value={formData.seo_meta_description_sv}
+                    onChange={(e) => setFormData(prev => ({ ...prev, seo_meta_description_sv: e.target.value }))}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="intro_sv">Intro Content (SV)</Label>
+                  <Textarea
+                    id="intro_sv"
+                    value={formData.intro_sv}
+                    onChange={(e) => setFormData(prev => ({ ...prev, intro_sv: e.target.value }))}
+                    rows={3}
                   />
                 </div>
               </TabsContent>
@@ -626,7 +844,7 @@ export default function Partners() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Services ({formData.service_ids.length} selected)</Label>
-                <ScrollArea className="h-32 border rounded-md p-3">
+                <ScrollArea className="h-28 border rounded-md p-3">
                   <div className="space-y-2">
                     {services.map((service) => (
                       <div key={service.id} className="flex items-center gap-2">
@@ -646,7 +864,7 @@ export default function Partners() {
 
               <div className="space-y-2">
                 <Label>Areas ({formData.area_ids.length} selected)</Label>
-                <ScrollArea className="h-32 border rounded-md p-3">
+                <ScrollArea className="h-28 border rounded-md p-3">
                   <div className="space-y-2">
                     {areas.map((area) => (
                       <div key={area.id} className="flex items-center gap-2">
@@ -657,6 +875,48 @@ export default function Partners() {
                         />
                         <label htmlFor={`area-${area.id}`} className="text-sm cursor-pointer">
                           {area.name} ({area.districts?.cities?.name} / {area.districts?.name})
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Primary Cities ({formData.city_ids.length} selected)</Label>
+                <ScrollArea className="h-28 border rounded-md p-3">
+                  <div className="space-y-2">
+                    {cities.map((city) => (
+                      <div key={city.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`city-${city.id}`}
+                          checked={formData.city_ids.includes(city.id)}
+                          onCheckedChange={() => toggleSelection(city.id, "city_ids")}
+                        />
+                        <label htmlFor={`city-${city.id}`} className="text-sm cursor-pointer">
+                          {city.name}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Districts ({formData.district_ids.length} selected)</Label>
+                <ScrollArea className="h-28 border rounded-md p-3">
+                  <div className="space-y-2">
+                    {districts.map((district) => (
+                      <div key={district.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`district-${district.id}`}
+                          checked={formData.district_ids.includes(district.id)}
+                          onCheckedChange={() => toggleSelection(district.id, "district_ids")}
+                        />
+                        <label htmlFor={`district-${district.id}`} className="text-sm cursor-pointer">
+                          {district.name} ({district.cities?.name})
                         </label>
                       </div>
                     ))}
