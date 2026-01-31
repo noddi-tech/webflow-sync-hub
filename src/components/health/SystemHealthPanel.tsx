@@ -4,13 +4,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RefreshCw, Activity, Clock, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { RefreshCw, Activity, Clock, AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { CollectionHealthCard } from "./CollectionHealthCard";
 import { DataCompletenessCard } from "./DataCompletenessCard";
+import { HealthExportButtons } from "./HealthExportButtons";
 import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ChevronDown, ChevronUp } from "lucide-react";
 
 interface ValidationResults {
   collections: Record<string, {
@@ -160,6 +160,10 @@ export function SystemHealthPanel() {
                   </span>
                 </div>
               )}
+              <HealthExportButtons 
+                results={results || null} 
+                checkedAt={latestHealth?.checked_at} 
+              />
               <Button
                 size="sm"
                 variant="outline"
