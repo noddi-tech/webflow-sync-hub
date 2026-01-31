@@ -1,10 +1,16 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, AlertTriangle, XCircle, Settings, ChevronDown, ChevronUp, Info, Copy } from "lucide-react";
+import { CheckCircle2, AlertTriangle, XCircle, Settings, ChevronDown, ChevronUp, Info, Copy, ExternalLink } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+
+interface MissingFieldInfo {
+  slug: string;
+  type: string;
+  required: boolean;
+}
 
 interface CollectionHealthCardProps {
   name: string;
@@ -15,6 +21,7 @@ interface CollectionHealthCardProps {
     expected_fields: string[];
     found_fields: string[];
     missing_in_webflow: string[];
+    missing_in_webflow_typed?: MissingFieldInfo[];
     missing_required: string[];
     extra_in_webflow: string[];
     error_message?: string;
@@ -30,6 +37,28 @@ const COLLECTION_LABELS: Record<string, string> = {
   partners: "Partners",
   service_locations: "Service Locations",
 };
+
+// Map our internal types to Webflow UI names
+const WEBFLOW_TYPE_LABELS: Record<string, string> = {
+  PlainText: "Plain Text",
+  RichText: "Rich Text",
+  Number: "Number",
+  Switch: "Switch",
+  ItemRef: "Reference",
+  ItemRefSet: "Multi-Reference",
+};
+
+// Group fields by type for easier batch creation
+function groupFieldsByType(fields: MissingFieldInfo[]): Record<string, MissingFieldInfo[]> {
+  return fields.reduce((acc, field) => {
+    const type = field.type;
+    if (!acc[type]) {
+      acc[type] = [];
+    }
+    acc[type].push(field);
+    return acc;
+  }, {} as Record<string, MissingFieldInfo[]>);
+}
 
 export function CollectionHealthCard({ name, collection }: CollectionHealthCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -69,9 +98,35 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
     });
   };
 
+  const copyAllFieldSpecs = () => {
+    const typedFields = collection.missing_in_webflow_typed || [];
+    const groupedFields = groupFieldsByType(typedFields);
+    
+    let text = `Collection: ${COLLECTION_LABELS[name] || name}\nMissing Fields to Create in Webflow CMS Designer:\n\n`;
+    
+    for (const [type, fields] of Object.entries(groupedFields)) {
+      const webflowType = WEBFLOW_TYPE_LABELS[type] || type;
+      text += `${webflowType} Fields:\n`;
+      for (const field of fields) {
+        const requiredLabel = field.required ? " (REQUIRED)" : "";
+        text += `- ${field.slug}${requiredLabel}\n`;
+      }
+      text += "\n";
+    }
+    
+    navigator.clipboard.writeText(text);
+    toast({
+      title: "Copied!",
+      description: "All missing field specs copied to clipboard",
+    });
+  };
+
   const hasDetails = collection.missing_in_webflow.length > 0 || 
                      collection.extra_in_webflow.length > 0 || 
                      collection.error_message;
+
+  const typedMissingFields = collection.missing_in_webflow_typed || [];
+  const groupedMissingFields = groupFieldsByType(typedMissingFields);
 
   return (
     <div className="border rounded-lg p-3 bg-card hover:border-primary/30 transition-colors">
@@ -116,30 +171,101 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                 Missing Required Fields
               </p>
               <div className="flex flex-wrap gap-1">
-                {collection.missing_required.map((field) => (
-                  <Badge key={field} variant="destructive" className="text-xs">
-                    {field}
-                  </Badge>
-                ))}
+                {collection.missing_required.map((field) => {
+                  const fieldInfo = typedMissingFields.find(f => f.slug === field);
+                  return (
+                    <Badge key={field} variant="destructive" className="text-xs">
+                      {field} {fieldInfo && `(${WEBFLOW_TYPE_LABELS[fieldInfo.type] || fieldInfo.type})`}
+                    </Badge>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {collection.missing_in_webflow.filter(f => !collection.missing_required.includes(f)).length > 0 && (
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3" />
-                Optional Fields Missing in Webflow
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {collection.missing_in_webflow
-                  .filter(f => !collection.missing_required.includes(f))
-                  .map((field) => (
-                    <Badge key={field} variant="outline" className="text-xs bg-yellow-500/10">
-                      {field}
-                    </Badge>
-                  ))}
+          {/* Missing Fields with Creation Guide */}
+          {Object.keys(groupedMissingFields).length > 0 && (
+            <div className="space-y-3">
+              {/* Info Banner */}
+              <div className="flex items-start gap-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs">
+                <AlertTriangle className="h-3 w-3 text-yellow-500 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-medium text-yellow-600 dark:text-yellow-400">
+                    Create these fields in Webflow CMS Designer
+                  </p>
+                  <p className="text-muted-foreground">
+                    Open your Webflow project → CMS Collections → {collection.webflow_collection_name || COLLECTION_LABELS[name]} → Add the missing fields below.
+                  </p>
+                </div>
               </div>
+
+              {/* Fields grouped by type */}
+              {Object.entries(groupedMissingFields).map(([type, fields]) => {
+                const webflowType = WEBFLOW_TYPE_LABELS[type] || type;
+                const isReference = type === "ItemRef" || type === "ItemRefSet";
+                
+                return (
+                  <div key={type} className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                        {webflowType} Fields
+                        {isReference && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Info className="h-3 w-3 cursor-help" />
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">
+                                <p className="text-xs">
+                                  {type === "ItemRef" 
+                                    ? "Single reference to another collection item"
+                                    : "Multiple references to other collection items"}
+                                </p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {fields.map((field) => (
+                        <TooltipProvider key={field.slug}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge 
+                                variant={field.required ? "destructive" : "outline"} 
+                                className={`text-xs cursor-pointer hover:bg-accent ${!field.required ? 'bg-yellow-500/10' : ''}`}
+                                onClick={() => copyFieldSlug(field.slug)}
+                              >
+                                {field.slug}
+                                {field.required && " *"}
+                                <Copy className="h-2 w-2 ml-1" />
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">
+                                Click to copy slug. Create as "{webflowType}" in Webflow.
+                                {field.required && " (Required field)"}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Copy All Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full text-xs"
+                onClick={copyAllFieldSpecs}
+              >
+                <Copy className="h-3 w-3 mr-1" />
+                Copy All Missing Field Specs
+              </Button>
             </div>
           )}
 
@@ -157,7 +283,7 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
                       <p className="text-xs">
-                        These fields exist in Webflow but are not yet mapped. 
+                        These fields exist in Webflow but are not yet mapped to your database. 
                         They may need to be added to the field definitions for full sync support. Click to copy the slug.
                       </p>
                     </TooltipContent>
