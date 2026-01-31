@@ -20,12 +20,11 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description tag (localized) for search engines." },
     { slug: "intro-content", type: "RichText", required: false, description: "Rich text description of the city for SEO and user context." },
     { slug: "sitemap-priority", type: "Number", required: false, description: "Control over sitemap importance for search engines (0.0-1.0)." },
-    // Control fields
-    { slug: "is-delivery", type: "Switch", required: false, description: "UI flag to control visibility in selection filters." },
+    // Control fields - Note: Cities don't have is-delivery in Webflow
     { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed by search engines." },
-    // Navigation multi-refs
-    { slug: "districts", type: "ItemRefSet", required: false, description: "Child districts for navigation and internal linking." },
-    { slug: "areas", type: "ItemRefSet", required: false, description: "Child areas for navigational context." },
+    // Navigation multi-refs (Webflow uses -2 suffix)
+    { slug: "districts-2", type: "ItemRefSet", required: false, description: "Child districts for navigation and internal linking." },
+    { slug: "areas-2", type: "ItemRefSet", required: false, description: "Child areas for navigational context." },
   ],
   districts: [
     // Core fields
@@ -40,11 +39,10 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
     { slug: "intro-content", type: "RichText", required: false, description: "Rich text description of the district." },
     { slug: "sitemap-priority", type: "Number", required: false, description: "Sitemap priority value (0.0-1.0)." },
-    // Control fields
-    { slug: "is-delivery", type: "Switch", required: false, description: "UI flag to control visibility in selection filters." },
+    // Control fields - Note: Districts don't have is-delivery in Webflow
     { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed." },
-    // Navigation multi-refs
-    { slug: "areas", type: "ItemRefSet", required: false, description: "Child areas for navigation." },
+    // Navigation multi-refs (Webflow uses -2 suffix)
+    { slug: "areas-2", type: "ItemRefSet", required: false, description: "Child areas for navigation." },
   ],
   areas: [
     // Core fields
@@ -113,11 +111,13 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "phone-number", type: "PlainText", required: false, description: "Partner contact phone number." },
     { slug: "website-link", type: "PlainText", required: false, description: "Partner website URL." },
     { slug: "facebook-link", type: "PlainText", required: false, description: "Partner Facebook page URL." },
-    { slug: "instagram-link", type: "PlainText", required: false, description: "Partner Instagram profile URL." },
+    // Note: Webflow slug is "twitter-link" but displayName shows "Instagram Link"
+    { slug: "twitter-link", type: "PlainText", required: false, description: "Partner Instagram/social profile URL." },
     // Content fields
     { slug: "client-information", type: "RichText", required: false, description: "Rich text describing the partner for detail pages." },
     { slug: "client-information-summary", type: "PlainText", required: false, description: "Short summary for service cards and listings." },
     { slug: "heading-text", type: "PlainText", required: false, description: "Custom heading text for partner display." },
+    { slug: "heading-text-2", type: "PlainText", required: false, description: "Secondary heading text (light purple)." },
     // Branding fields
     { slug: "client-logo", type: "PlainText", required: false, description: "Partner's company logo URL." },
     { slug: "noddi-logo", type: "PlainText", required: false, description: "Noddi-specific partner logo URL." },
