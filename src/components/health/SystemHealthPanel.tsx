@@ -8,9 +8,27 @@ import { RefreshCw, Activity, Clock, AlertTriangle, CheckCircle2, XCircle, Chevr
 import { useToast } from "@/hooks/use-toast";
 import { CollectionHealthCard } from "./CollectionHealthCard";
 import { DataCompletenessCard } from "./DataCompletenessCard";
+import { SEOQualityCard } from "./SEOQualityCard";
 import { HealthExportButtons } from "./HealthExportButtons";
 import { formatDistanceToNow } from "date-fns";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+
+interface SEOQualityStats {
+  duplicate_seo_titles: number;
+  duplicate_meta_descriptions: number;
+  invalid_json_ld: number;
+  short_intro_content: number;
+  noindex_with_partners: number;
+  missing_canonical_urls: number;
+  issues: Array<{
+    id: string;
+    slug: string;
+    seo_title?: string;
+    seo_meta_description?: string;
+    issue_type: string;
+  }>;
+  score: number;
+}
 
 interface ValidationResults {
   collections: Record<string, {
@@ -39,6 +57,7 @@ interface ValidationResults {
     name_en: number;
     name_sv: number;
   }>;
+  seo_quality?: SEOQualityStats;
 }
 
 interface SystemHealthRecord {
@@ -111,11 +130,14 @@ export function SystemHealthPanel() {
 
   const results = latestHealth?.results;
   const summary = results?.summary;
+  const seoQuality = results?.seo_quality;
 
   const getOverallStatus = () => {
     if (!summary) return "unknown";
     if (summary.errors > 0) return "error";
+    if (seoQuality && seoQuality.invalid_json_ld > 0) return "error";
     if (summary.missing_fields > 0 || summary.not_configured > 0) return "warning";
+    if (seoQuality && seoQuality.score < 80) return "warning";
     return "healthy";
   };
 
@@ -209,9 +231,10 @@ export function SystemHealthPanel() {
                     <div className="text-sm">
                       <p className="font-medium text-yellow-600 dark:text-yellow-400">
                         {summary?.missing_fields} collection(s) have missing fields, {summary?.not_configured} not configured
+                        {seoQuality && seoQuality.score < 80 && `, SEO score: ${seoQuality.score}/100`}
                       </p>
                       <p className="text-muted-foreground mt-1">
-                        Review the collection mappings below to ensure all fields are properly configured.
+                        Review the collection mappings and SEO quality below to ensure all fields are properly configured.
                       </p>
                     </div>
                   </div>
@@ -223,6 +246,7 @@ export function SystemHealthPanel() {
                     <div className="text-sm">
                       <p className="font-medium text-destructive">
                         {summary?.errors} collection(s) have errors
+                        {seoQuality && seoQuality.invalid_json_ld > 0 && `, ${seoQuality.invalid_json_ld} invalid JSON-LD`}
                       </p>
                       <p className="text-muted-foreground mt-1">
                         Check the error messages below and verify your Webflow collection IDs.
@@ -230,6 +254,9 @@ export function SystemHealthPanel() {
                     </div>
                   </div>
                 )}
+
+                {/* SEO Quality Card */}
+                <SEOQualityCard stats={seoQuality || null} />
 
                 {/* Collection Status Cards */}
                 <div>
