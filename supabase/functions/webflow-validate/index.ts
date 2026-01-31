@@ -179,6 +179,12 @@ const ENTITY_TABLES = [
   "service_locations",
 ];
 
+interface MissingFieldInfo {
+  slug: string;
+  type: string;
+  required: boolean;
+}
+
 interface CollectionValidationResult {
   webflow_collection_name: string | null;
   collection_id: string | null;
@@ -186,6 +192,7 @@ interface CollectionValidationResult {
   expected_fields: string[];
   found_fields: string[];
   missing_in_webflow: string[];
+  missing_in_webflow_typed: MissingFieldInfo[];
   missing_required: string[];
   extra_in_webflow: string[];
   error_message?: string;
@@ -645,6 +652,11 @@ serve(async (req) => {
           expected_fields: expectedFields.map((f) => f.slug),
           found_fields: [],
           missing_in_webflow: expectedFields.map((f) => f.slug),
+          missing_in_webflow_typed: expectedFields.map((f) => ({
+            slug: f.slug,
+            type: f.type,
+            required: f.required,
+          })),
           missing_required: expectedFields.filter((f) => f.required).map((f) => f.slug),
           extra_in_webflow: [],
         };
@@ -659,6 +671,13 @@ serve(async (req) => {
         const missingInWebflow = expectedFieldSlugs.filter(
           (slug) => !foundFieldSlugs.includes(slug)
         );
+        const missingInWebflowTyped = expectedFields
+          .filter((f) => !foundFieldSlugs.includes(f.slug))
+          .map((f) => ({
+            slug: f.slug,
+            type: f.type,
+            required: f.required,
+          }));
         const missingRequired = expectedFields
           .filter((f) => f.required && !foundFieldSlugs.includes(f.slug))
           .map((f) => f.slug);
@@ -680,6 +699,7 @@ serve(async (req) => {
           expected_fields: expectedFieldSlugs,
           found_fields: foundFieldSlugs,
           missing_in_webflow: missingInWebflow,
+          missing_in_webflow_typed: missingInWebflowTyped,
           missing_required: missingRequired,
           extra_in_webflow: extraInWebflow,
         };
@@ -694,6 +714,7 @@ serve(async (req) => {
           expected_fields: expectedFields.map((f) => f.slug),
           found_fields: [],
           missing_in_webflow: [],
+          missing_in_webflow_typed: [],
           missing_required: [],
           extra_in_webflow: [],
           error_message: error instanceof Error ? error.message : "Unknown error",

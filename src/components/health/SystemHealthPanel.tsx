@@ -30,6 +30,12 @@ interface SEOQualityStats {
   score: number;
 }
 
+interface MissingFieldInfo {
+  slug: string;
+  type: string;
+  required: boolean;
+}
+
 interface ValidationResults {
   collections: Record<string, {
     webflow_collection_name: string | null;
@@ -38,6 +44,7 @@ interface ValidationResults {
     expected_fields: string[];
     found_fields: string[];
     missing_in_webflow: string[];
+    missing_in_webflow_typed?: MissingFieldInfo[];
     missing_required: string[];
     extra_in_webflow: string[];
     error_message?: string;
