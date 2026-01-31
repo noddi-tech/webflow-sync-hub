@@ -324,7 +324,7 @@ Deno.serve(async (req) => {
 
             upsertData = {
               webflow_item_id: webflowId,
-              shared_key: getString(noData.slug), // shared-key not present in Webflow services
+              shared_key: getString(noData["shared-key"]) || getString(noData.slug),
               service_category_id: serviceCategoryId,
               name: getString(noData.name) || "",
               name_en: getString(enData.name),
@@ -332,9 +332,9 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              description: null, // Not present in Webflow
-              description_en: null,
-              description_sv: null,
+              description: getString(noData["description"]),
+              description_en: getString(enData["description"]),
+              description_sv: getString(svData["description"]),
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
@@ -346,7 +346,7 @@ Deno.serve(async (req) => {
               intro_sv: getString(svData["service-intro-seo"]),
               icon_url: getString(noData["icon"]),
               sort_order: getNumber(noData["sort-order"]) ?? 0,
-              active: true, // Not present in Webflow, default to true
+              active: getBoolean(noData["active"]) ?? true,
             };
           } else if (entity === "cities") {
             upsertData = {
@@ -358,8 +358,8 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              short_description: null, // Not present in Webflow
-              is_delivery: null, // Not present in Webflow
+              short_description: null,
+              is_delivery: getBoolean(noData["is-delivery"]) ?? false,
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
@@ -400,8 +400,8 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              short_description: null, // Not present in Webflow
-              is_delivery: null, // Not present in Webflow
+              short_description: null,
+              is_delivery: getBoolean(noData["is-delivery"]) ?? false,
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
@@ -457,8 +457,8 @@ Deno.serve(async (req) => {
               slug: getString(noData.slug) || "",
               slug_en: getString(enData.slug),
               slug_sv: getString(svData.slug),
-              short_description: null, // Not present in Webflow
-              is_delivery: null, // Not present in Webflow
+              short_description: null,
+              is_delivery: getBoolean(noData["is-delivery"]) ?? false,
               seo_title: getString(noData["seo-title"]),
               seo_title_en: getString(enData["seo-title"]),
               seo_title_sv: getString(svData["seo-title"]),
@@ -482,7 +482,7 @@ Deno.serve(async (req) => {
               slug_sv: getString(svData.slug),
               email: getString(noData.email),
               phone: getString(noData["phone-number"]),
-              address: null, // Not present in Webflow
+              address: null,
               description: getString(noData["client-information"]),
               description_en: getString(enData["client-information"]),
               description_sv: getString(svData["client-information"]),
@@ -491,9 +491,9 @@ Deno.serve(async (req) => {
               logo_url: getString(noData["client-logo"]),
               noddi_logo_url: getString(noData["noddi-logo"]),
               website_url: getString(noData["website-link"]),
-              instagram_url: null, // Not present in Webflow
+              instagram_url: getString(noData["instagram-link"]),
               facebook_url: getString(noData["facebook-link"]),
-              rating: null, // Not present in Webflow
+              rating: null,
               active: getBoolean(noData["partner-active"]) ?? true,
             };
           } else {

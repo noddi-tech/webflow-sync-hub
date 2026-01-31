@@ -157,8 +157,8 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
                       <p className="text-xs">
-                        These fields exist in Webflow but are not mapped to your database. 
-                        They are safe to ignore, or click to copy the slug and add to field mappings.
+                        These fields exist in Webflow but are not yet mapped. 
+                        They may need to be added to the field definitions for full sync support. Click to copy the slug.
                       </p>
                     </TooltipContent>
                   </Tooltip>

@@ -906,9 +906,23 @@ async function syncServiceLocationsToWebflow(
       structured_data_json: "json-ld-structured-data-2"
     });
     
+    // Generate a descriptive name for the item (e.g., "Dekkskift i Oslo")
+    const serviceName = sl.services?.name || "Service";
+    const cityName = sl.cities?.name || "Location";
+    const districtName = sl.districts?.name;
+    const areaName = sl.areas?.name;
+    let locationName = cityName;
+    if (areaName && districtName) {
+      locationName = `${areaName}, ${districtName}, ${cityName}`;
+    } else if (districtName) {
+      locationName = `${districtName}, ${cityName}`;
+    }
+    const itemName = `${serviceName} i ${locationName}`;
+    
     // Build base field data (Norwegian + non-localized fields)
     const baseFieldData: Record<string, unknown> = {
       ...localizedFields.no,
+      "name": itemName,
       "sitemap-priority-2": sl.sitemap_priority ?? 0.5,
       "noindex-2": sl.noindex ?? false,
     };
