@@ -34,8 +34,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Check, X, Trash2, RefreshCw, ChevronRight, ChevronDown, Globe } from "lucide-react";
+import { Check, X, Trash2, RefreshCw, ChevronRight, ChevronDown, Globe, AlertTriangle } from "lucide-react";
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface StagingCity {
   id: string;
@@ -394,6 +400,22 @@ export default function NavioPreview() {
         return <Badge variant="destructive">Rejected</Badge>;
       case "committed":
         return <Badge variant="outline">Committed</Badge>;
+      case "needs_mapping":
+        return (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="secondary" className="bg-amber-500/20 text-amber-700 border-amber-500/30">
+                  <AlertTriangle className="h-3 w-3 mr-1" />
+                  Needs Mapping
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>This is an internal logistics code that requires manual mapping to a real district/area name.</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
