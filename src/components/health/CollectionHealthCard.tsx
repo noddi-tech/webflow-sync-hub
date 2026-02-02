@@ -48,6 +48,42 @@ const COLLECTION_LABELS: Record<string, string> = {
   service_locations: "Service Locations",
 };
 
+// Map collection keys to database table names
+const TABLE_NAME_MAP: Record<string, string> = {
+  cities: "cities",
+  districts: "districts",
+  areas: "areas",
+  service_categories: "service_categories",
+  services: "services",
+  partners: "partners",
+  service_locations: "service_locations",
+};
+
+// Map collection keys to UI page file names
+const PAGE_NAME_MAP: Record<string, string> = {
+  cities: "Cities.tsx",
+  districts: "Districts.tsx",
+  areas: "Areas.tsx",
+  service_categories: "ServiceCategories.tsx",
+  services: "Services.tsx",
+  partners: "Partners.tsx",
+  service_locations: "ServiceLocations.tsx",
+};
+
+// Map Webflow types to database types
+const DB_TYPE_MAP: Record<string, string> = {
+  PlainText: "text",
+  RichText: "text",
+  Number: "numeric",
+  Switch: "boolean",
+  Image: "text",
+  Link: "text",
+  Email: "text",
+  Phone: "text",
+  ItemRef: "uuid REFERENCES ...",
+  ItemRefSet: "junction table required",
+};
+
 // Map our internal types to Webflow UI names
 const WEBFLOW_TYPE_LABELS: Record<string, string> = {
   PlainText: "Plain Text",
@@ -129,6 +165,77 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
     toast({
       title: "Copied!",
       description: "All missing field specs copied to clipboard",
+    });
+  };
+
+  // Generate a comprehensive fix checklist for developers
+  const generateFixChecklist = () => {
+    const tableName = TABLE_NAME_MAP[name] || name;
+    const pageName = PAGE_NAME_MAP[name] || `${name}.tsx`;
+    
+    let checklist = `# Fix Checklist for ${COLLECTION_LABELS[name] || name}\n\n`;
+    checklist += `> Philosophy: Webflow = Schema source of truth, App = Content source of truth\n\n`;
+    
+    // For extra fields in Webflow (need to add to app)
+    if (collection.extra_in_webflow.length > 0) {
+      checklist += `## Fields to ADD to App (exist in Webflow but not tracked)\n\n`;
+      
+      for (const fieldSlug of collection.extra_in_webflow) {
+        // Try to find type info from found_fields_detailed
+        const detail = collection.found_fields_detailed?.find(f => f.slug === fieldSlug);
+        const fieldType = detail?.type || "Unknown";
+        const dbType = DB_TYPE_MAP[fieldType] || "text";
+        const columnName = fieldSlug.replace(/-/g, "_");
+        
+        checklist += `### Add "${fieldSlug}" (${WEBFLOW_TYPE_LABELS[fieldType] || fieldType})\n\n`;
+        checklist += `1. **Database Migration:**\n`;
+        checklist += `   \`\`\`sql\n`;
+        checklist += `   ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${dbType};\n`;
+        checklist += `   \`\`\`\n\n`;
+        checklist += `2. **UI Input:** Add form field in \`src/pages/${pageName}\`\n\n`;
+        checklist += `3. **Import Mapping:** Add to \`supabase/functions/webflow-import/index.ts\`\n`;
+        checklist += `   \`\`\`typescript\n`;
+        checklist += `   ${columnName}: item.fieldData["${fieldSlug}"],\n`;
+        checklist += `   \`\`\`\n\n`;
+        checklist += `4. **Sync Mapping:** Add to \`supabase/functions/webflow-sync/index.ts\`\n`;
+        checklist += `   \`\`\`typescript\n`;
+        checklist += `   "${fieldSlug}": record.${columnName},\n`;
+        checklist += `   \`\`\`\n\n`;
+        checklist += `5. **Validation:** Add to \`EXPECTED_FIELDS.${name}\` in \`supabase/functions/webflow-validate/index.ts\`\n`;
+        checklist += `   \`\`\`typescript\n`;
+        checklist += `   { slug: "${fieldSlug}", type: "${fieldType}", required: false },\n`;
+        checklist += `   \`\`\`\n\n`;
+        checklist += `---\n\n`;
+      }
+    }
+    
+    // For fields missing in Webflow (need to remove from app's EXPECTED_FIELDS)
+    if (collection.missing_in_webflow.length > 0) {
+      checklist += `## Fields to REMOVE from App's EXPECTED_FIELDS (don't exist in Webflow)\n\n`;
+      checklist += `> These fields are listed in the app's EXPECTED_FIELDS but do NOT exist in Webflow.\n`;
+      checklist += `> Since Webflow is the schema source of truth, remove them from EXPECTED_FIELDS.\n\n`;
+      
+      for (const fieldSlug of collection.missing_in_webflow) {
+        const fieldInfo = collection.missing_in_webflow_typed?.find(f => f.slug === fieldSlug);
+        
+        checklist += `### Remove "${fieldSlug}"\n\n`;
+        checklist += `**File:** \`supabase/functions/webflow-validate/index.ts\`\n\n`;
+        checklist += `**Action:** Delete this line from \`EXPECTED_FIELDS.${name}\`:\n`;
+        checklist += `\`\`\`typescript\n`;
+        checklist += `{ slug: "${fieldSlug}", type: "${fieldInfo?.type || 'Unknown'}", ... },\n`;
+        checklist += `\`\`\`\n\n`;
+        checklist += `---\n\n`;
+      }
+    }
+    
+    if (collection.extra_in_webflow.length === 0 && collection.missing_in_webflow.length === 0) {
+      checklist += `✅ No fixes needed! Collection is fully aligned.\n`;
+    }
+    
+    navigator.clipboard.writeText(checklist);
+    toast({
+      title: "Fix Checklist Copied!",
+      description: "Paste into a document or issue tracker to guide implementation.",
     });
   };
 
@@ -281,16 +388,16 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
           {/* Missing Fields - App expects these in Webflow but they don't exist */}
           {Object.keys(groupedMissingFields).length > 0 && (
             <div className="space-y-3">
-              {/* Info Banner */}
-              <div className="flex items-start gap-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs">
-                <AlertTriangle className="h-3 w-3 text-yellow-500 mt-0.5 shrink-0" />
+              {/* Info Banner - Updated with clearer guidance */}
+              <div className="flex items-start gap-2 p-2 bg-destructive/10 border border-destructive/20 rounded text-xs">
+                <XCircle className="h-3 w-3 text-destructive mt-0.5 shrink-0" />
                 <div className="space-y-1">
-                  <p className="font-medium text-yellow-600 dark:text-yellow-400">
-                    App expects these fields in Webflow
+                  <p className="font-medium text-destructive">
+                    Remove from EXPECTED_FIELDS
                   </p>
                   <p className="text-muted-foreground">
-                    These fields are expected in Webflow's {collection.webflow_collection_name || COLLECTION_LABELS[name]} collection but were not found.
-                    Either add them to Webflow CMS, or remove them from the app's EXPECTED_FIELDS if they are app-only.
+                    These fields are in the app's EXPECTED_FIELDS but do NOT exist in the Webflow {collection.webflow_collection_name || COLLECTION_LABELS[name]} schema.
+                    Since <strong>Webflow is the schema source of truth</strong>, remove these from <code>webflow-validate/index.ts</code>.
                   </p>
                 </div>
               </div>
@@ -352,39 +459,48 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                 );
               })}
 
-              {/* Copy All Button */}
+              {/* Generate Fix Checklist Button */}
               <Button
                 variant="outline"
                 size="sm"
                 className="w-full text-xs"
-                onClick={copyAllFieldSpecs}
+                onClick={generateFixChecklist}
               >
-                <Copy className="h-3 w-3 mr-1" />
-                Copy All Missing Field Specs
+                <ExternalLink className="h-3 w-3 mr-1" />
+                Generate Fix Checklist
               </Button>
             </div>
           )}
 
           {collection.extra_in_webflow.length > 0 && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-1">
-                <p className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1">
-                  <Info className="h-3 w-3" />
-                  Extra Fields in Webflow (Not Tracked by App)
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 p-2 bg-blue-500/10 border border-blue-500/20 rounded text-xs">
+                <Info className="h-3 w-3 text-blue-500 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-medium text-blue-600 dark:text-blue-400">
+                    Add to App (Webflow has these, app doesn't track them)
+                  </p>
+                  <p className="text-muted-foreground">
+                    These fields exist in Webflow but aren't tracked by the app yet. 
+                    To sync these fields, you need to: add a database column, update the UI form, 
+                    add import/sync mappings, and add to EXPECTED_FIELDS.
+                    Use <strong>Generate Fix Checklist</strong> for detailed steps.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Extra Fields ({collection.extra_in_webflow.length})
                 </p>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p className="text-xs">
-                        These fields exist in Webflow but are not in the app's EXPECTED_FIELDS list.
-                        If you need to sync these, add them to both EXPECTED_FIELDS (validation) and the app's database/UI.
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs"
+                  onClick={generateFixChecklist}
+                >
+                  <ExternalLink className="h-3 w-3 mr-1" />
+                  Fix Checklist
+                </Button>
               </div>
               <div className="flex flex-wrap gap-1">
                 {collection.extra_in_webflow.map((field) => (
