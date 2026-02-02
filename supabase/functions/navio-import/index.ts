@@ -17,8 +17,74 @@ interface NavioServiceArea {
   name: string;
   display_name?: string;
   is_active?: boolean;
+  postal_code_cities?: Array<{ postal_code: string; city: string }>;
+  geofence_geojson?: object;
+  service_department_names?: string[];
   [key: string]: unknown;
 }
+
+// Norwegian postal code → bydel reference data for enhanced AI context
+const norwegianPostalDistricts: Record<string, string> = {
+  // Bergen bydeler (5xxx)
+  '5003': 'Bergenhus', '5004': 'Bergenhus', '5005': 'Bergenhus', '5006': 'Bergenhus', '5007': 'Bergenhus',
+  '5008': 'Bergenhus', '5009': 'Bergenhus', '5010': 'Bergenhus', '5011': 'Bergenhus', '5012': 'Bergenhus',
+  '5013': 'Bergenhus', '5014': 'Bergenhus', '5015': 'Bergenhus', '5016': 'Bergenhus', '5017': 'Bergenhus',
+  '5018': 'Bergenhus', '5020': 'Bergenhus', '5021': 'Bergenhus',
+  '5031': 'Laksevåg', '5032': 'Laksevåg', '5033': 'Laksevåg', '5034': 'Laksevåg', '5035': 'Laksevåg',
+  '5036': 'Laksevåg', '5037': 'Laksevåg', '5038': 'Laksevåg', '5039': 'Laksevåg', '5041': 'Laksevåg',
+  '5042': 'Laksevåg', '5043': 'Laksevåg', '5045': 'Laksevåg',
+  '5052': 'Årstad', '5053': 'Årstad', '5054': 'Årstad', '5055': 'Årstad', '5057': 'Årstad',
+  '5058': 'Årstad', '5059': 'Årstad', '5063': 'Årstad', '5067': 'Årstad', '5068': 'Årstad',
+  '5072': 'Fana', '5073': 'Fana', '5075': 'Fana', '5076': 'Fana', '5078': 'Fana',
+  '5081': 'Fana', '5082': 'Fana', '5089': 'Fana', '5093': 'Fana', '5094': 'Fana',
+  '5096': 'Fana', '5097': 'Fana', '5098': 'Fana',
+  '5115': 'Ytrebygda', '5116': 'Ytrebygda', '5117': 'Ytrebygda', '5118': 'Ytrebygda',
+  '5119': 'Ytrebygda', '5132': 'Ytrebygda', '5134': 'Ytrebygda',
+  '5130': 'Åsane', '5131': 'Åsane', '5136': 'Åsane', '5137': 'Åsane', '5141': 'Åsane',
+  '5142': 'Åsane', '5143': 'Åsane', '5144': 'Åsane', '5145': 'Åsane', '5146': 'Åsane',
+  '5147': 'Åsane', '5148': 'Åsane', '5149': 'Åsane',
+  '5160': 'Arna', '5161': 'Arna', '5162': 'Arna', '5163': 'Arna', '5164': 'Arna',
+  '5165': 'Arna', '5170': 'Arna', '5171': 'Arna', '5172': 'Arna', '5173': 'Arna',
+  '5174': 'Arna', '5176': 'Arna', '5177': 'Arna', '5178': 'Arna',
+  '5200': 'Fyllingsdalen', '5201': 'Fyllingsdalen', '5202': 'Fyllingsdalen',
+  '5224': 'Nesttun', '5225': 'Nesttun', '5226': 'Nesttun', '5227': 'Nesttun', '5228': 'Nesttun',
+  '5229': 'Nesttun', '5231': 'Paradis', '5232': 'Paradis', '5235': 'Rådal',
+  // Oslo bydeler (0xxx)
+  '0150': 'Frogner', '0151': 'Frogner', '0152': 'Frogner', '0153': 'Frogner', '0154': 'Frogner',
+  '0155': 'Frogner', '0157': 'Frogner', '0158': 'Frogner', '0159': 'Frogner', '0160': 'Frogner',
+  '0161': 'Frogner', '0162': 'Frogner', '0163': 'Frogner', '0164': 'Frogner', '0165': 'Frogner',
+  '0166': 'Frogner', '0167': 'Frogner', '0168': 'Frogner', '0169': 'Frogner', '0170': 'Frogner',
+  '0171': 'Frogner', '0172': 'Frogner', '0173': 'Frogner', '0174': 'Frogner', '0175': 'Frogner',
+  '0176': 'Grünerløkka', '0177': 'Grünerløkka', '0178': 'Grünerløkka', '0179': 'Grünerløkka',
+  '0180': 'Sentrum', '0181': 'Sentrum', '0182': 'Gamle Oslo', '0183': 'Gamle Oslo',
+  '0184': 'Gamle Oslo', '0185': 'Gamle Oslo', '0186': 'Gamle Oslo', '0187': 'Gamle Oslo',
+  '0188': 'Gamle Oslo', '0190': 'Gamle Oslo', '0191': 'Gamle Oslo', '0192': 'Gamle Oslo',
+  '0193': 'Gamle Oslo', '0194': 'Gamle Oslo', '0195': 'Gamle Oslo', '0196': 'Gamle Oslo',
+  '0350': 'Sagene', '0351': 'Sagene', '0352': 'Sagene', '0353': 'Sagene', '0354': 'Sagene',
+  '0355': 'Sagene', '0356': 'Sagene', '0357': 'Sagene', '0358': 'Sagene', '0359': 'Sagene',
+  '0360': 'Sagene', '0361': 'Sagene', '0362': 'Sagene', '0363': 'Sagene', '0364': 'Sagene',
+  '0365': 'Nordre Aker', '0366': 'Nordre Aker', '0367': 'Nordre Aker', '0368': 'Nordre Aker',
+  '0369': 'Nordre Aker', '0370': 'Nordre Aker', '0371': 'Nordre Aker', '0372': 'Nordre Aker',
+  '0373': 'Nordre Aker', '0374': 'Nordre Aker', '0375': 'Nordre Aker', '0376': 'Nordre Aker',
+  '0377': 'Nordre Aker', '0378': 'Nordre Aker', '0379': 'Nordre Aker', '0380': 'Nordre Aker',
+  '0451': 'St. Hanshaugen', '0452': 'St. Hanshaugen', '0453': 'St. Hanshaugen', '0454': 'St. Hanshaugen',
+  '0455': 'St. Hanshaugen', '0456': 'St. Hanshaugen', '0457': 'St. Hanshaugen', '0458': 'St. Hanshaugen',
+  '0459': 'St. Hanshaugen', '0460': 'St. Hanshaugen', '0461': 'St. Hanshaugen', '0462': 'St. Hanshaugen',
+  '0463': 'St. Hanshaugen', '0464': 'St. Hanshaugen', '0465': 'St. Hanshaugen', '0466': 'St. Hanshaugen',
+  '0467': 'St. Hanshaugen', '0468': 'St. Hanshaugen', '0469': 'St. Hanshaugen', '0470': 'Grünerløkka',
+  '0550': 'Grünerløkka', '0551': 'Grünerløkka', '0552': 'Grünerløkka', '0553': 'Grünerløkka',
+  '0554': 'Grünerløkka', '0555': 'Grünerløkka', '0556': 'Grünerløkka', '0557': 'Grünerløkka',
+  '0558': 'Grünerløkka', '0559': 'Grünerløkka', '0560': 'Grünerløkka', '0561': 'Grünerløkka',
+  '0562': 'Grünerløkka', '0563': 'Grünerløkka', '0564': 'Grünerløkka', '0565': 'Grünerløkka',
+  // Kristiansand (46xx)
+  '4608': 'Sentrum', '4609': 'Sentrum', '4610': 'Lund', '4611': 'Lund', '4612': 'Grim',
+  '4613': 'Grim', '4614': 'Hellemyr', '4615': 'Hellemyr', '4616': 'Hånes', '4617': 'Hånes',
+  '4618': 'Justvik', '4619': 'Justvik', '4620': 'Vågsbygd', '4621': 'Vågsbygd', '4622': 'Vågsbygd',
+  '4623': 'Vågsbygd', '4624': 'Vågsbygd', '4625': 'Vågsbygd', '4626': 'Voiebyen', '4628': 'Voiebyen',
+  '4629': 'Gimlekollen', '4630': 'Gimlekollen', '4631': 'Randesund', '4632': 'Randesund',
+  '4633': 'Randesund', '4634': 'Randesund', '4635': 'Randesund', '4636': 'Randesund',
+  '4637': 'Randesund', '4638': 'Randesund', '4639': 'Randesund',
+};
 
 interface CountryInfo {
   name: string;
@@ -297,6 +363,160 @@ ${info.example_districts.length > 0 ? `- Example districts: ${info.example_distr
   return parts.join("\n");
 }
 
+// Determine district from postal codes using reference data
+function determineDistrictFromPostalCodes(
+  postalCodes: Array<{ postal_code: string; city: string }>
+): { district: string | null; confidence: 'high' | 'medium' | 'low'; source: 'reference' | 'ai' } {
+  if (!postalCodes || postalCodes.length === 0) {
+    return { district: null, confidence: 'low', source: 'reference' };
+  }
+
+  // Count district occurrences from postal codes
+  const districtCounts = new Map<string, number>();
+  
+  for (const pc of postalCodes) {
+    const district = norwegianPostalDistricts[pc.postal_code];
+    if (district) {
+      districtCounts.set(district, (districtCounts.get(district) || 0) + 1);
+    }
+  }
+
+  if (districtCounts.size === 0) {
+    return { district: null, confidence: 'low', source: 'reference' };
+  }
+
+  // Find the most common district
+  let maxCount = 0;
+  let primaryDistrict = '';
+  for (const [district, count] of districtCounts) {
+    if (count > maxCount) {
+      maxCount = count;
+      primaryDistrict = district;
+    }
+  }
+
+  // Calculate confidence based on coverage
+  const totalPostalCodes = postalCodes.length;
+  const matchedPostalCodes = Array.from(districtCounts.values()).reduce((a, b) => a + b, 0);
+  const coverageRatio = matchedPostalCodes / totalPostalCodes;
+  const dominanceRatio = maxCount / matchedPostalCodes;
+
+  // High confidence: >80% matched AND >70% point to same district
+  if (coverageRatio > 0.8 && dominanceRatio > 0.7) {
+    return { district: primaryDistrict, confidence: 'high', source: 'reference' };
+  }
+  
+  // Medium confidence: >50% matched AND >60% point to same district
+  if (coverageRatio > 0.5 && dominanceRatio > 0.6) {
+    return { district: primaryDistrict, confidence: 'medium', source: 'reference' };
+  }
+
+  return { district: primaryDistrict, confidence: 'low', source: 'reference' };
+}
+
+// Enhanced AI classification for internal codes using postal code data
+interface PostalCodeDistrictResult {
+  district: string;
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string;
+}
+
+async function classifyInternalCodeWithPostalData(
+  areaName: string,
+  cityName: string,
+  postalCodeCities: Array<{ postal_code: string; city: string }>,
+  lovableKey: string
+): Promise<PostalCodeDistrictResult> {
+  // First try reference data
+  const referenceResult = determineDistrictFromPostalCodes(postalCodeCities);
+  if (referenceResult.confidence === 'high' && referenceResult.district) {
+    return {
+      district: referenceResult.district,
+      confidence: 'high',
+      reasoning: `Reference data matched ${referenceResult.district} with high confidence`
+    };
+  }
+
+  // If reference data has medium confidence, still use it but note it
+  if (referenceResult.confidence === 'medium' && referenceResult.district) {
+    return {
+      district: referenceResult.district,
+      confidence: 'medium',
+      reasoning: `Reference data suggests ${referenceResult.district} but with moderate coverage`
+    };
+  }
+
+  // Fall back to AI with postal code context
+  const postalCodeSummary = postalCodeCities
+    .slice(0, 20) // Limit to first 20 for prompt size
+    .map(pc => `${pc.postal_code} (${pc.city})`)
+    .join(', ');
+
+  const prompt = `You are an expert in Norwegian administrative geography.
+
+Given this internal logistics zone code and its postal code data, determine the REAL district name (bydel):
+
+Zone code: "${areaName}"
+City: "${cityName}"
+Postal codes covered: ${postalCodeSummary}
+
+Norwegian postal code patterns for reference:
+- Bergen (5xxx): 5003-5020=Bergenhus, 5031-5045=Laksevåg, 5052-5068=Årstad, 5072-5098=Fana, 5115-5134=Ytrebygda, 5130-5149=Åsane, 5160-5178=Arna, 5200-5235=Fyllingsdalen/Nesttun
+- Oslo (0xxx): 0150-0175=Frogner, 0176-0179=Grünerløkka, 0180-0196=Sentrum/Gamle Oslo, 0350-0380=Sagene/Nordre Aker, 0450-0470=St. Hanshaugen, 0550-0565=Grünerløkka
+- Kristiansand (46xx): 4608-4609=Sentrum, 4610-4611=Lund, 4620-4625=Vågsbygd, 4631-4639=Randesund
+
+Based on the postal codes, what is the most likely official bydel/district name?
+Return ONLY valid JSON with this exact structure:
+{"district": "Fana", "confidence": "high", "reasoning": "Postal codes 5072-5073 are in Fana bydel"}
+
+Valid confidence levels: "high", "medium", "low"`;
+
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You are an expert in Norwegian geography. Return only valid JSON." },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("AI postal code analysis failed:", response.status);
+      return {
+        district: cityName, // Fallback to city name as district
+        confidence: 'low',
+        reasoning: 'AI classification failed, using city as fallback'
+      };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    
+    const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const parsed = JSON.parse(jsonStr) as PostalCodeDistrictResult;
+    
+    return {
+      district: parsed.district || cityName,
+      confidence: parsed.confidence || 'low',
+      reasoning: parsed.reasoning || 'AI classification'
+    };
+  } catch (error) {
+    console.error("Failed to classify with postal data:", error);
+    return {
+      district: cityName,
+      confidence: 'low',
+      reasoning: 'Classification failed, using city as fallback'
+    };
+  }
+}
+
 // Fetch and classify areas from Navio API
 // deno-lint-ignore no-explicit-any
 async function fetchAndClassifyAreas(
@@ -358,6 +578,7 @@ async function fetchAndClassifyAreas(
   await logSync(supabase, "navio", "import", "in_progress", null, `Fetched ${serviceAreas.length} areas from Navio`, batchId, 0, serviceAreas.length);
 
   // Step 2: Extract area names for AI classification with pre-parsing
+  // Also include postal_code_cities for enhanced internal code classification
   const areaNames = serviceAreas.map(sa => {
     const rawName = sa.name || sa.display_name || `Area ${sa.id}`;
     const parsed = parseNavioName(rawName);
@@ -365,13 +586,15 @@ async function fetchAndClassifyAreas(
       id: sa.id,
       name: rawName,
       parsed, // Include pre-parsed data for smarter AI prompting
+      postal_code_cities: sa.postal_code_cities || [], // Include postal code data
     };
   });
 
   // Log pre-parsing results
   const internalCodeCount = areaNames.filter(a => a.parsed.isInternalCode).length;
   const preParsedCount = areaNames.filter(a => a.parsed.city !== null).length;
-  console.log(`Pre-parsing: ${preParsedCount} areas with hierarchy, ${internalCodeCount} internal codes`);
+  const withPostalData = areaNames.filter(a => a.postal_code_cities.length > 0).length;
+  console.log(`Pre-parsing: ${preParsedCount} areas with hierarchy, ${internalCodeCount} internal codes, ${withPostalData} with postal data`);
 
   // Step 3: Phase 1 - Analyze countries from area names
   await logSync(supabase, "navio", "import", "in_progress", null, "Analyzing countries from area names...", batchId, 0, serviceAreas.length);
@@ -547,6 +770,54 @@ Return ONLY a valid JSON array with this exact structure:
     }
   }
 
+  // Step 5: Enhanced Pass - Classify internal codes with postal code data
+  const internalCodeAreas = classifiedAreas.filter(ca => {
+    const originalArea = areaNames.find(a => a.id === ca.navio_id);
+    return originalArea?.parsed.isInternalCode;
+  });
+
+  if (internalCodeAreas.length > 0) {
+    await logSync(supabase, "navio", "import", "in_progress", null, 
+      `Enhanced classification: ${internalCodeAreas.length} internal codes with postal data...`, 
+      batchId, classifiedAreas.length, serviceAreas.length);
+
+    // Process internal codes with postal data for better district mapping
+    for (const internalArea of internalCodeAreas) {
+      const originalArea = areaNames.find(a => a.id === internalArea.navio_id);
+      
+      if (originalArea && originalArea.postal_code_cities.length > 0) {
+        const cityName = internalArea.city || originalArea.parsed.city || 'Unknown';
+        
+        console.log(`Enhanced classification for ${internalArea.original} (city: ${cityName}, postal codes: ${originalArea.postal_code_cities.length})`);
+        
+        const postalResult = await classifyInternalCodeWithPostalData(
+          internalArea.original,
+          cityName,
+          originalArea.postal_code_cities,
+          lovableKey
+        );
+
+        console.log(`  → District: ${postalResult.district} (confidence: ${postalResult.confidence})`);
+
+        // Update the classified area with better district info
+        const idx = classifiedAreas.findIndex(ca => ca.navio_id === internalArea.navio_id);
+        if (idx !== -1) {
+          classifiedAreas[idx] = {
+            ...classifiedAreas[idx],
+            district: postalResult.district,
+            // Update area name if we got a meaningful district
+            area: postalResult.confidence === 'high' || postalResult.confidence === 'medium'
+              ? postalResult.district  // Use district name as area
+              : classifiedAreas[idx].area, // Keep original code if low confidence
+          };
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+  }
+
   return { classifiedAreas, countryAnalysis };
 }
 
@@ -642,7 +913,12 @@ async function saveToStaging(
       for (const area of districtData.areas) {
         // Check if this was an internal code
         const parsed = parseNavioName(area.original);
-        const areaStatus = parsed.isInternalCode ? "needs_mapping" : "pending";
+        
+        // Determine status: if internal code AND area name still looks like code, needs mapping
+        // If internal code but area name is now a proper district name, it's been classified
+        const looksLikeCode = /^[A-Z]{2}\s+[A-Z]{3}\s+\d+$/.test(area.area) || 
+                             /^[A-Z]{3}\s+\d+$/.test(area.area);
+        const areaStatus = parsed.isInternalCode && looksLikeCode ? "needs_mapping" : "pending";
         
         const { error: areaError } = await supabase
           .from("navio_staging_areas")
