@@ -108,6 +108,17 @@ export function SyncProgressDialog({
 
       setProgress(newProgress);
 
+      // Check for errors - close dialog after showing error state
+      const hasError = logs.some((log) => log.status === "error" && entities.includes(log.entity_type));
+      if (hasError) {
+        setIsComplete(true);
+        clearInterval(pollInterval);
+        setTimeout(() => {
+          onOpenChange(false);
+        }, 3000); // Give user time to see error state
+        return;
+      }
+
       // Check for completion: any log with status "complete" for our entities
       const batchComplete = logs.some(
         (log) => log.status === "complete" && entities.includes(log.entity_type)

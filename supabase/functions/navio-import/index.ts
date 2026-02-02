@@ -204,35 +204,50 @@ async function fetchAndClassifyAreas(
   navioToken: string,
   lovableKey: string
 ): Promise<{ classifiedAreas: ClassifiedArea[]; countryAnalysis: CountryAnalysis }> {
-  // Step 1: Fetch from Navio API
+  // Step 1: Fetch from Navio API with pagination parameters for consistent response
   console.log("Fetching from Navio API...");
-  const navioResponse = await fetch("https://api.noddi.co/v1/service-areas/for-landing-pages/", {
+  const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
+  // Request paginated response with large page size to get all results
+  navioUrl.searchParams.set("page_size", "1000");
+  navioUrl.searchParams.set("page_index", "0");
+
+  const navioResponse = await fetch(navioUrl.toString(), {
     headers: {
       Authorization: `Token ${navioToken}`,
       "Content-Type": "application/json",
+      "Accept": "application/json",
     },
   });
 
   if (!navioResponse.ok) {
     const errorText = await navioResponse.text();
     console.error("Navio API error:", navioResponse.status, errorText);
+    // Log full error for debugging
+    await logSync(supabase, "navio", "import", "error", null, 
+      `Navio API error ${navioResponse.status}: ${errorText.slice(0, 200)}`, batchId);
     throw new Error(`Navio API error: ${navioResponse.status}`);
   }
 
   const navioData = await navioResponse.json();
-  console.log("Navio API response structure:", Object.keys(navioData));
+  console.log("Navio API response structure:", JSON.stringify({
+    hasCount: "count" in navioData,
+    hasResults: "results" in navioData,
+    isArray: Array.isArray(navioData),
+    keys: Object.keys(navioData),
+  }));
   
-  // Handle different response structures
+  // Handle paginated response structure
   let serviceAreas: NavioServiceArea[] = [];
-  if (Array.isArray(navioData)) {
-    serviceAreas = navioData;
-  } else if (navioData.results && Array.isArray(navioData.results)) {
+  if (navioData.results && Array.isArray(navioData.results)) {
+    // Paginated response from API
     serviceAreas = navioData.results;
-  } else if (navioData.data && Array.isArray(navioData.data)) {
-    serviceAreas = navioData.data;
+    console.log(`Paginated response: ${serviceAreas.length} results of ${navioData.count} total`);
+  } else if (Array.isArray(navioData)) {
+    // Direct list response (fallback)
+    serviceAreas = navioData;
   } else {
-    console.log("Unknown Navio response structure:", JSON.stringify(navioData).slice(0, 500));
-    throw new Error("Unknown Navio API response structure");
+    console.error("Unexpected response structure:", JSON.stringify(navioData).slice(0, 500));
+    throw new Error("Unexpected Navio API response structure");
   }
 
   if (serviceAreas.length === 0) {
