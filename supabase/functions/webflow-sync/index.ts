@@ -1065,7 +1065,8 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const entityType = body.entity_type || "all";
-    const batchId = crypto.randomUUID();
+    // Use client-provided batch_id for progress tracking, or generate fallback
+    const batchId = body.batch_id || crypto.randomUUID();
 
     const webflowApiToken = Deno.env.get("WEBFLOW_API_TOKEN");
     if (!webflowApiToken) {
