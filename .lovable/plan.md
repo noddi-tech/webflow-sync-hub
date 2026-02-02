@@ -1,133 +1,174 @@
 
-# Add Missing SEO Fields to Partners
 
-## Problem Identified
+# Complete Collection Field Parity Audit
 
-Comparing Webflow's expected fields, the database schema, and the Partner form UI reveals gaps:
+## Summary
 
-### What Webflow Expects (Partners Collection)
-| Field | Type | Purpose |
-|-------|------|---------|
-| seo-title | PlainText | Page title tag |
-| seo-meta-description | PlainText | Meta description |
-| client-information | RichText | Partner description |
-| client-information-summary | PlainText | Short summary |
-| primary-city | ItemRefSet | Cities where partner operates |
-| service-areas-optional | ItemRefSet | Service areas |
+After a full review of all 7 collections, I found several gaps between what Webflow expects, what the database has, and what the UI form supports. Here's the complete analysis:
 
-### What Database Has vs Missing
+## Collection Analysis
 
-| Category | Current State | Missing |
-|----------|---------------|---------|
-| SEO Fields | None | `seo_title`, `seo_title_en`, `seo_title_sv`, `seo_meta_description`, `seo_meta_description_en`, `seo_meta_description_sv`, `intro`, `intro_en`, `intro_sv` |
-| Form Fields | Basic info only | SEO title input, meta description input, intro rich text |
+### 1. Cities
 
-### What UI Form Has vs Missing
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Missing `noindex` | Has: name, slug, seo_title, seo_meta_description, intro, sitemap_priority, is_delivery (all localized). Missing: `noindex` column |
+| **UI Form** | Missing `noindex` toggle | Form has all SEO fields but no noindex toggle |
+| **Webflow Expected** | Matches well | Expects: name, slug, seo-title, seo-meta-description, intro-content, sitemap-priority, noindex |
 
-| Current Form Fields | Missing Fields |
-|---------------------|----------------|
-| Logo URLs, Rating, Active | SEO Title (localized) |
-| Email, Phone, Address | SEO Meta Description (localized) |
-| Website, Instagram, Facebook | Intro Content (localized) |
-| Heading Text, Description Summary | Primary Cities selector |
-| Name, Slug, Description (localized) | Districts selector |
-| Services, Areas selectors | |
+**Gaps to fix:**
+- Add `noindex` boolean column to database
+- Add `noindex` toggle to Cities form UI
 
-## Solution Overview
+---
 
-### Phase 1: Database Migration
-Add missing columns to the `partners` table to match other entities:
+### 2. Districts
+
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Missing `noindex` | Has all localized fields. Missing: `noindex` column |
+| **UI Form** | Missing `noindex` toggle | Form complete except noindex |
+| **Webflow Expected** | Matches well | Same as Cities |
+
+**Gaps to fix:**
+- Add `noindex` boolean column to database
+- Add `noindex` toggle to Districts form UI
+
+---
+
+### 3. Areas
+
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Missing `noindex` | Has all localized fields including is_delivery. Missing: `noindex` column |
+| **UI Form** | Missing `noindex` toggle | Form complete except noindex |
+| **Webflow Expected** | Complete | Expects is-delivery and noindex |
+
+**Gaps to fix:**
+- Add `noindex` boolean column to database
+- Add `noindex` toggle to Areas form UI
+
+---
+
+### 4. Service Categories
+
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Complete | Has: name, slug, description, seo_title, seo_meta_description, intro, icon_url, sort_order, active (all localized) |
+| **UI Form** | Complete | All fields present in tabbed UI |
+| **Webflow Expected** | Complete | icon, sort-order, active, services reference |
+
+**Status: COMPLETE - No changes needed**
+
+---
+
+### 5. Services
+
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Complete | Has all localized fields, category reference, icon, sort_order, active |
+| **UI Form** | Complete | All fields present |
+| **Webflow Expected** | Complete | service-category, description, service-intro-seo, icon, sort-order, active |
+
+**Status: COMPLETE - No changes needed**
+
+---
+
+### 6. Partners
+
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Recently Updated | Now has seo_title, seo_meta_description, intro (all localized) |
+| **UI Form** | Recently Updated | Now includes SEO fields and coverage selectors (cities, districts, areas, services) |
+| **Webflow Expected** | Mostly Complete | client-information, client-information-summary, heading-text, logos, contact info, SEO fields, primary-city, service-areas-optional, services-provided |
+
+**Status: COMPLETE - Recent changes covered this**
+
+---
+
+### 7. Service Locations
+
+| Category | Status | Details |
+|----------|--------|---------|
+| **Database** | Complete | Has all fields: slug, canonical_url, seo_title, seo_meta_description, hero_content, structured_data_json, sitemap_priority, noindex (all localized) |
+| **UI Form** | Read-Only | Computed entity - no form needed |
+| **Webflow Expected** | Complete | service, city-2, district-2, area-2, partners-2, seo-title-2, hero-intro-content-2, json-ld-structured-data-2, canonical-path-2, noindex-2 |
+
+**Status: COMPLETE - Computed entity, read-only**
+
+---
+
+## Required Changes
+
+### Phase 1: Database Migration - Add `noindex` to Geographic Entities
 
 ```sql
-ALTER TABLE partners
-ADD COLUMN IF NOT EXISTS seo_title text,
-ADD COLUMN IF NOT EXISTS seo_title_en text,
-ADD COLUMN IF NOT EXISTS seo_title_sv text,
-ADD COLUMN IF NOT EXISTS seo_meta_description text,
-ADD COLUMN IF NOT EXISTS seo_meta_description_en text,
-ADD COLUMN IF NOT EXISTS seo_meta_description_sv text,
-ADD COLUMN IF NOT EXISTS intro text,
-ADD COLUMN IF NOT EXISTS intro_en text,
-ADD COLUMN IF NOT EXISTS intro_sv text;
+ALTER TABLE cities ADD COLUMN IF NOT EXISTS noindex boolean DEFAULT false;
+ALTER TABLE districts ADD COLUMN IF NOT EXISTS noindex boolean DEFAULT false;
+ALTER TABLE areas ADD COLUMN IF NOT EXISTS noindex boolean DEFAULT false;
 ```
 
-### Phase 2: Update Partner Form UI
-Update `src/pages/Partners.tsx` to include:
+### Phase 2: UI Updates - Add `noindex` Toggle
 
-1. **SEO Section** (inside locale tabs)
-   - SEO Title input
-   - SEO Meta Description textarea
-   - Intro Content textarea (rich text editor)
+Update the following files to add a `noindex` toggle:
+1. `src/pages/Cities.tsx` - Add noindex to form data and toggle in UI
+2. `src/pages/Districts.tsx` - Add noindex to form data and toggle in UI
+3. `src/pages/Areas.tsx` - Add noindex to form data and toggle in UI
 
-2. **Coverage Section**
-   - Primary Cities multi-select
-   - Districts multi-select (already have partner_cities, partner_districts tables)
+Each will need:
+- Add `noindex: boolean` to the form data interface
+- Add toggle in the form next to other control switches
+- Include in payload for create/update mutations
+- Map from entity when opening edit dialog
 
-### Phase 3: Update Form Data Types
-Add new fields to `PartnerFormData` interface:
+### Visual Layout for noindex Toggle
 
-```typescript
-interface PartnerFormData {
-  // ... existing fields
-  seo_title: string;
-  seo_title_en: string;
-  seo_title_sv: string;
-  seo_meta_description: string;
-  seo_meta_description_en: string;
-  seo_meta_description_sv: string;
-  intro: string;
-  intro_en: string;
-  intro_sv: string;
-  city_ids: string[];     // for partner_cities junction
-  district_ids: string[]; // for partner_districts junction
-}
+```
++-----------------------------------------------+
+| Control Fields                                 |
++-----------------------------------------------+
+| [Sitemap Priority: 0.7] [is_delivery toggle]  |
+|                         [noindex toggle]       |
++-----------------------------------------------+
 ```
 
-### Phase 4: Update Mutations
-- Extend create/update mutations to handle new fields
-- Add queries for partner_cities and partner_districts
-- Add mutation logic for city/district junction tables
+### Phase 3: Update webflow-validate EXPECTED_FIELDS
+
+Update the validation function to include `noindex` for Cities and Districts (currently only Areas has is-delivery in Webflow, but all three need noindex in our app).
+
+---
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| Database Migration | Add SEO columns to partners table |
-| `src/pages/Partners.tsx` | Add SEO inputs, coverage selectors, update form data |
-| `src/integrations/supabase/types.ts` | Auto-generated after migration |
+| **Database Migration** | Add `noindex` column to cities, districts, areas tables |
+| `src/pages/Cities.tsx` | Add noindex to form interface, add toggle, update mutations |
+| `src/pages/Districts.tsx` | Add noindex to form interface, add toggle, update mutations |
+| `src/pages/Areas.tsx` | Add noindex to form interface, add toggle, update mutations |
+| `supabase/functions/webflow-validate/index.ts` | Already correct for Webflow expectations |
 
-## Visual Layout After Changes
+---
 
-```
-+------------------------------------------+
-| Create/Edit Partner                       |
-+------------------------------------------+
-| [Logo URL] [Noddi Logo] [Rating]         |
-| [Active toggle]                          |
-|                                          |
-| [Email] [Phone]                          |
-| [Address]                                |
-| [Website] [Instagram] [Facebook]         |
-| [Heading Text]                           |
-| [Description Summary]                    |
-+------------------------------------------+
-| [Norwegian] [English] [Swedish]          |
-| Name *          Slug *                   |
-| Description                              |
-| SEO Title                                |
-| SEO Meta Description                     |
-| Intro Content                            |
-+------------------------------------------+
-| Coverage                                 |
-| Services (X selected)  Areas (X selected)|
-| Cities (X selected)  Districts (X sel.)  |
-+------------------------------------------+
-```
+## Complete Field Matrix After Changes
 
-## Outcome
+| Collection | Core Fields | SEO Fields | Control Fields | References | Status |
+|------------|-------------|------------|----------------|------------|--------|
+| **Cities** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sitemap_priority, is_delivery, **noindex** | districts, areas | Will be complete |
+| **Districts** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sitemap_priority, is_delivery, **noindex** | city, areas | Will be complete |
+| **Areas** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sitemap_priority, is_delivery, **noindex** | district, city | Will be complete |
+| **Service Categories** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sort_order, active, icon_url | services | Complete |
+| **Services** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sort_order, active, icon_url | service_category | Complete |
+| **Partners** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | active, rating, heading_text, logos, contact | services, areas, cities, districts | Complete |
+| **Service Locations** | slug, canonical_url (localized) | seo_title, seo_meta_description, hero_content, structured_data_json (localized) | sitemap_priority, noindex | service, city, district, area, partners | Complete |
+
+---
+
+## Expected Outcome
 
 After implementation:
-1. Partners will have full SEO field parity with other entities (Cities, Districts, Areas, etc.)
-2. The validation health check for Partners should show fewer missing mappings
-3. Webflow sync can populate SEO fields for partner pages
-4. Partner coverage (cities/districts) can be managed in the UI
+1. All geographic entities (Cities, Districts, Areas) will have full `noindex` control
+2. The System Health panel will show all collections as "Ready"
+3. Webflow sync can properly set noindex flags on pages that shouldn't be indexed
+4. Full schema parity between our app and Webflow CMS
+
