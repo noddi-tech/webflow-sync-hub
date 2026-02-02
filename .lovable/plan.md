@@ -1,184 +1,123 @@
 
-# ✅ COMPLETED: All Collections Field Mapping & Data Handling
+# Fix Import Progress UI and Remove Non-Existent "intro-content" Field
 
-**Status: Implemented** (2026-02-02)
+## Issues Identified
 
-All fixes have been applied across the codebase:
+### Issue 1: Import Dialog Shows Blank During Import
 
-## Summary of Issues Found
+**Root Cause:** The batch ID synchronization is broken between client and server.
 
-After a full review, the following systematic issues were identified across all 7 collections:
+- **Client side (Dashboard.tsx):** Generates a batch ID with `crypto.randomUUID()` before calling the edge function
+- **Server side (webflow-import):** Generates its own batch ID independently
+- **Result:** The client polls for logs with a batch ID that doesn't match any server-generated logs
 
-### 1. Partners Collection - 5 Issues
+**Current Flow:**
+```
+Client: batchId = crypto.randomUUID()  →  "abc-123"
+Client: Opens SyncProgressDialog with batchId "abc-123"
+Client: Calls edge function (without sending batchId)
+Server: batchId = crypto.randomUUID()  →  "xyz-789"
+Server: Logs progress with batchId "xyz-789"
+Client: Polls sync_logs WHERE batch_id = "abc-123"  →  No results!
+```
 
-| Issue | Root Cause | Fix |
-|-------|-----------|-----|
-| Logo URLs are NULL after import | Webflow Image fields return objects `{url, alt}`, but `getString()` returns `null` for non-strings | Add `getImageUrl()` helper |
-| Description shows raw HTML | `client-information` is RichText; stored as-is but shown in plain Textarea | Either strip HTML on import OR use rich text editor |
-| Missing `heading_text_2` | Database column missing | Add column + form input |
-| Missing `twitter-link` mapping | Webflow uses `twitter-link` for Instagram (we have `instagram_url`) | Update import/sync to map correctly |
-| Missing SEO fields in sync | `seo_title`, `seo_meta_description`, `intro` not in fieldMappings | Add to webflow-sync |
+**Solution:** Pass the client-generated batch ID to the edge function so logs are written with the matching ID.
 
-### 2. Service Categories Collection - 2 Issues
+---
 
-| Issue | Root Cause | Fix |
-|-------|-----------|-----|
-| "Associated Services" not shown in UI | Multi-reference field exists in Webflow but app doesn't display related services | Add query + read-only list showing services in this category |
-| "Associated Services" not synced to Webflow | Sync function doesn't populate this multi-reference | Add logic to collect service webflow_item_ids for category and send on sync |
+### Issue 2: Partners Collection Shows "Missing Fields" for `intro-content`
 
-### 3. Services Collection - Minor Issues
+**Root Cause:** The app's `EXPECTED_FIELDS` includes `intro-content` for the Partners collection, but this field does **NOT exist** in the actual Webflow Partners schema.
 
-| Issue | Root Cause | Fix |
-|-------|-----------|-----|
-| Type mismatch for illustration fields | Webflow may return Image objects for illustration URLs | Check and handle Image type if needed |
+From the validation API response:
+- Partners has 20 found fields
+- `intro-content` is listed as "missing_in_webflow"
+- This is because we added it to EXPECTED_FIELDS in a previous update, but it was never created in Webflow
 
-### 4. All Collections - Validation Type Mismatch
-
-| Issue | Root Cause | Fix |
-|-------|-----------|-----|
-| `client-logo`, `noddi-logo` declared as PlainText | Should be `Image` type | Update EXPECTED_FIELDS |
+**Solution:** Since the philosophy is that Webflow is the actual schema source, remove `intro-content` from Partners' EXPECTED_FIELDS. If you need this field in the future, create it in Webflow first.
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Database Migration
+### Phase 1: Fix Batch ID Synchronization
 
-Add missing column to `partners` table:
+**File: `src/pages/Dashboard.tsx`**
 
-```sql
-ALTER TABLE partners
-ADD COLUMN IF NOT EXISTS heading_text_2 text;
-```
-
-### Phase 2: Fix Import Helper Functions
-
-Update `supabase/functions/webflow-import/index.ts`:
+Update both mutation functions to pass the batch ID to the edge function:
 
 ```typescript
-// NEW: Extract URL from Webflow Image field objects
-function getImageUrl(value: unknown): string | null {
-  if (typeof value === 'string') return value || null;
-  if (typeof value === 'object' && value !== null) {
-    const imgObj = value as { url?: string };
-    return imgObj.url || null;
-  }
-  return null;
-}
-```
-
-Apply to Partners import:
-- `logo_url: getImageUrl(noData["client-logo"])`
-- `noddi_logo_url: getImageUrl(noData["noddi-logo"])`
-- `heading_text_2: getString(noData["heading-text-2"])`
-- `instagram_url: getString(noData["twitter-link"])` (Webflow uses "twitter-link" but it's actually Instagram)
-
-### Phase 3: Fix Validation Field Types
-
-Update `supabase/functions/webflow-validate/index.ts`:
-
-```typescript
-// Change from PlainText to Image
-{ slug: "client-logo", type: "Image", required: false, description: "Partner's company logo (image)." },
-{ slug: "noddi-logo", type: "Image", required: false, description: "Noddi-specific partner logo (image)." },
-```
-
-### Phase 4: Update Partners Sync Function
-
-Update `supabase/functions/webflow-sync/index.ts` to include:
-
-```typescript
-// In fieldMappings for partners
-fieldMappings = {
-  name: "name",
-  slug: "slug",
-  description: "client-information",
-  seo_title: "seo-title",
-  seo_meta_description: "seo-meta-description",
-  intro: "intro-content", // if applicable
-};
-
-// In baseFieldData for partners
-baseFieldData["heading-text-2"] = item.heading_text_2 || "";
-baseFieldData["twitter-link"] = item.instagram_url || "";  // Maps instagram_url to twitter-link
-```
-
-### Phase 5: Update Service Categories Sync Function
-
-Add logic to populate `associated-services` multi-reference when syncing a category:
-
-```typescript
-// After fetching service_categories, also fetch services for each category
-const servicesForCategory = await supabase
-  .from("services")
-  .select("webflow_item_id")
-  .eq("service_category_id", item.id)
-  .not("webflow_item_id", "is", null);
-
-const serviceWebflowIds = servicesForCategory.data
-  ?.map(s => s.webflow_item_id)
-  .filter(Boolean) || [];
-
-if (serviceWebflowIds.length > 0) {
-  baseFieldData["associated-services"] = serviceWebflowIds;
-}
-```
-
-### Phase 6: Update Partners Form UI
-
-Update `src/pages/Partners.tsx`:
-
-1. Add `heading_text_2` to `PartnerFormData` interface
-2. Add `heading_text_2` to `emptyFormData`
-3. Add form input for `heading_text_2`
-4. Map `heading_text_2` in `openEditDialog`
-5. Include in create/update mutation payloads
-
-### Phase 7: Update Service Categories Form UI
-
-Update `src/pages/ServiceCategories.tsx`:
-
-Add a read-only section showing services that belong to this category:
-
-```typescript
-// Add query for services in this category
-const { data: categoryServices = [] } = useQuery({
-  queryKey: ["category-services", editingItem?.id],
-  queryFn: async () => {
-    if (!editingItem) return [];
-    const { data, error } = await supabase
-      .from("services")
-      .select("id, name, webflow_item_id")
-      .eq("service_category_id", editingItem.id)
-      .order("name");
-    if (error) throw error;
-    return data;
+const importMutation = useMutation({
+  mutationFn: async ({ entityType, batchId }: { entityType: EntityType; batchId: string }) => {
+    const { data, error } = await supabase.functions.invoke("webflow-import", {
+      body: { entity_type: entityType, batch_id: batchId },
+    });
+    // ...
   },
-  enabled: !!editingItem,
+  onMutate: (entityType) => {
+    const entities = ...;
+    const batchId = crypto.randomUUID();
+    setCurrentBatchId(batchId);
+    // Return context for mutation call
+    return { batchId };
+  },
+  // Adjust mutate calls to use { entityType, batchId }
 });
+```
 
-// Add display in form
-<div className="space-y-2 mt-4 pt-4 border-t">
-  <Label>Associated Services ({categoryServices.length})</Label>
-  <div className="text-sm text-muted-foreground border rounded p-3 max-h-32 overflow-y-auto">
-    {categoryServices.length > 0 ? (
-      <ul className="list-disc list-inside">
-        {categoryServices.map(s => (
-          <li key={s.id} className="flex items-center gap-2">
-            {s.name}
-            {s.webflow_item_id && <span className="text-green-500 text-xs">synced</span>}
-          </li>
-        ))}
-      </ul>
-    ) : (
-      <span>No services in this category yet.</span>
-    )}
+Actually, a cleaner approach - generate batch ID in `onMutate`, store it in state, and pass it in the mutation function.
+
+**File: `supabase/functions/webflow-import/index.ts`**
+
+Accept `batch_id` from the request body instead of generating it internally:
+
+```typescript
+// Line ~380 - where request body is parsed
+const { entity_type, batch_id } = await req.json();
+const batchId = batch_id || crypto.randomUUID(); // Use provided or generate fallback
+```
+
+**File: `supabase/functions/webflow-sync/index.ts`**
+
+Same change - accept `batch_id` from request.
+
+---
+
+### Phase 2: Improve Progress Dialog UX
+
+**File: `src/components/sync/SyncProgressDialog.tsx`**
+
+Add a loading state when no progress data is available yet:
+
+```typescript
+// When dialog is open but no progress logs yet
+{!hasAnyProgress && !isComplete && (
+  <div className="flex flex-col items-center py-8 space-y-4">
+    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+    <p className="text-sm text-muted-foreground">
+      Connecting to Webflow...
+    </p>
   </div>
-  <p className="text-xs text-muted-foreground">
-    Assign services to this category from the Services page. 
-    On sync, these will populate the "Associated Services" field in Webflow.
-  </p>
-</div>
+)}
+```
+
+This provides visual feedback during the initial API connection phase before progress logs start arriving.
+
+---
+
+### Phase 3: Remove Non-Existent Field from EXPECTED_FIELDS
+
+**File: `supabase/functions/webflow-validate/index.ts`**
+
+Remove `intro-content` from the partners EXPECTED_FIELDS array (around line 140):
+
+```typescript
+partners: [
+  // ... other fields ...
+  // REMOVE this line:
+  // { slug: "intro-content", type: "RichText", required: false, description: "Rich text intro for SEO and partner context." },
+  // ... rest of fields ...
+],
 ```
 
 ---
@@ -187,48 +126,16 @@ const { data: categoryServices = [] } = useQuery({
 
 | File | Changes |
 |------|---------|
-| Database Migration | Add `heading_text_2` column to partners |
-| `supabase/functions/webflow-import/index.ts` | Add `getImageUrl()` helper, fix logo/instagram mappings, add `heading_text_2` |
-| `supabase/functions/webflow-validate/index.ts` | Fix `client-logo` and `noddi-logo` types to `Image` |
-| `supabase/functions/webflow-sync/index.ts` | Add missing partner fields (SEO, heading_text_2, twitter-link), add associated-services logic for categories |
-| `src/pages/Partners.tsx` | Add `heading_text_2` to form |
-| `src/pages/ServiceCategories.tsx` | Add "Associated Services" read-only display |
+| `src/pages/Dashboard.tsx` | Pass batch_id to edge function in mutation body |
+| `src/components/sync/SyncProgressDialog.tsx` | Add loading spinner when connecting/no data yet |
+| `supabase/functions/webflow-import/index.ts` | Accept batch_id from request body |
+| `supabase/functions/webflow-sync/index.ts` | Accept batch_id from request body |
+| `supabase/functions/webflow-validate/index.ts` | Remove `intro-content` from partners EXPECTED_FIELDS |
 
 ---
 
-## Technical Details
+## Expected Results
 
-### Webflow Image Field Structure
-
-Webflow returns Image fields as objects:
-```json
-{
-  "url": "https://uploads-ssl.webflow.com/...",
-  "alt": "Partner logo",
-  "fileId": "abc123"
-}
-```
-
-The `getString()` helper returns `null` for objects, which is why logos are currently NULL. The new `getImageUrl()` helper will extract the `url` property.
-
-### Field Name Mapping (Webflow -> App)
-
-| Webflow Slug | App Column | Notes |
-|--------------|-----------|-------|
-| `client-logo` | `logo_url` | Image type - extract URL |
-| `noddi-logo` | `noddi_logo_url` | Image type - extract URL |
-| `client-information` | `description` | RichText - keep HTML for now |
-| `twitter-link` | `instagram_url` | Webflow uses legacy name |
-| `heading-text-2` | `heading_text_2` | Missing column - add |
-| `associated-services` | computed | Multi-ref populated from services table |
-
----
-
-## Expected Results After Fix
-
-1. Partner logos will import correctly (URL extracted from Image objects)
-2. `heading_text_2` will be editable in Partner form
-3. Instagram URL will sync correctly via `twitter-link`
-4. Service Categories will show which services belong to them
-5. System Health will show correct types for Image fields
-6. All 7 collections will show "Ready" status
+1. **Import/Sync Dialog** will show real-time progress with entities, counts, and progress bars
+2. **Partners Collection** will show "Ready" status with 20 fields mapped (no missing fields)
+3. **All 7 collections** will show green "Ready" status in System Health
