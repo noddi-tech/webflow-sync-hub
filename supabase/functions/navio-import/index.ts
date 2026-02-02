@@ -125,6 +125,141 @@ const cityNormalizations: Record<string, string> = {
   'athens': 'Athína',
 };
 
+// City spelling normalization: Handles ASCII variants and misspellings
+const citySpellingNormalizations: Record<string, string> = {
+  // Norwegian cities with/without special characters
+  'barum': 'Bærum', 'baerum': 'Bærum',
+  'lillestrom': 'Lillestrøm', 'lillestroem': 'Lillestrøm',
+  'lorenskog': 'Lørenskog', 'loerenskog': 'Lørenskog',
+  'tonsberg': 'Tønsberg', 'toensberg': 'Tønsberg',
+  'drammen': 'Drammen', 'fredrikstad': 'Fredrikstad',
+  'sandnes': 'Sandnes', 'sarpsborg': 'Sarpsborg',
+  // Norwegian district names
+  'asane': 'Åsane', 'arstad': 'Årstad',
+  'gronerlokka': 'Grünerløkka', 'grunerloekka': 'Grünerløkka',
+  'ostensjo': 'Østensjø', 'oestensjoe': 'Østensjø',
+  'sondre nordstrand': 'Søndre Nordstrand',
+  // Common misspellings
+  'gotehburg': 'Göteborg', 'gotheburg': 'Göteborg', 'gotenburg': 'Göteborg',
+  'stockholm': 'Stockholm', 'stokholm': 'Stockholm',
+  'copenhagen': 'København', 'kopenhagen': 'København',
+  // German cities
+  'munich': 'München', 'muenchen': 'München',
+  'cologne': 'Köln', 'koeln': 'Köln',
+  'dusseldorf': 'Düsseldorf', 'duesseldorf': 'Düsseldorf',
+  'nuremberg': 'Nürnberg', 'nuernberg': 'Nürnberg',
+};
+
+// Norwegian district → area (neighborhood) reference data
+// This maps known neighborhoods to their official districts (bydeler)
+const norwegianDistrictAreas: Record<string, Record<string, string[]>> = {
+  'Oslo': {
+    'Vestre Aker': ['Ris', 'Slemdal', 'Vinderen', 'Holmenkollen', 'Røa', 'Bogstad', 'Holmen', 'Hovseter', 'Montebello', 'Smestad', 'Tåsen'],
+    'Frogner': ['Bygdøy', 'Frogner', 'Majorstuen', 'Skillebekk', 'Solli', 'Homansbyen', 'Briskeby', 'Uranienborg', 'Fagerborg'],
+    'Nordre Aker': ['Nydalen', 'Ullevål', 'Korsvoll', 'Tåsen', 'Nordberg', 'Grefsen', 'Kjelsås', 'Frysja', 'Maridalen', 'Sognsvann'],
+    'Sagene': ['Torshov', 'Bjølsen', 'Sagene', 'Iladalen', 'Sandaker', 'Åsen'],
+    'St. Hanshaugen': ['St. Hanshaugen', 'Bislett', 'Adamstuen', 'Marienlyst', 'Bolteløkka', 'Ila'],
+    'Grünerløkka': ['Grünerløkka', 'Sofienberg', 'Rodeløkka', 'Dælenenga', 'Hasle', 'Sinsen', 'Løren', 'Carl Berner'],
+    'Gamle Oslo': ['Gamlebyen', 'Grønland', 'Tøyen', 'Kampen', 'Vålerenga', 'Ensjø', 'Helsfyr', 'Bryn', 'Etterstad', 'Kværnerbyen'],
+    'Bjerke': ['Bjerke', 'Årvoll', 'Vollebekk', 'Refstad', 'Linderud', 'Veitvet', 'Økern'],
+    'Grorud': ['Grorud', 'Romsås', 'Ammerud', 'Rødtvet', 'Huken'],
+    'Stovner': ['Stovner', 'Vestli', 'Haugenstua', 'Fossum', 'Rommen'],
+    'Alna': ['Alna', 'Furuset', 'Ellingsrud', 'Lindeberg', 'Trosterud', 'Haugerud', 'Tveita'],
+    'Østensjø': ['Østensjø', 'Bøler', 'Manglerud', 'Abildsø', 'Godlia', 'Skullerud', 'Oppsal', 'Langerud'],
+    'Nordstrand': ['Nordstrand', 'Bekkelaget', 'Ljan', 'Sæter', 'Lambertseter', 'Karlsrud', 'Ekeberg'],
+    'Søndre Nordstrand': ['Søndre Nordstrand', 'Holmlia', 'Mortensrud', 'Bjørndal', 'Prinsdal', 'Hauketo', 'Kolbotn'],
+    'Ullern': ['Ullern', 'Lilleaker', 'Lysaker', 'Bestum', 'Skøyen', 'Borgen', 'Røa'],
+    'Sentrum': ['Sentrum', 'Karl Johans gate', 'Aker Brygge', 'Tjuvholmen', 'Bjørvika', 'Kvadraturen'],
+  },
+  'Bergen': {
+    'Bergenhus': ['Sentrum', 'Nordnes', 'Sandviken', 'Skuteviken', 'Møhlenpris', 'Nygård', 'Marken', 'Bryggen'],
+    'Årstad': ['Årstad', 'Kronstad', 'Haukeland', 'Minde', 'Landås', 'Sletten', 'Fantoft'],
+    'Fana': ['Nesttun', 'Paradis', 'Hop', 'Skjold', 'Rådal', 'Nordås', 'Sædalen', 'Sandsli', 'Kokstad'],
+    'Ytrebygda': ['Sandsli', 'Kokstad', 'Blomsterdalen', 'Bønes'],
+    'Laksevåg': ['Laksevåg', 'Damsgård', 'Gyldenpris', 'Loddefjord', 'Olsvik'],
+    'Fyllingsdalen': ['Fyllingsdalen', 'Oasen', 'Ortun', 'Sælen'],
+    'Åsane': ['Åsane', 'Nyborg', 'Tertnes', 'Ulset', 'Eidsvåg', 'Flaktveit'],
+    'Arna': ['Arna', 'Ytre Arna', 'Garnes', 'Indre Arna', 'Espeland'],
+  },
+  'Trondheim': {
+    'Midtbyen': ['Midtbyen', 'Bakklandet', 'Solsiden', 'Nedre Elvehavn', 'Ila', 'Kalvskinnet'],
+    'Østbyen': ['Møllenberg', 'Rosenborg', 'Berg', 'Persaunet', 'Nardo', 'Strindheim', 'Bromstad'],
+    'Lerkendal': ['Lerkendal', 'Nardo', 'Singsaker', 'Berg', 'Persaunet', 'Risvollan', 'Moholt', 'Tempe', 'Dragvoll'],
+    'Heimdal': ['Heimdal', 'Saupstad', 'Kolstad', 'Flatåsen', 'Hallset', 'Tiller', 'Kattem', 'Byneset'],
+    'Byåsen': ['Byåsen', 'Sverresborg', 'Stavset', 'Ugla', 'Munkvoll', 'Brundalen'],
+  },
+  'Stavanger': {
+    'Sentrum': ['Stavanger sentrum', 'Våland', 'Storhaug', 'Eiganes', 'Kampen', 'Lervig'],
+    'Hinna': ['Hinna', 'Jåttå', 'Gausel', 'Mariero'],
+    'Hundvåg': ['Hundvåg', 'Buøy', 'Bjørnøy', 'Austbø'],
+    'Hillevåg': ['Hillevåg', 'Tjensvoll', 'Ullandhaug'],
+    'Madla': ['Madla', 'Revheim', 'Sunde', 'Kvernevik'],
+  },
+  'Kristiansand': {
+    'Kvadraturen': ['Kvadraturen', 'Posebyen', 'Odderøya', 'Lund'],
+    'Vågsbygd': ['Vågsbygd', 'Slettheia', 'Hellemyr', 'Voiebyen'],
+    'Randesund': ['Randesund', 'Søm', 'Korsvik', 'Hamresanden'],
+    'Lund': ['Lund', 'Grim', 'Gimle', 'Tinnheia'],
+  },
+  'Bærum': {
+    'Sandvika': ['Sandvika', 'Høvik', 'Stabekk', 'Bekkestua', 'Lysaker'],
+    'Fornebu': ['Fornebu', 'Snarøya', 'Oksenøya'],
+    'Bærums Verk': ['Bærums Verk', 'Lommedalen', 'Eiksmarka', 'Haslum'],
+    'Rykkinn': ['Rykkinn', 'Kolsås', 'Bærums Verk', 'Gommerud'],
+    'Østerås': ['Østerås', 'Haslum', 'Gjettum', 'Jar'],
+  },
+  'Asker': {
+    'Asker sentrum': ['Asker sentrum', 'Nesbru', 'Holmen', 'Vendla'],
+    'Heggedal': ['Heggedal', 'Semsvann', 'Bondi'],
+    'Holmen': ['Holmen', 'Vettre', 'Blakstad'],
+  },
+};
+
+// Reverse lookup: find district for a given area name
+function findDistrictForArea(cityName: string, areaName: string): string | null {
+  const normalizedCity = cityName.trim();
+  const normalizedArea = areaName.trim().toLowerCase();
+  
+  const cityDistricts = norwegianDistrictAreas[normalizedCity];
+  if (!cityDistricts) return null;
+  
+  for (const [districtName, areas] of Object.entries(cityDistricts)) {
+    // Check if areaName matches any known area in this district
+    if (areas.some(a => a.toLowerCase() === normalizedArea)) {
+      return districtName;
+    }
+    // Check if areaName contains any known area (partial match)
+    if (areas.some(a => normalizedArea.includes(a.toLowerCase()))) {
+      return districtName;
+    }
+  }
+  
+  // Check if the area name itself IS a district name
+  if (Object.keys(cityDistricts).some(d => d.toLowerCase() === normalizedArea)) {
+    return null; // It's a district, not an area
+  }
+  
+  return null;
+}
+
+// Check if a name is a known district name
+function isKnownDistrict(cityName: string, name: string): boolean {
+  const normalizedCity = cityName.trim();
+  const normalizedName = name.trim().toLowerCase();
+  
+  const cityDistricts = norwegianDistrictAreas[normalizedCity];
+  if (!cityDistricts) return false;
+  
+  return Object.keys(cityDistricts).some(d => d.toLowerCase() === normalizedName);
+}
+
+// Normalize city name for deduplication (strips accents and special chars)
+function normalizeForDedup(name: string): string {
+  return name.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // Remove accents
+    .replace(/[^a-z0-9]/g, '');  // Remove non-alphanumeric
+}
+
 // Parse structured Navio names to extract hierarchy
 interface ParsedNavioName {
   countryCode: string | null;
@@ -205,9 +340,14 @@ function parseNavioName(name: string): ParsedNavioName {
   };
 }
 
-// Normalize city names to local language versions
+// Normalize city names to local language versions AND fix spelling variations
 function normalizeCityName(city: string): string {
   const lower = city.toLowerCase();
+  // First check spelling normalizations (handles Barum → Bærum, etc.)
+  if (citySpellingNormalizations[lower]) {
+    return citySpellingNormalizations[lower];
+  }
+  // Then check language normalizations (handles Munich → München, etc.)
   return cityNormalizations[lower] || city;
 }
 
@@ -417,8 +557,23 @@ function determineDistrictFromPostalCodes(
 // Enhanced AI classification for internal codes using postal code data
 interface PostalCodeDistrictResult {
   district: string;
+  neighborhoods: string[];  // List of neighborhoods within this district
   confidence: 'high' | 'medium' | 'low';
   reasoning: string;
+}
+
+// Get neighborhoods for a district from reference data
+function getNeighborhoodsForDistrict(cityName: string, districtName: string): string[] {
+  const cityDistricts = norwegianDistrictAreas[cityName];
+  if (!cityDistricts) return [];
+  
+  // Find district (case-insensitive match)
+  for (const [district, neighborhoods] of Object.entries(cityDistricts)) {
+    if (district.toLowerCase() === districtName.toLowerCase()) {
+      return neighborhoods;
+    }
+  }
+  return [];
 }
 
 async function classifyInternalCodeWithPostalData(
@@ -430,8 +585,11 @@ async function classifyInternalCodeWithPostalData(
   // First try reference data
   const referenceResult = determineDistrictFromPostalCodes(postalCodeCities);
   if (referenceResult.confidence === 'high' && referenceResult.district) {
+    // Get neighborhoods from reference data
+    const neighborhoods = getNeighborhoodsForDistrict(cityName, referenceResult.district);
     return {
       district: referenceResult.district,
+      neighborhoods,
       confidence: 'high',
       reasoning: `Reference data matched ${referenceResult.district} with high confidence`
     };
@@ -439,8 +597,10 @@ async function classifyInternalCodeWithPostalData(
 
   // If reference data has medium confidence, still use it but note it
   if (referenceResult.confidence === 'medium' && referenceResult.district) {
+    const neighborhoods = getNeighborhoodsForDistrict(cityName, referenceResult.district);
     return {
       district: referenceResult.district,
+      neighborhoods,
       confidence: 'medium',
       reasoning: `Reference data suggests ${referenceResult.district} but with moderate coverage`
     };
@@ -454,7 +614,7 @@ async function classifyInternalCodeWithPostalData(
 
   const prompt = `You are an expert in Norwegian administrative geography.
 
-Given this internal logistics zone code and its postal code data, determine the REAL district name (bydel):
+Given this internal logistics zone code and its postal code data, determine the REAL district name (bydel) AND list the neighborhoods covered:
 
 Zone code: "${areaName}"
 City: "${cityName}"
@@ -464,10 +624,14 @@ Norwegian postal code patterns for reference:
 - Bergen (5xxx): 5003-5020=Bergenhus, 5031-5045=Laksevåg, 5052-5068=Årstad, 5072-5098=Fana, 5115-5134=Ytrebygda, 5130-5149=Åsane, 5160-5178=Arna, 5200-5235=Fyllingsdalen/Nesttun
 - Oslo (0xxx): 0150-0175=Frogner, 0176-0179=Grünerløkka, 0180-0196=Sentrum/Gamle Oslo, 0350-0380=Sagene/Nordre Aker, 0450-0470=St. Hanshaugen, 0550-0565=Grünerløkka
 - Kristiansand (46xx): 4608-4609=Sentrum, 4610-4611=Lund, 4620-4625=Vågsbygd, 4631-4639=Randesund
+- Trondheim (7xxx): 7010-7030=Midtbyen, 7031-7040=Østbyen, 7041-7080=Lerkendal, 7081-7100=Heimdal, 7020-7029=Byåsen
 
-Based on the postal codes, what is the most likely official bydel/district name?
+Based on the postal codes, determine:
+1. The official bydel/district name
+2. The specific neighborhoods (nabolag) within that district that these postal codes cover
+
 Return ONLY valid JSON with this exact structure:
-{"district": "Fana", "confidence": "high", "reasoning": "Postal codes 5072-5073 are in Fana bydel"}
+{"district": "Fana", "neighborhoods": ["Nesttun", "Paradis", "Hop"], "confidence": "high", "reasoning": "Postal codes 5224-5226 cover Nesttun area in Fana bydel"}
 
 Valid confidence levels: "high", "medium", "low"`;
 
@@ -491,6 +655,7 @@ Valid confidence levels: "high", "medium", "low"`;
       console.error("AI postal code analysis failed:", response.status);
       return {
         district: cityName, // Fallback to city name as district
+        neighborhoods: [],
         confidence: 'low',
         reasoning: 'AI classification failed, using city as fallback'
       };
@@ -502,8 +667,15 @@ Valid confidence levels: "high", "medium", "low"`;
     const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const parsed = JSON.parse(jsonStr) as PostalCodeDistrictResult;
     
+    // If AI didn't return neighborhoods, try to get them from reference data
+    let neighborhoods = parsed.neighborhoods || [];
+    if (neighborhoods.length === 0 && parsed.district) {
+      neighborhoods = getNeighborhoodsForDistrict(cityName, parsed.district);
+    }
+    
     return {
       district: parsed.district || cityName,
+      neighborhoods,
       confidence: parsed.confidence || 'low',
       reasoning: parsed.reasoning || 'AI classification'
     };
@@ -511,6 +683,7 @@ Valid confidence levels: "high", "medium", "low"`;
     console.error("Failed to classify with postal data:", error);
     return {
       district: cityName,
+      neighborhoods: [],
       confidence: 'low',
       reasoning: 'Classification failed, using city as fallback'
     };
@@ -626,40 +799,55 @@ Based on the following country information:
 ${countryContext}
 
 Given these delivery area names from a logistics provider, classify each into the three-level hierarchy:
-1. **City** - The top-level city/municipality (ALWAYS the major city)
-2. **District** - The middle-level administrative division (official districts OR suburb name if it's a suburb of major city)
-3. **Area** - The specific local neighborhood (usually preserve the original name)
+1. **City** - The top-level city/municipality (ALWAYS the major city or kommune)
+2. **District** - The official administrative district (bydel/stadsdel) WITHIN the city
+3. **Area** - The specific local neighborhood within the district
 
-CRITICAL RULES:
-1. **LOCAL LANGUAGE NAMES**: Always use local language city names:
-   - München (NOT Munich)
-   - Göteborg (NOT Gothenburg)  
-   - København (NOT Copenhagen)
-   - Köln (NOT Cologne)
-   
-2. **SUBURB HANDLING**: When a name shows "Country MainCity Suburb" pattern (e.g., "Germany Munich Unterföhring"):
-   - city = München (the MAIN city, in local language)
-   - district = Unterföhring (the suburb name)
-   - area = Unterföhring
-   - Unterföhring, Unterhaching, Vaterstetten are suburbs OF München, NOT separate cities!
+=== NORWEGIAN ADMINISTRATIVE HIERARCHY ===
 
-3. **INTERNAL CODES**: Names like "NO BRG 6", "NO OSL 1" are internal logistics zone codes:
-   - BRG = Bergen zones
-   - OSL = Oslo zones
-   - These need special handling but classify with city if identifiable
+**CITY (By/Kommune)**: Oslo, Bergen, Trondheim, Stavanger, Bærum, Asker, Kristiansand
+- These are the TOP level. NEVER put district names as cities.
 
-4. **CONSISTENCY**: Within the same city, always use identical city name spelling
+**DISTRICT (Bydel)**: Official city districts - these are WITHIN cities, not separate cities!
+Oslo has 15 official bydeler:
+- Frogner, Grünerløkka, Gamle Oslo, Sagene, St. Hanshaugen, Nordre Aker, Vestre Aker, Ullern, Bjerke, Grorud, Stovner, Alna, Østensjø, Nordstrand, Søndre Nordstrand
 
-5. **NORWEGIAN DISTRICTS**: For Norwegian cities, use official bydel names when known:
-   - Oslo: Frogner, Grünerløkka, Gamle Oslo, St. Hanshaugen, Sagene, etc.
-   - Bergen: Arna, Åsane, Bergenhus, Årstad, Fana, Ytrebygda, Fyllingsdalen, Laksevåg
+Bergen has 8 bydeler:
+- Arna, Bergenhus, Fana, Fyllingsdalen, Laksevåg, Årstad, Ytrebygda, Åsane
+
+**AREA (Nabolag/Neighborhood)**: Specific localities WITHIN districts
+- Vestre Aker contains: Ris, Slemdal, Vinderen, Holmenkollen, Røa, Bogstad
+- Frogner contains: Bygdøy, Majorstuen, Skillebekk, Solli, Briskeby
+- Nordre Aker contains: Nydalen, Ullevål, Grefsen, Kjelsås, Korsvoll
+
+=== CRITICAL CLASSIFICATION RULES ===
+
+1. **NEIGHBORHOOD → DISTRICT MAPPING**: When you see a neighborhood name, find its parent district:
+   - "Norway Oslo Holmenkollen" → city=Oslo, district=Vestre Aker, area=Holmenkollen
+   - "Norway Oslo Ris" → city=Oslo, district=Vestre Aker, area=Ris
+   - "Norway Oslo Majorstuen" → city=Oslo, district=Frogner, area=Majorstuen
+   - "Skillebekk" → city=Oslo, district=Frogner, area=Skillebekk
+
+2. **DISTRICT-ONLY ENTRIES**: If only a district name is given, use it for both district AND area:
+   - "Norway Oslo Vestre Aker" → city=Oslo, district=Vestre Aker, area=Vestre Aker
+
+3. **CITY SPELLING**: Use proper Norwegian spelling with special characters:
+   - Bærum (NOT Barum), Lillestrøm (NOT Lillestrom), Lørenskog (NOT Lorenskog)
+
+4. **SUBURB HANDLING** (for German/international cities):
+   - "Germany Munich Unterföhring" → city=München, district=Unterföhring, area=Unterföhring
+
+5. **INTERNAL CODES**: "NO BRG 6", "NO OSL 1" are internal logistics zones - keep original as area
+
+6. **NEVER**: Put district names as city names. Vestre Aker is NOT a city - it's a district OF Oslo!
 
 Input areas (id and name):
 ${JSON.stringify(batch)}
 
 Return ONLY a valid JSON array with this exact structure:
 [
-  {"original": "Skillebekk", "navio_id": 123, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
+  {"original": "Norway Oslo Holmenkollen", "navio_id": 123, "country_code": "NO", "city": "Oslo", "district": "Vestre Aker", "area": "Holmenkollen"},
+  {"original": "Skillebekk", "navio_id": 124, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
   {"original": "Germany Munich Unterföhring", "navio_id": 456, "country_code": "DE", "city": "München", "district": "Unterföhring", "area": "Unterföhring"}
 ]`;
 
@@ -726,25 +914,50 @@ Return ONLY a valid JSON array with this exact structure:
         continue;
       }
 
-      // Post-process: normalize city names and apply pre-parsed data where available
+      // Post-process: normalize city names, apply hierarchy rules, and fix district assignments
       const normalizedParsed = parsed.map((item: ClassifiedArea) => {
         // Find matching pre-parsed data
         const preParsed = batch.find(b => b.id === item.navio_id)?.parsed;
         
+        // Normalize city name first
+        let normalizedCity = normalizeCityName(item.city);
+        let normalizedDistrict = item.district;
+        let normalizedArea = item.area;
+        
         // If pre-parsed has better data, use it
         if (preParsed && preParsed.city && !preParsed.isInternalCode) {
-          return {
-            ...item,
-            city: normalizeCityName(preParsed.city),
-            district: preParsed.district || item.district,
-            country_code: preParsed.countryCode || item.country_code,
-          };
+          normalizedCity = normalizeCityName(preParsed.city);
+          normalizedDistrict = preParsed.district || item.district;
         }
         
-        // Normalize city name from AI response
+        // Apply neighborhood-to-district mapping for Norwegian cities
+        // If the "district" is actually a known neighborhood, find its real district
+        const realDistrictFromArea = findDistrictForArea(normalizedCity, normalizedDistrict);
+        if (realDistrictFromArea) {
+          // The AI put a neighborhood as the district - fix it
+          normalizedArea = normalizedDistrict; // The "district" was actually the area
+          normalizedDistrict = realDistrictFromArea;
+        }
+        
+        // If the area is actually a known district name and no specific neighborhood was given
+        // keep it as both district and area
+        if (isKnownDistrict(normalizedCity, normalizedArea) && normalizedDistrict === normalizedArea) {
+          // This is fine - district-level entry
+        }
+        
+        // Check if area is a neighborhood and we need to find its district
+        const districtFromArea = findDistrictForArea(normalizedCity, normalizedArea);
+        if (districtFromArea && normalizedDistrict !== districtFromArea) {
+          // The area is a known neighborhood but district wasn't set correctly
+          normalizedDistrict = districtFromArea;
+        }
+        
         return {
           ...item,
-          city: normalizeCityName(item.city),
+          city: normalizedCity,
+          district: normalizedDistrict,
+          area: normalizedArea,
+          country_code: preParsed?.countryCode || item.country_code,
         };
       });
       
@@ -802,14 +1015,38 @@ Return ONLY a valid JSON array with this exact structure:
         // Update the classified area with better district info
         const idx = classifiedAreas.findIndex(ca => ca.navio_id === internalArea.navio_id);
         if (idx !== -1) {
-          classifiedAreas[idx] = {
-            ...classifiedAreas[idx],
-            district: postalResult.district,
-            // Update area name if we got a meaningful district
-            area: postalResult.confidence === 'high' || postalResult.confidence === 'medium'
-              ? postalResult.district  // Use district name as area
-              : classifiedAreas[idx].area, // Keep original code if low confidence
-          };
+          // If we have neighborhoods, expand the internal code into multiple area entries
+          if (postalResult.neighborhoods.length > 0 && (postalResult.confidence === 'high' || postalResult.confidence === 'medium')) {
+            console.log(`  → Expanding to ${postalResult.neighborhoods.length} neighborhoods: ${postalResult.neighborhoods.join(', ')}`);
+            
+            // Update the first entry with the first neighborhood
+            classifiedAreas[idx] = {
+              ...classifiedAreas[idx],
+              district: postalResult.district,
+              area: postalResult.neighborhoods[0],
+            };
+            
+            // Add additional entries for remaining neighborhoods
+            for (let n = 1; n < postalResult.neighborhoods.length; n++) {
+              classifiedAreas.push({
+                original: internalArea.original,
+                navio_id: internalArea.navio_id,
+                country_code: internalArea.country_code,
+                city: internalArea.city,
+                district: postalResult.district,
+                area: postalResult.neighborhoods[n],
+              });
+            }
+          } else {
+            // No neighborhoods, just use district as area
+            classifiedAreas[idx] = {
+              ...classifiedAreas[idx],
+              district: postalResult.district,
+              area: postalResult.confidence === 'high' || postalResult.confidence === 'medium'
+                ? postalResult.district  // Use district name as area
+                : classifiedAreas[idx].area, // Keep original code if low confidence
+            };
+          }
         }
         
         // Small delay to avoid rate limiting
@@ -828,7 +1065,8 @@ async function saveToStaging(
   batchId: string,
   classifiedAreas: ClassifiedArea[]
 ): Promise<{ cities: number; districts: number; areas: number }> {
-  // Group by city and district
+  // Group by city and district using NORMALIZED keys for deduplication
+  // This prevents Bærum and Barum from being treated as different cities
   const cityMap = new Map<string, {
     name: string;
     countryCode: string;
@@ -837,29 +1075,45 @@ async function saveToStaging(
   }>();
 
   for (const area of classifiedAreas) {
-    const cityKey = `${area.country_code}_${area.city}`;
+    // Use normalized key for grouping (strips accents for matching)
+    const normalizedCityKey = `${area.country_code}_${normalizeForDedup(area.city)}`;
     
-    if (!cityMap.has(cityKey)) {
-      cityMap.set(cityKey, {
-        name: area.city,
+    if (!cityMap.has(normalizedCityKey)) {
+      cityMap.set(normalizedCityKey, {
+        name: area.city, // Use the FIRST city name encountered (should be normalized)
         countryCode: area.country_code,
         areaNames: new Set(),
         districts: new Map(),
       });
     }
     
-    const city = cityMap.get(cityKey)!;
+    const city = cityMap.get(normalizedCityKey)!;
+    
+    // Prefer the properly accented version of the city name
+    if (area.city.length > city.name.length || /[æøåäöü]/i.test(area.city)) {
+      city.name = area.city; // Use the version with special characters
+    }
+    
     city.areaNames.add(area.original);
     
-    if (!city.districts.has(area.district)) {
-      city.districts.set(area.district, {
+    // Use normalized district key for deduplication too
+    const normalizedDistrictKey = normalizeForDedup(area.district);
+    
+    if (!city.districts.has(normalizedDistrictKey)) {
+      city.districts.set(normalizedDistrictKey, {
         name: area.district,
         areaNames: new Set(),
         areas: [],
       });
     }
     
-    const district = city.districts.get(area.district)!;
+    const district = city.districts.get(normalizedDistrictKey)!;
+    
+    // Prefer the properly accented version of the district name
+    if (area.district.length > district.name.length || /[æøåäöü]/i.test(area.district)) {
+      district.name = area.district;
+    }
+    
     district.areaNames.add(area.original);
     district.areas.push(area);
   }
