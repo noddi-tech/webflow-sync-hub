@@ -24,6 +24,7 @@ interface SyncProgressDialogProps {
   operation: "import" | "sync";
   entities: string[];
   onComplete?: () => void;
+  source?: "webflow" | "navio";
 }
 
 export function SyncProgressDialog({
@@ -33,7 +34,9 @@ export function SyncProgressDialog({
   operation,
   entities,
   onComplete,
+  source = "webflow",
 }: SyncProgressDialogProps) {
+  const sourceLabel = source === "navio" ? "Navio" : "Webflow";
   const [progress, setProgress] = useState<Record<string, EntityProgress>>({});
   const [isComplete, setIsComplete] = useState(false);
 
@@ -143,7 +146,7 @@ export function SyncProgressDialog({
           <DialogTitle>
             {isComplete
               ? `${operation === "import" ? "Import" : "Sync"} Complete`
-              : `${operation === "import" ? "Importing from" : "Syncing to"} Webflow`}
+              : `${operation === "import" ? "Importing from" : "Syncing to"} ${sourceLabel}`}
           </DialogTitle>
         </DialogHeader>
 
@@ -153,7 +156,7 @@ export function SyncProgressDialog({
             <div className="flex flex-col items-center py-6 space-y-3">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="text-sm text-muted-foreground">
-                Connecting to Webflow...
+                Connecting to {sourceLabel}...
               </p>
             </div>
           )}

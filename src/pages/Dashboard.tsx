@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
   const [currentOperation, setCurrentOperation] = useState<"import" | "sync">("import");
   const [currentEntities, setCurrentEntities] = useState<string[]>([]);
+  const [currentSource, setCurrentSource] = useState<"webflow" | "navio">("webflow");
 
   const { data: counts, isLoading } = useQuery({
     queryKey: ["entity-counts"],
@@ -112,6 +113,7 @@ export default function Dashboard() {
       setCurrentEntities(entities);
       setCurrentOperation("import");
       setCurrentBatchId(batchId);
+      setCurrentSource("webflow");
       setProgressOpen(true);
     },
     onSuccess: (data) => {
@@ -154,6 +156,7 @@ export default function Dashboard() {
       setCurrentEntities(entities);
       setCurrentOperation("sync");
       setCurrentBatchId(batchId);
+      setCurrentSource("webflow");
       setProgressOpen(true);
     },
     onSuccess: (data) => {
@@ -191,6 +194,7 @@ export default function Dashboard() {
       setCurrentEntities(["navio"]);
       setCurrentOperation("import");
       setCurrentBatchId(batchId);
+      setCurrentSource("navio");
       setProgressOpen(true);
     },
     onSuccess: (data) => {
@@ -227,6 +231,7 @@ export default function Dashboard() {
       setCurrentEntities(["navio"]);
       setCurrentOperation("import");
       setCurrentBatchId(batchId);
+      setCurrentSource("navio");
       setProgressOpen(true);
     },
     onSuccess: (data) => {
@@ -445,6 +450,7 @@ export default function Dashboard() {
         batchId={currentBatchId}
         operation={currentOperation}
         entities={currentEntities}
+        source={currentSource}
         onComplete={() => {
           queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
         }}
