@@ -27,6 +27,7 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          noindex: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
           seo_meta_description_sv: string | null
@@ -54,6 +55,7 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -81,6 +83,7 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -124,6 +127,7 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          noindex: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
           seo_meta_description_sv: string | null
@@ -149,6 +153,7 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -174,6 +179,7 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -203,6 +209,7 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          noindex: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
           seo_meta_description_sv: string | null
@@ -229,6 +236,7 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -255,6 +263,7 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
