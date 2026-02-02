@@ -78,8 +78,8 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "icon", type: "PlainText", required: false, description: "Visual categorization in UI (icon name or URL)." },
     { slug: "sort-order", type: "Number", required: false, description: "Controls display order in menus/filters." },
     { slug: "active", type: "Switch", required: false, description: "Toggle visibility for unpublished categories." },
-    // Navigation multi-refs
-    { slug: "services", type: "ItemRefSet", required: false, description: "Associated services in this category." },
+    // Navigation multi-refs (Webflow uses "associated-services" slug)
+    { slug: "associated-services", type: "ItemRefSet", required: false, description: "Associated services in this category (computed from services table)." },
   ],
   services: [
     // Core fields
@@ -87,14 +87,11 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the service page." },
     // Reference
     { slug: "service-category", type: "ItemRef", required: false, description: "Parent category for navigation & filtering." },
-    // Identity
-    { slug: "shared-key", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // SEO fields
     { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for this service page." },
     { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
     { slug: "service-intro-seo", type: "RichText", required: false, description: "Rich text intro for SEO and user context." },
     // Content fields
-    { slug: "description", type: "PlainText", required: false, description: "Short description explaining the service." },
     { slug: "short-description", type: "PlainText", required: false, description: "Brief one-liner for listings and cards." },
     { slug: "service-includes", type: "RichText", required: false, description: "Rich text describing what's included in the service." },
     // Pricing fields
@@ -113,9 +110,10 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     // Control fields
     { slug: "icon", type: "PlainText", required: false, description: "Visual icon for the service." },
     { slug: "sort-order", type: "Number", required: false, description: "Controls display order in listings." },
-    { slug: "active", type: "Switch", required: false, description: "Whether the service is currently offered/shown (maps to Draft in Webflow)." },
     { slug: "season-product", type: "Switch", required: false, description: "Indicates seasonal availability." },
     { slug: "service-type-schema", type: "PlainText", required: false, description: "Schema.org service type for structured data." },
+    // Note: shared-key, description, active are app-only fields (not in Webflow schema)
+    // active maps to Webflow's isDraft status during sync
   ],
   partners: [
     // Core fields
@@ -152,8 +150,8 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     // Core fields
     { slug: "name", type: "PlainText", required: false, description: "Internal label (e.g., 'Dekkskift i Oslo')." },
     { slug: "slug", type: "PlainText", required: true, description: "URL fragment for this service location page." },
-    // Identity
-    { slug: "shared-key-service-location", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
+    // Identity (Webflow uses -2 suffix)
+    { slug: "shared-key-service-location-2", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // References (using -2 suffix per Webflow convention)
     { slug: "service", type: "ItemRef", required: true, description: "The service offered at this location." },
     { slug: "city-2", type: "ItemRef", required: true, description: "City where the service is offered." },
