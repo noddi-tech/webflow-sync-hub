@@ -885,6 +885,18 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          price: string | null
+          price_first_column: string | null
+          price_first_column_en: string | null
+          price_first_column_sv: string | null
+          price_from: string | null
+          price_second_column: string | null
+          price_second_column_en: string | null
+          price_second_column_sv: string | null
+          price_third_column: string | null
+          price_third_column_en: string | null
+          price_third_column_sv: string | null
+          season_product: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
           seo_meta_description_sv: string | null
@@ -892,11 +904,30 @@ export type Database = {
           seo_title_en: string | null
           seo_title_sv: string | null
           service_category_id: string | null
+          service_includes: string | null
+          service_includes_en: string | null
+          service_includes_sv: string | null
+          service_type_schema: string | null
           shared_key: string | null
+          short_description: string | null
+          short_description_en: string | null
+          short_description_sv: string | null
           slug: string
           slug_en: string | null
           slug_sv: string | null
           sort_order: number | null
+          step_1_illustration: string | null
+          step_1_text: string | null
+          step_1_text_en: string | null
+          step_1_text_sv: string | null
+          step_2_illustration: string | null
+          step_2_text: string | null
+          step_2_text_en: string | null
+          step_2_text_sv: string | null
+          step_3_illustration: string | null
+          step_3_text: string | null
+          step_3_text_en: string | null
+          step_3_text_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -914,6 +945,18 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          price?: string | null
+          price_first_column?: string | null
+          price_first_column_en?: string | null
+          price_first_column_sv?: string | null
+          price_from?: string | null
+          price_second_column?: string | null
+          price_second_column_en?: string | null
+          price_second_column_sv?: string | null
+          price_third_column?: string | null
+          price_third_column_en?: string | null
+          price_third_column_sv?: string | null
+          season_product?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -921,11 +964,30 @@ export type Database = {
           seo_title_en?: string | null
           seo_title_sv?: string | null
           service_category_id?: string | null
+          service_includes?: string | null
+          service_includes_en?: string | null
+          service_includes_sv?: string | null
+          service_type_schema?: string | null
           shared_key?: string | null
+          short_description?: string | null
+          short_description_en?: string | null
+          short_description_sv?: string | null
           slug: string
           slug_en?: string | null
           slug_sv?: string | null
           sort_order?: number | null
+          step_1_illustration?: string | null
+          step_1_text?: string | null
+          step_1_text_en?: string | null
+          step_1_text_sv?: string | null
+          step_2_illustration?: string | null
+          step_2_text?: string | null
+          step_2_text_en?: string | null
+          step_2_text_sv?: string | null
+          step_3_illustration?: string | null
+          step_3_text?: string | null
+          step_3_text_en?: string | null
+          step_3_text_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -943,6 +1005,18 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          price?: string | null
+          price_first_column?: string | null
+          price_first_column_en?: string | null
+          price_first_column_sv?: string | null
+          price_from?: string | null
+          price_second_column?: string | null
+          price_second_column_en?: string | null
+          price_second_column_sv?: string | null
+          price_third_column?: string | null
+          price_third_column_en?: string | null
+          price_third_column_sv?: string | null
+          season_product?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
           seo_meta_description_sv?: string | null
@@ -950,11 +1024,30 @@ export type Database = {
           seo_title_en?: string | null
           seo_title_sv?: string | null
           service_category_id?: string | null
+          service_includes?: string | null
+          service_includes_en?: string | null
+          service_includes_sv?: string | null
+          service_type_schema?: string | null
           shared_key?: string | null
+          short_description?: string | null
+          short_description_en?: string | null
+          short_description_sv?: string | null
           slug?: string
           slug_en?: string | null
           slug_sv?: string | null
           sort_order?: number | null
+          step_1_illustration?: string | null
+          step_1_text?: string | null
+          step_1_text_en?: string | null
+          step_1_text_sv?: string | null
+          step_2_illustration?: string | null
+          step_2_text?: string | null
+          step_2_text_en?: string | null
+          step_2_text_sv?: string | null
+          step_3_illustration?: string | null
+          step_3_text?: string | null
+          step_3_text_en?: string | null
+          step_3_text_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
