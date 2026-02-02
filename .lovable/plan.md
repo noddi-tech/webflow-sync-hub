@@ -1,54 +1,67 @@
 
-# Fix Missing Navio Import Progress UI
+# Fix Duplicate Cities and Misspellings in Navio Import
 
-## Problem
+## Problems Identified
 
-The progress dialog never opens when a Navio import runs because:
+### Problem 1: "Tornoto" Typo in Source Data
+The Navio API returns an area named **"Canada Tornoto - Mimico-Queensway"** - a typo for "Toronto". The current city normalization map doesn't catch this, so it creates a separate "Tornoto (CA)" city instead of merging it with "Toronto (CA)".
 
-1. The `progressOpen` state in `Dashboard.tsx` is only set to `true` by Webflow import/sync mutations
-2. The `navioIncrementalImport` mutation doesn't trigger the dialog to open
-3. While the `cityProgress` data is correctly tracked in the hook, the dialog never renders because `progressOpen` stays `false`
+### Problem 2: Duplicate Cities in Queue
+Every city appears exactly twice because:
+- Two different batch IDs exist: `7613371e-...` and `c7a9a60c-...`
+- Each batch has 20 cities
+- The UI is showing cities from BOTH batches combined, causing duplicates
 
 ## Solution
 
-Modify `Dashboard.tsx` to open the progress dialog when the Navio import starts, using the existing `cityProgress.phase` as the trigger.
+### 1. Add Typo Corrections to City Normalization Map
 
-### Changes to Dashboard.tsx
-
-Add a `useEffect` that watches `cityProgress.phase` and opens the dialog when it transitions from `"idle"`:
+Add known Navio typos to `citySpellingNormalizations` in `navio-import/index.ts`:
 
 ```typescript
-// Open progress dialog when Navio import starts
-useEffect(() => {
-  if (cityProgress.phase !== "idle") {
-    setCurrentSource("navio");
-    setCurrentEntities(["cities", "districts", "areas"]);
-    setCurrentOperation("import");
-    setProgressOpen(true);
-  }
-}, [cityProgress.phase]);
+const citySpellingNormalizations: Record<string, string> = {
+  // ... existing entries ...
+  'tornoto': 'Toronto',  // Navio typo
+  'gotehburg': 'Göteborg', // Already exists
+  'gotheburg': 'Göteborg', // Already exists
+  // Add more as discovered
+};
 ```
 
-This ensures:
-- Dialog opens automatically when `cityProgress.phase` changes from `"idle"` to `"initializing"`
-- The `source` is set to `"navio"` so the `NavioCityProgress` component renders
-- Dialog closes automatically when import completes (handled by existing logic)
+### 2. Ensure Old Queue Entries Are Cleared Before New Import
 
----
+The initialization already has `DELETE ... WHERE batch_id = ?`, but the issue is that old batches from previous imports remain. We should clean up all old pending/processing batches when a new import starts.
+
+Modify `initializeImport()`:
+
+```typescript
+// Clear ALL old pending/processing entries from previous batches
+await supabase
+  .from("navio_import_queue")
+  .delete()
+  .in("status", ["pending", "processing"]);
+
+// Also clear this specific batch if it exists
+await supabase
+  .from("navio_import_queue")
+  .delete()
+  .eq("batch_id", batchId);
+```
+
+### 3. Fix UI to Show Only Current Batch
+
+The `NavioCityProgress` component receives the city list from the initialization response, so this is correct. However, the progress polling should also filter by batch_id.
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/pages/Dashboard.tsx` | Add `useEffect` to open dialog when `cityProgress.phase` changes |
-
----
+| `supabase/functions/navio-import/index.ts` | Add "tornoto" → "Toronto" typo fix to normalizations; clear all old pending batches before starting new import |
 
 ## Expected Result
 
-When the user clicks "Fetch & Preview":
-1. Dialog opens immediately showing "Connecting to Navio..."
-2. After initialization, shows the city list with progress
-3. Each city shows a spinner while processing, then a checkmark when complete
-4. Progress bar updates as cities complete
-5. Dialog closes and navigates to preview page when done
+After these changes:
+- "Tornoto" will be normalized to "Toronto" during parsing
+- Only ONE "Toronto (CA)" city will appear with all 12 areas combined
+- Starting a new import will clear any leftover queue entries from previous imports
+- No duplicate cities in the progress list
