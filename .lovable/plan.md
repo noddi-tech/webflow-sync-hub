@@ -1,345 +1,343 @@
 
 
-# Navio API Integration for Geographic Data with AI Classification
+# Make Navio Import Country-Agnostic with Dynamic AI Classification
 
-**Status: ✅ COMPLETED**
+## Problem Statement
 
-## Overview
+The current `navio-import` Edge Function is hardcoded for Norwegian geography:
+- AI prompt mentions specific Norwegian cities (Oslo, Bergen, Trondheim)
+- District examples are Oslo-specific (Frogner, Grünerløkka)
+- System prompt says "You are a Norwegian geography expert"
+- Fallback uses "Ukjent" (Norwegian for "Unknown")
 
-This plan integrates the Navio API (`/v1/service-areas/for-landing-pages/`) to fetch delivery areas and uses AI (via Lovable AI's supported models) to intelligently classify these areas into the app's hierarchy of Cities, Districts, and Areas.
+This needs to be scalable for any country (Sweden, Denmark, Germany, etc.) while maintaining the three-level hierarchy:
+- **Cities** (Byer) - Top level municipalities/cities
+- **Districts** (Bydeler) - Intermediate administrative divisions
+- **Areas** (Områder) - Specific neighborhoods
 
-## Current Architecture Understanding
+## Solution: Two-Phase AI Classification
 
-The app has a three-level geographic hierarchy:
-- **Cities** - Top level (e.g., Oslo, Bergen)
-- **Districts** - Belong to a city (e.g., Frogner in Oslo)
-- **Areas** - Belong to a district (e.g., Skillebekk in Frogner)
+### Phase 1: Country Detection and Structure Analysis
 
-Data flows:
-1. Manual entry via UI forms
-2. Import from Webflow CMS
-3. **NEW: Import from Navio API with AI classification**
+Before classifying areas, first send the raw area names to AI to:
+1. **Detect the country** based on area name patterns
+2. **Understand that country's administrative structure**
+3. **Map it to our City → District → Area hierarchy**
+
+Example prompt:
+```
+Analyze these delivery area names and determine:
+1. What country are these areas from?
+2. What is the administrative hierarchy in that country?
+3. How should we map their structure to: City (top level), District (middle), Area (local)?
+
+Areas: ["Skillebekk", "Majorstuen", "Grünerløkka", "Södermalm", "Vasastan"]
+```
+
+AI Response:
+```json
+{
+  "detected_country": "Mixed (Norway and Sweden)",
+  "countries": {
+    "Norway": {
+      "hierarchy": "Kommune → Bydel → Område",
+      "mapping": {
+        "city_level": "Kommune or major city",
+        "district_level": "Bydel (official districts)",
+        "area_level": "Neighborhood/postal area"
+      },
+      "examples": {
+        "cities": ["Oslo", "Bergen", "Trondheim"],
+        "districts": ["Frogner", "Grünerløkka", "Gamle Oslo"]
+      }
+    },
+    "Sweden": {
+      "hierarchy": "Kommun → Stadsdel → Område",
+      "mapping": {
+        "city_level": "Kommun or major city",
+        "district_level": "Stadsdel (city districts)",
+        "area_level": "Neighborhood"
+      },
+      "examples": {
+        "cities": ["Stockholm", "Göteborg", "Malmö"],
+        "districts": ["Södermalm", "Kungsholmen", "Östermalm"]
+      }
+    }
+  }
+}
+```
+
+### Phase 2: Classify Areas Using Country Context
+
+Use the country context from Phase 1 to classify each area:
+
+```
+You are an expert in {country} geography and administrative divisions.
+
+In {country}, the administrative structure is:
+- {city_level_description}
+- {district_level_description}  
+- {area_level_description}
+
+Classify each delivery area into our three-level hierarchy:
+1. **City** - {city_level_description}
+2. **District** - {district_level_description}
+3. **Area** - {area_level_description}
+
+[areas to classify]
+```
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Store Navio API Token as Secret
+### 1. Add Country Column to Cities Table
 
-Since you've provided the API token (`cab563f8f1adb36c0665f30739ad5d60de4c1f002296a074463316ca84535259`), we'll store it as a backend secret.
-
-**Action:** Add secret `NAVIO_API_TOKEN` using the Lovable Cloud secrets mechanism.
-
----
-
-### Phase 2: Create Edge Function `navio-import`
-
-**File:** `supabase/functions/navio-import/index.ts`
-
-This edge function will:
-
-1. **Fetch Navio Service Areas**
-   - Call `GET https://api.noddi.co/v1/service-areas/for-landing-pages/`
-   - Header: `Authorization: Token {NAVIO_API_TOKEN}`
-   - Parse the response to extract area names and geographic data
-
-2. **Use AI to Classify Areas**
-   - Send area names to Lovable AI (using `google/gemini-2.5-flash` for speed/cost efficiency)
-   - Prompt the AI to classify each area into City → District → Area hierarchy
-   - AI will use Norwegian geographic knowledge to determine proper groupings
-
-3. **Create/Update Database Records**
-   - Insert cities that don't exist
-   - Insert districts linked to cities
-   - Insert areas linked to districts
-   - Set `is_delivery: true` for all imported areas (since they're from Navio delivery zones)
-   - Track import source with a `navio_service_area_id` field
-
-4. **Progress Logging**
-   - Use the existing `sync_logs` table for progress tracking
-   - Report progress using batch_id pattern (same as Webflow import)
-
-**Edge Function Structure:**
-
-```typescript
-// Pseudocode structure
-Deno.serve(async (req) => {
-  // 1. Auth check (admin required)
-  // 2. Parse batch_id from request
-  // 3. Fetch Navio API
-  const navioData = await fetch("https://api.noddi.co/v1/service-areas/for-landing-pages/", {
-    headers: { Authorization: `Token ${NAVIO_API_TOKEN}` }
-  });
-  
-  // 4. Log initial progress
-  await logSync(supabase, "navio", "progress", "in_progress", null, "Starting...", batchId, 0, areas.length);
-  
-  // 5. Batch areas and send to AI for classification
-  const classificationPrompt = `
-    You are a Norwegian geography expert. Classify these delivery area names into:
-    - City (kommune/by level)
-    - District (bydel/område level) 
-    - Area (specific neighborhood)
-    
-    Return JSON array with structure:
-    [{ "original_name": "...", "city": "...", "district": "...", "area": "..." }]
-    
-    Areas: ${JSON.stringify(areaNames)}
-  `;
-  
-  // 6. Process AI response and create/update records
-  // 7. Log completion
-});
-```
-
----
-
-### Phase 3: Add Database Tracking Columns
-
-**Migration:** Add columns to track Navio source
+Add a `country_code` column to track which country a city belongs to:
 
 ```sql
--- Add navio tracking to areas table
-ALTER TABLE areas ADD COLUMN IF NOT EXISTS navio_service_area_id text;
-ALTER TABLE areas ADD COLUMN IF NOT EXISTS navio_imported_at timestamptz;
-
--- Add navio tracking to districts table  
-ALTER TABLE districts ADD COLUMN IF NOT EXISTS navio_district_key text;
-
--- Add navio tracking to cities table
-ALTER TABLE cities ADD COLUMN IF NOT EXISTS navio_city_key text;
+ALTER TABLE cities ADD COLUMN IF NOT EXISTS country_code text DEFAULT 'NO';
 ```
 
 This allows:
-- Detecting duplicates on re-import
-- Tracking which records came from Navio
-- Preserving the relationship between app records and Navio data
+- Filtering by country in the UI
+- Country-specific SEO and content
+- Future multi-country support
 
----
+### 2. Update navio-import Edge Function
 
-### Phase 4: Update Settings UI
+Modify the AI classification logic to be country-agnostic:
 
-**File:** `src/pages/Settings.tsx`
-
-Add a new card for Navio API configuration (even though the token is stored as a secret, we'll show status):
-
+**Step 1: Analyze Areas for Country Detection**
 ```typescript
-// Add to SETTING_KEYS or create separate Navio section
-{ key: "navio_api_enabled", label: "Navio API Enabled", group: "navio" }
+// First, sample 20 area names and ask AI to identify countries
+const sampleAreas = areaNames.slice(0, 20).map(a => a.name);
+
+const analysisPrompt = `Analyze these delivery area names from a logistics API.
+
+Areas: ${JSON.stringify(sampleAreas)}
+
+Determine:
+1. What country/countries are these areas from?
+2. For each detected country, describe:
+   - The administrative hierarchy (e.g., Kommune → Bydel → Område)
+   - What level corresponds to "City" (top municipality/city)
+   - What level corresponds to "District" (middle administrative area)
+   - What level corresponds to "Area" (local neighborhood)
+
+Return JSON:
+{
+  "countries": {
+    "NO": {
+      "name": "Norway",
+      "city_description": "Kommune or major city",
+      "district_description": "Bydel (official city districts)",
+      "area_description": "Specific neighborhood",
+      "example_cities": ["Oslo", "Bergen"],
+      "example_districts": ["Frogner", "Grünerløkka"]
+    }
+  }
+}`;
 ```
 
-Show:
-- Status indicator (configured/not configured based on secret presence)
-- Last import timestamp
-- Count of areas imported from Navio
-
----
-
-### Phase 5: Add Navio Import to Dashboard
-
-**File:** `src/pages/Dashboard.tsx`
-
-Add a new card similar to "Import from Webflow":
-
+**Step 2: Use Country Context for Classification**
 ```typescript
-<Card>
-  <CardHeader>
-    <CardTitle className="flex items-center gap-2">
-      <MapPin className="h-5 w-5" />
-      Import from Navio
-    </CardTitle>
-  </CardHeader>
-  <CardContent>
-    <p className="text-muted-foreground mb-4">
-      Fetch delivery areas from Navio and use AI to organize them into Cities, Districts, and Areas.
-    </p>
-    <Button onClick={() => navioImportMutation.mutate()}>
-      <Download className="mr-2 h-4 w-4" />
-      Import Delivery Areas
-    </Button>
-  </CardContent>
-</Card>
-```
+const classificationPrompt = `You are an expert in geography and administrative divisions.
 
-The import will:
-1. Open the same `SyncProgressDialog` component
-2. Show AI classification progress
-3. Report created/updated counts on completion
+${countryContext}
 
----
-
-### Phase 6: AI Classification Logic
-
-**AI Model:** `google/gemini-2.5-flash` (fast, cost-effective, good for structured output)
-
-**Classification Strategy:**
-
-1. **Batch Processing:** Send 20-50 areas at a time to AI
-2. **Structured Output:** Request JSON format for easy parsing
-3. **Norwegian Context:** Provide context about Norwegian geography in the prompt
-4. **Fallback Logic:** If AI can't classify, create as standalone area under "Ukjent" district
-
-**AI Prompt Template:**
-
-```
-You are an expert in Norwegian geography and administrative divisions.
-
-Given these delivery area names from a service provider, classify each into:
-1. **City** (kommune or major city - e.g., Oslo, Bergen, Trondheim)
-2. **District** (bydel, administrative area, or neighborhood group)
-3. **Area** (specific neighborhood or postal area)
+Given these delivery area names, classify each into:
+1. **City** - The top-level city/municipality
+2. **District** - The middle-level administrative division
+3. **Area** - The specific local neighborhood (usually keep the original name)
 
 Rules:
-- For Oslo, use official bydeler (Frogner, Grünerløkka, etc.)
-- For other cities, group logically by geography
-- If unsure of district, use the city name as district
-- Preserve the original name as the Area name
+- Use official district names where they exist
+- If district is unknown, use the city name as district
+- Preserve the original name as the Area
+- Include the country_code for each area
 
 Input areas:
-${JSON.stringify(areaNames)}
+${JSON.stringify(batch)}
 
-Return ONLY valid JSON array:
+Return JSON array:
 [
-  {"original": "Skillebekk", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
-  {"original": "Majorstuen", "city": "Oslo", "district": "Frogner", "area": "Majorstuen"},
-  ...
+  {"original": "Skillebekk", "navio_id": 123, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
+  {"original": "Södermalm", "navio_id": 456, "country_code": "SE", "city": "Stockholm", "district": "Södermalm", "area": "Södermalm"}
+]`;
+```
+
+**Step 3: Store Country Code**
+```typescript
+// When creating cities
+const { data: newCity } = await supabase
+  .from("cities")
+  .insert({
+    name: classified.city,
+    slug: cityKey,
+    is_delivery: true,
+    navio_city_key: cityKey,
+    country_code: classified.country_code || 'NO', // Default to Norway for backward compatibility
+  });
+```
+
+### 3. Update Fallback Handling
+
+Change fallback from Norwegian-specific to generic:
+```typescript
+// Before (Norwegian-specific)
+city: "Ukjent",
+district: "Ukjent",
+
+// After (generic, works for any country)
+city: "Unknown",
+district: "Unknown",
+country_code: "XX", // ISO code for unknown
+```
+
+### 4. Add Country Filter to UI (Optional Enhancement)
+
+Add a country selector in the Dashboard when importing:
+```typescript
+<Select value={selectedCountry} onValueChange={setSelectedCountry}>
+  <SelectTrigger>
+    <SelectValue placeholder="All Countries" />
+  </SelectTrigger>
+  <SelectContent>
+    <SelectItem value="all">All Countries</SelectItem>
+    <SelectItem value="NO">Norway</SelectItem>
+    <SelectItem value="SE">Sweden</SelectItem>
+    <SelectItem value="DK">Denmark</SelectItem>
+  </SelectContent>
+</Select>
+```
+
+---
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| Database Migration | Add `country_code` column to `cities` table |
+| `supabase/functions/navio-import/index.ts` | Implement two-phase AI classification with country detection |
+| `src/integrations/supabase/types.ts` | Auto-updated with new column |
+
+---
+
+## AI Prompt Flow
+
+```text
+┌─────────────────────────────────────────────────────────┐
+│                    Raw Area Names                        │
+│    ["Skillebekk", "Majorstuen", "Södermalm", ...]       │
+└─────────────────────────────┬───────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│          PHASE 1: Country & Structure Analysis           │
+│                                                          │
+│  "Analyze these areas and determine what countries       │
+│   they belong to, and how each country structures        │
+│   its administrative divisions."                         │
+│                                                          │
+│  Output: Country context with hierarchy descriptions     │
+└─────────────────────────────┬───────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│          PHASE 2: Classification with Context            │
+│                                                          │
+│  "Using this country context, classify each area         │
+│   into City → District → Area with country_code"         │
+│                                                          │
+│  Output: Classified areas with country codes             │
+└─────────────────────────────┬───────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│              Database: Cities with Countries             │
+│                                                          │
+│  Oslo (NO), Stockholm (SE), Copenhagen (DK), etc.       │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Example: Multi-Country Classification
+
+**Input areas from Navio:**
+```json
+["Skillebekk", "Majorstuen", "Södermalm", "Vasastan", "Nørrebro", "Vesterbro"]
+```
+
+**Phase 1 AI Response:**
+```json
+{
+  "countries": {
+    "NO": {
+      "name": "Norway", 
+      "areas_detected": ["Skillebekk", "Majorstuen"],
+      "city_level": "Kommune (municipality)",
+      "district_level": "Bydel (official city districts - Oslo has 15)"
+    },
+    "SE": {
+      "name": "Sweden",
+      "areas_detected": ["Södermalm", "Vasastan"],
+      "city_level": "Kommun (municipality)", 
+      "district_level": "Stadsdel (city district - Stockholm has ~26)"
+    },
+    "DK": {
+      "name": "Denmark",
+      "areas_detected": ["Nørrebro", "Vesterbro"],
+      "city_level": "Kommune (municipality)",
+      "district_level": "Bydel (city district - Copenhagen has 10)"
+    }
+  }
+}
+```
+
+**Phase 2 Classification:**
+```json
+[
+  {"original": "Skillebekk", "navio_id": 1, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
+  {"original": "Majorstuen", "navio_id": 2, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Majorstuen"},
+  {"original": "Södermalm", "navio_id": 3, "country_code": "SE", "city": "Stockholm", "district": "Södermalm", "area": "Södermalm"},
+  {"original": "Vasastan", "navio_id": 4, "country_code": "SE", "city": "Stockholm", "district": "Norrmalm", "area": "Vasastan"},
+  {"original": "Nørrebro", "navio_id": 5, "country_code": "DK", "city": "København", "district": "Nørrebro", "area": "Nørrebro"},
+  {"original": "Vesterbro", "navio_id": 6, "country_code": "DK", "city": "København", "district": "Vesterbro-Kongens Enghave", "area": "Vesterbro"}
 ]
 ```
 
 ---
 
-### Phase 7: Update Supabase Config
-
-**File:** `supabase/config.toml`
-
-Add function configuration:
-
-```toml
-[functions.navio-import]
-verify_jwt = false
-```
-
----
-
-## Files to Create/Modify
-
-| File | Action | Description |
-|------|--------|-------------|
-| `supabase/functions/navio-import/index.ts` | Create | Edge function to fetch Navio data and classify with AI |
-| `supabase/config.toml` | Modify | Add navio-import function config |
-| Database Migration | Create | Add navio tracking columns |
-| `src/pages/Dashboard.tsx` | Modify | Add "Import from Navio" card |
-| `src/pages/Settings.tsx` | Modify | Add Navio API status section |
-| `src/integrations/supabase/types.ts` | Auto-update | Will reflect new columns |
-
----
-
-## Data Flow Diagram
-
-```text
-                    ┌─────────────────┐
-                    │  Navio API      │
-                    │  /v1/service-   │
-                    │  areas/for-     │
-                    │  landing-pages/ │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ navio-import    │
-                    │ Edge Function   │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-       ┌──────────┐   ┌──────────┐   ┌──────────┐
-       │ Raw Area │   │ Raw Area │   │ Raw Area │
-       │ Names    │   │ Names    │   │ Names    │
-       └──────────┘   └──────────┘   └──────────┘
-              │              │              │
-              └──────────────┼──────────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │  Lovable AI     │
-                    │  (Gemini 2.5    │
-                    │   Flash)        │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ Classified      │
-                    │ Hierarchy:      │
-                    │ City→District   │
-                    │ →Area           │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-        ┌──────────┐  ┌──────────┐  ┌──────────┐
-        │  Cities  │  │ Districts│  │  Areas   │
-        │  Table   │  │  Table   │  │  Table   │
-        └──────────┘  └──────────┘  └──────────┘
-```
-
----
-
-## Expected API Response Structure
-
-Based on similar delivery APIs, the Navio endpoint likely returns something like:
-
-```json
-{
-  "results": [
-    {
-      "id": 123,
-      "name": "Skillebekk",
-      "display_name": "Skillebekk, Oslo",
-      "is_active": true,
-      "coordinates": { ... }
-    },
-    ...
-  ]
-}
-```
-
-The edge function will handle the actual response structure once we can see it.
-
----
-
 ## Technical Considerations
 
-### Rate Limiting
-- Navio API: Unknown limits - implement conservative delays
-- Lovable AI: Batch requests to minimize API calls
+### Caching Country Analysis
+- Store the country analysis result for the session
+- Only re-analyze if area names change significantly
+- This reduces AI API calls
 
-### Error Handling
-- If Navio API fails: Log error and abort
-- If AI classification fails: Use fallback classification (area name as-is, "Ukjent" district)
-- If database insert fails: Log and continue with next record
+### Handling Unknown Countries
+- Default to generic classification if country cannot be determined
+- Log unknown patterns for manual review
+- Fallback: Use original name as area, parent as both city and district
 
-### Deduplication
-- Match by `navio_service_area_id` for areas
-- Match by `slug` + `city_id` for districts
-- Match by `slug` for cities
-- Update existing records rather than creating duplicates
-
----
-
-## Secret Required
-
-Before implementation, we need to add the Navio API token as a secret:
-
-**Secret Name:** `NAVIO_API_TOKEN`
-**Value:** `cab563f8f1adb36c0665f30739ad5d60de4c1f002296a074463316ca84535259`
+### ISO Country Codes
+Use standard ISO 3166-1 alpha-2 codes:
+- NO = Norway
+- SE = Sweden  
+- DK = Denmark
+- FI = Finland
+- DE = Germany
+- etc.
 
 ---
 
-## Testing Plan
+## Expected Results
 
-1. Call Navio API directly to verify response structure
-2. Test AI classification with sample area names
-3. Run full import on test data
-4. Verify City → District → Area hierarchy in database
-5. Test re-import to verify deduplication works
+After this change:
+1. **Navio import works for any country** - AI detects and adapts automatically
+2. **Cities table includes country_code** - Enables filtering and country-specific features
+3. **No hardcoded Norwegian references** - Fully dynamic classification
+4. **Backward compatible** - Existing Norwegian data gets `country_code: 'NO'`
 
