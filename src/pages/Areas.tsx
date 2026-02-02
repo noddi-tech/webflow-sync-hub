@@ -45,6 +45,7 @@ interface AreaFormData {
   seo_meta_description_sv: string;
   sitemap_priority: number;
   is_delivery: boolean;
+  noindex: boolean;
 }
 
 const emptyFormData: AreaFormData = {
@@ -67,6 +68,7 @@ const emptyFormData: AreaFormData = {
   seo_meta_description_sv: "",
   sitemap_priority: 0.5,
   is_delivery: false,
+  noindex: false,
 };
 
 export default function Areas() {
@@ -184,6 +186,7 @@ export default function Areas() {
       seo_meta_description_sv: area.seo_meta_description_sv || "",
       sitemap_priority: area.sitemap_priority ?? 0.5,
       is_delivery: area.is_delivery ?? false,
+      noindex: (area as any).noindex ?? false,
     });
     setIsDialogOpen(true);
   };
@@ -216,6 +219,7 @@ export default function Areas() {
       seo_meta_description_sv: formData.seo_meta_description_sv || null,
       sitemap_priority: formData.sitemap_priority,
       is_delivery: formData.is_delivery,
+      noindex: formData.noindex,
     };
 
     if (editingArea) {
@@ -342,13 +346,23 @@ export default function Areas() {
                   onChange={(e) => setFormData(prev => ({ ...prev, sitemap_priority: parseFloat(e.target.value) || 0.5 }))}
                 />
               </div>
-              <div className="flex items-center gap-2 pt-8">
-                <Switch
-                  id="is_delivery"
-                  checked={formData.is_delivery}
-                  onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_delivery: checked }))}
-                />
-                <Label htmlFor="is_delivery">Delivery Available</Label>
+              <div className="flex items-center gap-4 pt-8">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="is_delivery"
+                    checked={formData.is_delivery}
+                    onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_delivery: checked }))}
+                  />
+                  <Label htmlFor="is_delivery">Delivery Available</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="noindex"
+                    checked={formData.noindex}
+                    onCheckedChange={(checked) => setFormData(prev => ({ ...prev, noindex: checked }))}
+                  />
+                  <Label htmlFor="noindex">No Index</Label>
+                </div>
               </div>
             </div>
 
