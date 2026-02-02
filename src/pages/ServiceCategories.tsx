@@ -21,7 +21,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Check } from "lucide-react";
 import { slugify } from "@/lib/slugify";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -94,6 +94,22 @@ export default function ServiceCategories() {
       if (error) throw error;
       return data as ServiceCategory[];
     },
+  });
+
+  // Query for services in the currently editing category
+  const { data: categoryServices = [] } = useQuery({
+    queryKey: ["category-services", editingItem?.id],
+    queryFn: async () => {
+      if (!editingItem) return [];
+      const { data, error } = await supabase
+        .from("services")
+        .select("id, name, webflow_item_id")
+        .eq("service_category_id", editingItem.id)
+        .order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!editingItem,
   });
 
   const saveMutation = useMutation({
@@ -435,6 +451,32 @@ export default function ServiceCategories() {
               </TabsContent>
             </Tabs>
 
+            {/* Associated Services - Read-only display */}
+            {editingItem && (
+              <div className="space-y-2 pt-4 border-t">
+                <Label>Associated Services ({categoryServices.length})</Label>
+                <div className="text-sm text-muted-foreground border rounded p-3 max-h-32 overflow-y-auto bg-muted/30">
+                  {categoryServices.length > 0 ? (
+                    <ul className="space-y-1">
+                      {categoryServices.map((s) => (
+                        <li key={s.id} className="flex items-center gap-2">
+                          <span>{s.name}</span>
+                          {s.webflow_item_id && (
+                            <Check className="h-3 w-3 text-green-500" />
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span>No services in this category yet.</span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Assign services to this category from the Services page.
+                  On sync, these will populate the "Associated Services" field in Webflow.
+                </p>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={handleCloseDialog}>
                 Cancel

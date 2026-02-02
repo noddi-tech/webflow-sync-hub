@@ -38,6 +38,7 @@ interface PartnerFormData {
   description_sv: string;
   description_summary: string;
   heading_text: string;
+  heading_text_2: string;
   address: string;
   phone: string;
   email: string;
@@ -77,6 +78,7 @@ const emptyFormData: PartnerFormData = {
   description_sv: "",
   description_summary: "",
   heading_text: "",
+  heading_text_2: "",
   address: "",
   phone: "",
   email: "",
@@ -413,6 +415,7 @@ export default function Partners() {
       description_sv: partner.description_sv || "",
       description_summary: partner.description_summary || "",
       heading_text: partner.heading_text || "",
+      heading_text_2: (partner as any).heading_text_2 || "",
       address: partner.address || "",
       phone: partner.phone || "",
       email: partner.email || "",
@@ -641,13 +644,23 @@ export default function Partners() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="heading_text">Heading Text</Label>
-              <Input
-                id="heading_text"
-                value={formData.heading_text}
-                onChange={(e) => setFormData(prev => ({ ...prev, heading_text: e.target.value }))}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="heading_text">Heading Text</Label>
+                <Input
+                  id="heading_text"
+                  value={formData.heading_text}
+                  onChange={(e) => setFormData(prev => ({ ...prev, heading_text: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="heading_text_2">Heading Text 2</Label>
+                <Input
+                  id="heading_text_2"
+                  value={formData.heading_text_2}
+                  onChange={(e) => setFormData(prev => ({ ...prev, heading_text_2: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div className="space-y-2">

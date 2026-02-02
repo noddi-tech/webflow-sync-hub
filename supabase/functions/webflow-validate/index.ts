@@ -133,9 +133,11 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "client-information-summary", type: "PlainText", required: false, description: "Short summary for service cards and listings." },
     { slug: "heading-text", type: "PlainText", required: false, description: "Custom heading text for partner display." },
     { slug: "heading-text-2", type: "PlainText", required: false, description: "Secondary heading text (light purple)." },
-    // Branding fields
-    { slug: "client-logo", type: "PlainText", required: false, description: "Partner's company logo URL." },
-    { slug: "noddi-logo", type: "PlainText", required: false, description: "Noddi-specific partner logo URL." },
+    // Branding fields - Image type
+    { slug: "client-logo", type: "Image", required: false, description: "Partner's company logo (image)." },
+    { slug: "noddi-logo", type: "Image", required: false, description: "Noddi-specific partner logo (image)." },
+    // Intro content
+    { slug: "intro-content", type: "RichText", required: false, description: "Rich text intro for SEO and partner context." },
     // Control fields
     { slug: "partner-active", type: "Switch", required: false, description: "Toggles whether partner shows in service lists." },
     // Reference multi-refs
