@@ -278,7 +278,7 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
             </div>
           )}
 
-          {/* Missing Fields with Creation Guide */}
+          {/* Missing Fields - App expects these in Webflow but they don't exist */}
           {Object.keys(groupedMissingFields).length > 0 && (
             <div className="space-y-3">
               {/* Info Banner */}
@@ -286,11 +286,11 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                 <AlertTriangle className="h-3 w-3 text-yellow-500 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <p className="font-medium text-yellow-600 dark:text-yellow-400">
-                    Fields in Webflow not yet tracked by the app
+                    App expects these fields in Webflow
                   </p>
                   <p className="text-muted-foreground">
-                    These fields exist in Webflow's {collection.webflow_collection_name || COLLECTION_LABELS[name]} collection. 
-                    To sync them, add corresponding database columns and form inputs in the app.
+                    These fields are expected in Webflow's {collection.webflow_collection_name || COLLECTION_LABELS[name]} collection but were not found.
+                    Either add them to Webflow CMS, or remove them from the app's EXPECTED_FIELDS if they are app-only.
                   </p>
                 </div>
               </div>
@@ -370,7 +370,7 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
               <div className="flex items-center gap-1">
                 <p className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1">
                   <Info className="h-3 w-3" />
-                  Webflow Fields Not Yet in App
+                  Extra Fields in Webflow (Not Tracked by App)
                 </p>
                 <TooltipProvider>
                   <Tooltip>
@@ -379,8 +379,8 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
                       <p className="text-xs">
-                        These fields exist in Webflow but have no matching database column or form input in this app. 
-                        Since this app is the source of truth, consider adding these fields to the database and UI to manage them here.
+                        These fields exist in Webflow but are not in the app's EXPECTED_FIELDS list.
+                        If you need to sync these, add them to both EXPECTED_FIELDS (validation) and the app's database/UI.
                       </p>
                     </TooltipContent>
                   </Tooltip>
