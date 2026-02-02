@@ -248,13 +248,3 @@ export function SyncProgressDialog({
     </Dialog>
   );
 }
-                <span className="text-muted-foreground">{overallPercent}%</span>
-              </div>
-              <Progress value={overallPercent} className="h-2" />
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
