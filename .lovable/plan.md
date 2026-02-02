@@ -1,140 +1,110 @@
 
 
-# Fix: Improve Navio AI Classification Quality
+# Scalable AI-Powered District Code Mapping
 
-## Problems Identified
+## Current Problem
 
-Looking at the staging data and raw Navio API responses, I identified three classification issues:
+The Navio API returns internal logistics zone codes like `NO BRG 6` instead of geographic names. Currently:
+- **Area name saved**: `BRG 6` (meaningless to users)
+- **District**: `Bergen` (correct city, but no subdivision)
+- **Missing**: Real bydel names like Fana, Årstad, Åsane
 
-### Issue 1: Bergen Districts Showing Internal Codes ("BRG 6")
-**Root cause**: Navio API returns internal logistics codes like `NO BRG 1`, `NO BRG 6` instead of real neighborhood names (Arna, Bergenhus, Fana, etc.). The AI cannot determine that "BRG 6" corresponds to "Fana" or any specific Bergen bydel without additional mapping data.
+## Solution: Use Postal Code Data for AI Context
 
-**Evidence**: `original_name: "NO BRG 6"` - this is an internal Navio logistics zone, not a geographic name.
-
-### Issue 2: Munich vs München Duplicates
-**Root cause**: Different AI classification batches used inconsistent naming - one batch returned "Munich" (English), another returned "München" (German), creating duplicate city entries.
-
-### Issue 3: Munich Suburbs as Separate Cities
-**Root cause**: The AI incorrectly classified "Unterföhring", "Unterhaching", "Vaterstetten" as separate top-level cities instead of recognizing them as districts/suburbs of Munich. The raw Navio data shows `"Germany Munich Unterföhring"` - the city hierarchy is already provided!
-
----
-
-## Solution
-
-### Part 1: Parse Existing Hierarchy from Navio Names
-
-The Navio API already provides structured names like:
-- `"Germany Munich Unterföhring"` = Country → City → Area
-- `"Norway Oslo Grorud"` = Country → City → Area
-- `"NO BRG 6"` = Internal code (needs special handling)
-
-**Update the edge function** to first parse these structured names before using AI classification:
-
-```text
-Pattern: "{Country} {City} {Area}" or "{CountryCode} {CityCode} {AreaCode}"
-
-Parse:
-- "Germany Munich Unterföhring" → city=Munich, district=Munich, area=Unterföhring
-- "Norway Oslo Grorud" → city=Oslo, district=Oslo, area=Grorud  
-- "NO BRG 6" → Marked as "internal code", requires manual mapping
-```
-
-### Part 2: Force Consistent City Naming
-
-Update the AI classification prompt to require:
-- Always use **local language** city names (München, not Munich)
-- Normalize variations of the same city to a canonical form
-- Include explicit examples of preferred naming
-
-### Part 3: Flag Internal Codes for Manual Review
-
-When the Navio area name matches an internal code pattern (like `XX YYY #`), automatically flag it in the staging table for manual review with status `"needs_mapping"`.
-
----
-
-## Technical Changes
-
-### File: `supabase/functions/navio-import/index.ts`
-
-#### 1. Add pre-parsing of structured Navio names
-
-```typescript
-// New function to parse structured Navio names
-function parseNavioName(name: string): { 
-  countryCode: string | null; 
-  city: string | null; 
-  area: string; 
-  isInternalCode: boolean;
-} {
-  // Pattern 1: "Country City Area" format (e.g., "Germany Munich Unterföhring")
-  const countryMatch = name.match(/^(Germany|Norway|Sweden|Canada)\s+(\S+)\s+(.+)$/i);
-  if (countryMatch) {
-    const countryMap: Record<string, string> = {
-      'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA'
-    };
-    return {
-      countryCode: countryMap[countryMatch[1].toLowerCase()],
-      city: countryMatch[2],
-      area: countryMatch[3],
-      isInternalCode: false,
-    };
-  }
-  
-  // Pattern 2: Internal codes like "NO BRG 6", "NO OSL 1"
-  const codeMatch = name.match(/^([A-Z]{2})\s+([A-Z]{3})\s+(\d+)$/);
-  if (codeMatch) {
-    return {
-      countryCode: codeMatch[1],
-      city: null, // Unknown, needs AI or manual mapping
-      area: name,
-      isInternalCode: true,
-    };
-  }
-  
-  // Pattern 3: "Norway City Area" without proper structure
-  const norwayMatch = name.match(/^Norway\s+(\S+)\s+(.+)$/i);
-  if (norwayMatch) {
-    return {
-      countryCode: 'NO',
-      city: norwayMatch[1],
-      area: norwayMatch[2],
-      isInternalCode: false,
-    };
-  }
-  
-  // Fallback: Use AI classification
-  return { countryCode: null, city: null, area: name, isInternalCode: false };
+The Navio API already provides **postal_code_cities** data for each service area:
+```json
+{
+  "id": 123,
+  "name": "NO BRG 6",
+  "postal_code_cities": [
+    {"postal_code": "5072", "city": "Bergen"},
+    {"postal_code": "5073", "city": "Bergen"},
+    {"postal_code": "5225", "city": "Nesttun"}
+  ]
 }
 ```
 
-#### 2. Update classification prompt for consistency
+This postal code data gives the AI rich context to determine the actual geographic area. Norwegian postal codes map to specific districts:
+- 5072-5073 = Fana area
+- 5225 Nesttun = Also Fana bydel
 
-Add to the AI prompt:
-```
-IMPORTANT RULES:
-1. Use LOCAL LANGUAGE city names (München not Munich, Göteborg not Gothenburg)
-2. Areas named like "Germany Munich X" - Munich is the city, X is the area
-3. Internal codes like "NO BRG 6" should be flagged - these need manual mapping
-4. For German cities, prefer: München, Berlin, Hamburg, Frankfurt, Köln
-5. For suburbs around a major city, classify as city=MainCity, district=SuburbName
-```
+**The AI can analyze these postal codes to determine the real district name!**
 
-#### 3. Add city name normalization
+---
+
+## Technical Implementation
+
+### 1. Expand NavioServiceArea Interface
 
 ```typescript
-// Normalize city names to consistent local-language versions
-const cityNormalizations: Record<string, string> = {
-  'munich': 'München',
-  'munich': 'München',  
-  'cologne': 'Köln',
-  'gothenburg': 'Göteborg',
-  'copenhagen': 'København',
-};
+interface NavioServiceArea {
+  id: number;
+  name: string;
+  display_name?: string;
+  is_active?: boolean;
+  postal_code_cities?: Array<{ postal_code: string; city: string }>;
+  geofence_geojson?: object; // Could also help with geo-based mapping
+  service_department_names?: string[];
+}
 ```
 
-#### 4. Flag internal codes in staging
+### 2. Enhanced AI Classification Prompt
 
-When saving to staging, set `status: "needs_mapping"` for internal code areas and add a metadata field explaining why.
+When an internal code is detected, send the postal code data to the AI for intelligent mapping:
+
+```typescript
+const internalCodePrompt = `You are an expert in Norwegian administrative geography.
+
+Given this internal logistics zone and its postal code data, determine the REAL district name (bydel):
+
+Zone: "${area.name}"
+City: "${identifiedCity}"
+Postal codes and areas:
+${JSON.stringify(area.postal_code_cities)}
+
+Norwegian postal code patterns:
+- Bergen (5xxx): 5003-5015=Bergenhus, 5031-5043=Laksevåg, 5072-5089=Fana, 5130-5148=Åsane
+- Oslo (0xxx): 0150-0180=Frogner, 0182-0192=Gamle Oslo, 0350-0380=Sagene
+- Kristiansand (46xx): Different neighborhoods
+
+Based on the postal codes, what is the most likely official bydel/district name?
+Return JSON: {"district": "Fana", "confidence": "high", "reasoning": "Postal codes 5072-5073 are in Fana bydel"}`;
+```
+
+### 3. Two-Pass Classification
+
+```text
+Pass 1: Pre-parse all areas
+  ├─ Structured names (Germany Munich X) → Direct mapping
+  ├─ Internal codes (NO BRG 6) → Flag for enhanced AI processing
+  └─ Unknown → Standard AI classification
+
+Pass 2: Enhanced AI for internal codes
+  └─ Send postal_code_cities data to AI
+  └─ AI determines real district from postal codes
+  └─ High confidence → Auto-map
+  └─ Low confidence → Flag as needs_mapping
+```
+
+### 4. Postal Code Reference Data (Optional Enhancement)
+
+For even better accuracy, add a reference table of Norwegian postal code → bydel mappings:
+
+```typescript
+const norwegianPostalDistricts: Record<string, string> = {
+  // Bergen bydeler by postal code range
+  '5003': 'Bergenhus', '5004': 'Bergenhus', '5005': 'Bergenhus',
+  '5031': 'Laksevåg', '5032': 'Laksevåg',
+  '5072': 'Fana', '5073': 'Fana', '5081': 'Fana',
+  '5130': 'Åsane', '5131': 'Åsane',
+  '5200': 'Ytrebygda', '5201': 'Ytrebygda',
+  // Oslo bydeler
+  '0150': 'Frogner', '0151': 'Frogner', '0152': 'Frogner',
+  '0182': 'Gamle Oslo', '0183': 'Gamle Oslo',
+  '0350': 'Sagene', '0351': 'Sagene',
+  // etc...
+};
+```
 
 ---
 
@@ -142,29 +112,87 @@ When saving to staging, set `status: "needs_mapping"` for internal code areas an
 
 | File | Changes |
 |------|---------|
-| `supabase/functions/navio-import/index.ts` | Add `parseNavioName()` function, update AI prompt for consistency, add city normalization, flag internal codes |
-| `src/pages/NavioPreview.tsx` | Add visual indicator for "needs_mapping" status |
+| `supabase/functions/navio-import/index.ts` | 1. Expand interface to include postal_code_cities<br>2. Add enhanced AI prompt for internal codes<br>3. Add postal code reference data for common Norwegian areas<br>4. Two-pass classification logic |
 
 ---
 
-## Expected Results After Fix
+## Enhanced Classification Flow
+
+```text
+Fetch from Navio API
+        │
+        ▼
+┌───────────────────┐
+│ Parse area names  │
+└───────────────────┘
+        │
+        ├──── Structured (Germany Munich X)
+        │         → Direct: city=München, district=X
+        │
+        ├──── Internal Code (NO BRG 6)
+        │         │
+        │         ▼
+        │    ┌──────────────────────────┐
+        │    │ Has postal_code_cities?  │
+        │    └──────────────────────────┘
+        │         │
+        │    Yes  │  No
+        │         │   └─→ Flag needs_mapping
+        │         ▼
+        │    ┌──────────────────────────┐
+        │    │ Enhanced AI with postal  │
+        │    │ code context            │
+        │    └──────────────────────────┘
+        │         │
+        │         ├─ High confidence → Auto-map to district
+        │         └─ Low confidence → Flag needs_mapping
+        │
+        └──── Unknown
+                  → Standard AI classification
+                  
+        │
+        ▼
+   Save to staging
+```
+
+---
+
+## Expected Results
 
 | Before | After |
 |--------|-------|
-| Munich (DE) + München (DE) separate cities | München (DE) single city |
-| Unterföhring as separate city | Unterföhring as district of München |
-| BRG 6 with no context | BRG 6 flagged as "needs_mapping" with warning |
+| `BRG 6` under Bergen | `Fana` (bydel) under Bergen |
+| `BRG 3` under Bergen | `Årstad` (bydel) under Bergen |
+| `OSL 1` under Oslo | `Sentrum/Gamle Oslo` under Oslo |
+| `KRS 4` under Kristiansand | `Vågsbygd` (or similar) under Kristiansand |
 
 ---
 
-## About "BRG 6" and Internal Codes
+## Scalability
 
-The Navio API uses internal logistics zone codes for some Norwegian cities:
-- `NO BRG 1-10` = Bergen logistics zones
-- `NO KRS 1-9` = Kristiansand logistics zones  
-- `NO TNS 1-2` = Tønsberg logistics zones
+This approach is scalable because:
+1. **No hardcoded mappings needed** - AI learns from postal code patterns
+2. **Works for any country** - Postal codes provide geographic context everywhere
+3. **Self-improving** - As AI sees more examples, classification improves
+4. **Fallback safety** - Unknown cases get flagged for manual review
+5. **Reusable reference data** - Postal code tables can be maintained separately
 
-These do NOT map 1:1 to official city districts (bydeler). Without a mapping table from Navio or manual configuration, the system cannot know that "BRG 3" corresponds to "Årstad" or any other specific bydel.
+---
 
-**Recommendation**: Flag these as "needs_mapping" and allow manual assignment in the preview UI, OR request a mapping table from Navio support.
+## Optional: Manual Override Table
+
+For cases where AI confidence is low, add a `navio_code_mappings` table:
+
+```sql
+CREATE TABLE navio_code_mappings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  internal_code TEXT NOT NULL UNIQUE,  -- e.g., "NO BRG 6"
+  city TEXT NOT NULL,
+  district TEXT NOT NULL,
+  created_by UUID,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+When the import runs, it first checks this override table before using AI. Users can manually add mappings for problematic codes via the UI.
 
