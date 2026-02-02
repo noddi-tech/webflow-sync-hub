@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe } from "lucide-react";
+import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Download, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -177,6 +177,42 @@ export default function Dashboard() {
     },
   });
 
+  const navioImportMutation = useMutation({
+    mutationFn: async ({ batchId }: { batchId: string }) => {
+      const { data, error } = await supabase.functions.invoke("navio-import", {
+        body: { batch_id: batchId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onMutate: ({ batchId }) => {
+      setCurrentEntities(["navio"]);
+      setCurrentOperation("import");
+      setCurrentBatchId(batchId);
+      setProgressOpen(true);
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
+      const { imported } = data;
+      toast({
+        title: "Navio Import Complete",
+        description: `Created ${imported.cities} cities, ${imported.districts} districts, ${imported.areas_created} areas. Updated ${imported.areas_updated} areas.`,
+      });
+    },
+    onError: (error: Error) => {
+      setProgressOpen(false);
+      toast({
+        title: "Navio Import Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setTimeout(() => setProgressOpen(false), 1500);
+    },
+  });
+
   const stats = [
     { name: "Service Categories", value: counts?.service_categories ?? 0, icon: FolderTree, href: "/service-categories" },
     { name: "Services", value: counts?.services ?? 0, icon: Wrench, href: "/services" },
@@ -190,7 +226,7 @@ export default function Dashboard() {
 
   const isConfigured = settings?.hasCollectionIds ?? false;
   const configuredEntities = settings?.configuredEntities ?? {};
-  const isSyncing = importMutation.isPending || syncMutation.isPending;
+  const isSyncing = importMutation.isPending || syncMutation.isPending || navioImportMutation.isPending;
 
   const isEntityConfigured = (entity: EntityType) => {
     if (entity === "all") return isConfigured;
@@ -323,6 +359,31 @@ export default function Dashboard() {
                 Configure Webflow collection IDs in Settings first
               </p>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5" />
+              Import from Navio
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground mb-4">
+              Fetch delivery areas from Navio and use AI to organize them into Cities, Districts, and Areas.
+            </p>
+            <Button 
+              onClick={() => navioImportMutation.mutate({ batchId: crypto.randomUUID() })}
+              disabled={isSyncing}
+            >
+              {navioImportMutation.isPending ? (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Import Delivery Areas
+            </Button>
           </CardContent>
         </Card>
       </div>

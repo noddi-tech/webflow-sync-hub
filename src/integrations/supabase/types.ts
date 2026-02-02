@@ -27,6 +27,8 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          navio_imported_at: string | null
+          navio_service_area_id: string | null
           noindex: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
@@ -55,6 +57,8 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          navio_imported_at?: string | null
+          navio_service_area_id?: string | null
           noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
@@ -83,6 +87,8 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          navio_imported_at?: string | null
+          navio_service_area_id?: string | null
           noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
@@ -127,6 +133,7 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          navio_city_key: string | null
           noindex: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
@@ -153,6 +160,7 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          navio_city_key?: string | null
           noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
@@ -179,6 +187,7 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          navio_city_key?: string | null
           noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
@@ -209,6 +218,7 @@ export type Database = {
           name: string
           name_en: string | null
           name_sv: string | null
+          navio_district_key: string | null
           noindex: boolean | null
           seo_meta_description: string | null
           seo_meta_description_en: string | null
@@ -236,6 +246,7 @@ export type Database = {
           name: string
           name_en?: string | null
           name_sv?: string | null
+          navio_district_key?: string | null
           noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
@@ -263,6 +274,7 @@ export type Database = {
           name?: string
           name_en?: string | null
           name_sv?: string | null
+          navio_district_key?: string | null
           noindex?: boolean | null
           seo_meta_description?: string | null
           seo_meta_description_en?: string | null
