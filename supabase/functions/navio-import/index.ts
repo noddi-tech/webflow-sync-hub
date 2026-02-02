@@ -287,6 +287,8 @@ const citySpellingNormalizations: Record<string, string> = {
   'cologne': 'Köln', 'koeln': 'Köln',
   'dusseldorf': 'Düsseldorf', 'duesseldorf': 'Düsseldorf',
   'nuremberg': 'Nürnberg', 'nuernberg': 'Nürnberg',
+  // Navio typos
+  'tornoto': 'Toronto',
 };
 
 const cityNormalizations: Record<string, string> = {
@@ -512,7 +514,13 @@ async function initializeImport(
 
   console.log(`Found ${cityMap.size} unique cities in Navio data`);
 
-  // Clear any existing queue for this batch
+  // Clear ALL old pending/processing entries from previous batches
+  await supabase
+    .from("navio_import_queue")
+    .delete()
+    .in("status", ["pending", "processing"]);
+
+  // Also clear this specific batch if it exists
   await supabase.from("navio_import_queue").delete().eq("batch_id", batchId);
 
   // Insert cities into queue
