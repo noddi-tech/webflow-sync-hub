@@ -286,10 +286,11 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                 <AlertTriangle className="h-3 w-3 text-yellow-500 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <p className="font-medium text-yellow-600 dark:text-yellow-400">
-                    Create these fields in Webflow CMS Designer
+                    Fields in Webflow not yet tracked by the app
                   </p>
                   <p className="text-muted-foreground">
-                    Open your Webflow project → CMS Collections → {collection.webflow_collection_name || COLLECTION_LABELS[name]} → Add the missing fields below.
+                    These fields exist in Webflow's {collection.webflow_collection_name || COLLECTION_LABELS[name]} collection. 
+                    To sync them, add corresponding database columns and form inputs in the app.
                   </p>
                 </div>
               </div>
@@ -367,9 +368,9 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
           {collection.extra_in_webflow.length > 0 && (
             <div className="space-y-1">
               <div className="flex items-center gap-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                <p className="text-xs font-medium text-blue-600 dark:text-blue-400 flex items-center gap-1">
                   <Info className="h-3 w-3" />
-                  Extra Webflow Fields
+                  Webflow Fields Not Yet in App
                 </p>
                 <TooltipProvider>
                   <Tooltip>
@@ -378,8 +379,8 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
                       <p className="text-xs">
-                        These fields exist in Webflow but are not yet mapped to your database. 
-                        They may need to be added to the field definitions for full sync support. Click to copy the slug.
+                        These fields exist in Webflow but have no matching database column or form input in this app. 
+                        Since this app is the source of truth, consider adding these fields to the database and UI to manage them here.
                       </p>
                     </TooltipContent>
                   </Tooltip>
@@ -392,7 +393,7 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                       <TooltipTrigger asChild>
                         <Badge 
                           variant="outline" 
-                          className="text-xs cursor-pointer hover:bg-accent"
+                          className="text-xs cursor-pointer hover:bg-accent bg-blue-500/10 border-blue-500/20"
                           onClick={() => copyFieldSlug(field)}
                         >
                           {field}
@@ -400,7 +401,7 @@ export function CollectionHealthCard({ name, collection }: CollectionHealthCardP
                         </Badge>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p className="text-xs">Click to copy slug</p>
+                        <p className="text-xs">Click to copy slug. Add this field to the app to manage it here.</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>

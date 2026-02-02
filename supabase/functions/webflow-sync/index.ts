@@ -1179,6 +1179,15 @@ Deno.serve(async (req) => {
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
             intro: "service-intro-seo",
+            description: "description",
+            short_description: "short-description",
+            service_includes: "service-includes",
+            step_1_text: "step-1---text",
+            step_2_text: "step-2---text",
+            step_3_text: "step-3---text",
+            price_first_column: "price---first-column-description",
+            price_second_column: "price---second-column-description",
+            price_third_column: "price---third-column-description",
           };
         } else if (entity === "cities") {
           const { data } = await supabase.from("cities").select("*");
@@ -1262,8 +1271,21 @@ Deno.serve(async (req) => {
             baseFieldData["active"] = item.active ?? true;
           } else if (entity === "services") {
             const categoryWebflowId = (item as any).service_categories?.webflow_item_id;
+            baseFieldData["shared-key"] = item.shared_key || item.slug;
             baseFieldData["icon"] = item.icon_url || "";
             baseFieldData["sort-order"] = item.sort_order ?? 0;
+            // Non-localized pricing fields
+            baseFieldData["price"] = item.price || "";
+            baseFieldData["price-from"] = item.price_from || "";
+            // Non-localized step illustrations
+            baseFieldData["step-1---illustration"] = item.step_1_illustration || "";
+            baseFieldData["step-2---illustration"] = item.step_2_illustration || "";
+            baseFieldData["step-3---illustration"] = item.step_3_illustration || "";
+            // Control fields
+            baseFieldData["season-product"] = item.season_product ?? false;
+            baseFieldData["service-type-schema"] = item.service_type_schema || "";
+            // Map active to Webflow - if not active, item should be set as draft
+            baseFieldData["active"] = item.active ?? true;
             if (categoryWebflowId) {
               baseFieldData["service-category"] = categoryWebflowId;
             }

@@ -95,10 +95,27 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "service-intro-seo", type: "RichText", required: false, description: "Rich text intro for SEO and user context." },
     // Content fields
     { slug: "description", type: "PlainText", required: false, description: "Short description explaining the service." },
+    { slug: "short-description", type: "PlainText", required: false, description: "Brief one-liner for listings and cards." },
+    { slug: "service-includes", type: "RichText", required: false, description: "Rich text describing what's included in the service." },
+    // Pricing fields
+    { slug: "price", type: "PlainText", required: false, description: "Display price for the service." },
+    { slug: "price-from", type: "PlainText", required: false, description: "Starting price text (e.g., 'Fra 299 kr')." },
+    { slug: "price---first-column-description", type: "RichText", required: false, description: "First pricing tier description." },
+    { slug: "price---second-column-description", type: "RichText", required: false, description: "Second pricing tier description." },
+    { slug: "price---third-column-description", type: "RichText", required: false, description: "Third pricing tier description." },
+    // Steps fields (how it works)
+    { slug: "step-1---text", type: "PlainText", required: false, description: "Step 1 description text." },
+    { slug: "step-1---illustration", type: "PlainText", required: false, description: "Step 1 illustration URL." },
+    { slug: "step-2---text", type: "PlainText", required: false, description: "Step 2 description text." },
+    { slug: "step-2---illustration", type: "PlainText", required: false, description: "Step 2 illustration URL." },
+    { slug: "step-3---text", type: "PlainText", required: false, description: "Step 3 description text." },
+    { slug: "step-3---illustration", type: "PlainText", required: false, description: "Step 3 illustration URL." },
     // Control fields
     { slug: "icon", type: "PlainText", required: false, description: "Visual icon for the service." },
     { slug: "sort-order", type: "Number", required: false, description: "Controls display order in listings." },
-    { slug: "active", type: "Switch", required: false, description: "Whether the service is currently offered/shown." },
+    { slug: "active", type: "Switch", required: false, description: "Whether the service is currently offered/shown (maps to Draft in Webflow)." },
+    { slug: "season-product", type: "Switch", required: false, description: "Indicates seasonal availability." },
+    { slug: "service-type-schema", type: "PlainText", required: false, description: "Schema.org service type for structured data." },
   ],
   partners: [
     // Core fields
