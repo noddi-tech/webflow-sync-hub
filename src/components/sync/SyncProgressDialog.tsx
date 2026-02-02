@@ -148,6 +148,16 @@ export function SyncProgressDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          {/* Show connecting state when no progress yet */}
+          {!Object.values(progress).some(p => p.status !== "pending") && !isComplete && (
+            <div className="flex flex-col items-center py-6 space-y-3">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">
+                Connecting to Webflow...
+              </p>
+            </div>
+          )}
+          
           {entities.map((entity) => {
             const entityProgress = progress[entity];
             if (!entityProgress) return null;

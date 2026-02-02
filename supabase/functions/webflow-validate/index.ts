@@ -147,6 +147,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     // SEO fields
     { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for partner page." },
     { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
+    // Note: intro-content does NOT exist in Webflow Partners schema - removed to align with actual schema
   ],
   service_locations: [
     // Core fields

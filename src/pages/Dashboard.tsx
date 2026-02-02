@@ -96,21 +96,21 @@ export default function Dashboard() {
   });
 
   const importMutation = useMutation({
-    mutationFn: async (entityType: EntityType) => {
+    mutationFn: async ({ entityType, batchId }: { entityType: EntityType; batchId: string }) => {
       const { data, error } = await supabase.functions.invoke("webflow-import", {
-        body: { entity_type: entityType },
+        body: { entity_type: entityType, batch_id: batchId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       return data;
     },
-    onMutate: (entityType) => {
+    onMutate: ({ entityType, batchId }) => {
       const entities = entityType === "all" 
         ? ["service_categories", "services", "cities", "districts", "areas", "partners", "service_locations"]
         : [entityType];
       setCurrentEntities(entities);
       setCurrentOperation("import");
-      setCurrentBatchId(crypto.randomUUID());
+      setCurrentBatchId(batchId);
       setProgressOpen(true);
     },
     onSuccess: (data) => {
@@ -138,21 +138,21 @@ export default function Dashboard() {
   });
 
   const syncMutation = useMutation({
-    mutationFn: async (entityType: EntityType) => {
+    mutationFn: async ({ entityType, batchId }: { entityType: EntityType; batchId: string }) => {
       const { data, error } = await supabase.functions.invoke("webflow-sync", {
-        body: { entity_type: entityType },
+        body: { entity_type: entityType, batch_id: batchId },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       return data;
     },
-    onMutate: (entityType) => {
+    onMutate: ({ entityType, batchId }) => {
       const entities = entityType === "all" 
         ? ["service_categories", "services", "cities", "districts", "areas", "partners", "service_locations"]
         : [entityType];
       setCurrentEntities(entities);
       setCurrentOperation("sync");
-      setCurrentBatchId(crypto.randomUUID());
+      setCurrentBatchId(batchId);
       setProgressOpen(true);
     },
     onSuccess: (data) => {
@@ -258,7 +258,7 @@ export default function Dashboard() {
                   <div key={option.value}>
                     {index === 1 && <DropdownMenuSeparator />}
                     <DropdownMenuItem
-                      onClick={() => importMutation.mutate(option.value)}
+                      onClick={() => importMutation.mutate({ entityType: option.value, batchId: crypto.randomUUID() })}
                       disabled={!isEntityConfigured(option.value)}
                     >
                       {option.label}
@@ -306,7 +306,7 @@ export default function Dashboard() {
                   <div key={option.value}>
                     {index === 1 && <DropdownMenuSeparator />}
                     <DropdownMenuItem
-                      onClick={() => syncMutation.mutate(option.value)}
+                      onClick={() => syncMutation.mutate({ entityType: option.value, batchId: crypto.randomUUID() })}
                       disabled={!isEntityConfigured(option.value)}
                     >
                       {option.label}
