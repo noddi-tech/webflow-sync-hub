@@ -1,67 +1,73 @@
 
-# Fix Duplicate Cities and Misspellings in Navio Import
+# Fix Edge Function Timeout and Duplicate Cities
 
 ## Problems Identified
 
-### Problem 1: "Tornoto" Typo in Source Data
-The Navio API returns an area named **"Canada Tornoto - Mimico-Queensway"** - a typo for "Toronto". The current city normalization map doesn't catch this, so it creates a separate "Tornoto (CA)" city instead of merging it with "Toronto (CA)".
+### 1. Edge Function Not Deployed
+The typo fix (`'tornoto': 'Toronto'`) was added to the code but the database still shows "Tornoto" as a separate city. This indicates the updated edge function wasn't deployed or wasn't used.
 
-### Problem 2: Duplicate Cities in Queue
-Every city appears exactly twice because:
-- Two different batch IDs exist: `7613371e-...` and `c7a9a60c-...`
-- Each batch has 20 cities
-- The UI is showing cities from BOTH batches combined, causing duplicates
+### 2. Old Batches Not Cleared  
+Database shows 2 batches exist (`c7a9a60c-...` AND `7613371e-...`), both with pending entries. The cleanup query isn't working because:
+- The Supabase client `.in()` method may not be correctly filtering
+- The edge function crashed before completing cleanup
+
+### 3. Edge Function Timeout During City Processing
+The logs show the function was processing München (31 districts) and shut down at district 23/31. This is hitting the ~60 second edge function timeout.
+
+Each district requires:
+- 2 AI calls (Gemini + OpenAI) for neighborhood discovery
+- Each AI call takes 2-5 seconds
+
+For München: 31 districts × 2 calls × ~3 seconds = ~186 seconds (well over the 60s limit)
 
 ## Solution
 
-### 1. Add Typo Corrections to City Normalization Map
+### 1. Process Districts in Smaller Batches
+Instead of processing ALL districts for a city in one function call, process them incrementally (5-10 at a time) to stay under the timeout.
 
-Add known Navio typos to `citySpellingNormalizations` in `navio-import/index.ts`:
+Modify `processSingleCity()`:
+- Add `max_districts_per_call` parameter (default: 5)
+- Track `districts_processed` in the queue row
+- If more districts remain, return `{ completed: false, needsMoreProcessing: true }`
+- Frontend keeps calling until city is fully processed
 
+### 2. Fix Delete Query Syntax
+Change from:
 ```typescript
-const citySpellingNormalizations: Record<string, string> = {
-  // ... existing entries ...
-  'tornoto': 'Toronto',  // Navio typo
-  'gotehburg': 'Göteborg', // Already exists
-  'gotheburg': 'Göteborg', // Already exists
-  // Add more as discovered
-};
+await supabase.from("navio_import_queue").delete().in("status", ["pending", "processing"]);
 ```
 
-### 2. Ensure Old Queue Entries Are Cleared Before New Import
-
-The initialization already has `DELETE ... WHERE batch_id = ?`, but the issue is that old batches from previous imports remain. We should clean up all old pending/processing batches when a new import starts.
-
-Modify `initializeImport()`:
-
+To use `.or()` for compatibility:
 ```typescript
-// Clear ALL old pending/processing entries from previous batches
-await supabase
-  .from("navio_import_queue")
-  .delete()
-  .in("status", ["pending", "processing"]);
-
-// Also clear this specific batch if it exists
-await supabase
-  .from("navio_import_queue")
-  .delete()
-  .eq("batch_id", batchId);
+await supabase.from("navio_import_queue").delete().or("status.eq.pending,status.eq.processing");
 ```
 
-### 3. Fix UI to Show Only Current Batch
+### 3. Deploy Edge Function and Clear Database
+- Clear the `navio_import_queue` table manually before redeploying
+- Ensure the edge function is deployed with all fixes
 
-The `NavioCityProgress` component receives the city list from the initialization response, so this is correct. However, the progress polling should also filter by batch_id.
+---
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `supabase/functions/navio-import/index.ts` | Add "tornoto" → "Toronto" typo fix to normalizations; clear all old pending batches before starting new import |
+| `supabase/functions/navio-import/index.ts` | Fix delete query syntax; add district batching (5 at a time); track `districts_processed` in queue |
+
+---
+
+## Database Changes
+
+| Table | Change |
+|-------|--------|
+| `navio_import_queue` | Add `districts_processed` column (integer, default 0) to track incremental progress |
+| `navio_import_queue` | Clear all existing entries before testing |
+
+---
 
 ## Expected Result
 
-After these changes:
-- "Tornoto" will be normalized to "Toronto" during parsing
-- Only ONE "Toronto (CA)" city will appear with all 12 areas combined
-- Starting a new import will clear any leftover queue entries from previous imports
-- No duplicate cities in the progress list
+1. Cities with many districts (like München with 31) will be processed across multiple function calls
+2. Each call processes 5-10 districts, staying well under the 60s timeout
+3. "Tornoto" will be normalized to "Toronto" and only one Toronto city appears
+4. Old pending/processing batches are properly cleared
