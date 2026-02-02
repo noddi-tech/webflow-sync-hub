@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Check, Loader2, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { NavioCityProgress, type CityProgressData } from "./NavioCityProgress";
 
 interface EntityProgress {
   name: string;
@@ -25,6 +26,7 @@ interface SyncProgressDialogProps {
   entities: string[];
   onComplete?: () => void;
   source?: "webflow" | "navio";
+  cityProgress?: CityProgressData;
 }
 
 export function SyncProgressDialog({
@@ -35,6 +37,7 @@ export function SyncProgressDialog({
   entities,
   onComplete,
   source = "webflow",
+  cityProgress,
 }: SyncProgressDialogProps) {
   const sourceLabel = source === "navio" ? "Navio" : "Webflow";
   const [progress, setProgress] = useState<Record<string, EntityProgress>>({});
@@ -163,16 +166,20 @@ export function SyncProgressDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Show connecting state when no progress yet */}
-          {!Object.values(progress).some(p => p.status !== "pending") && !isComplete && (
-            <div className="flex flex-col items-center py-6 space-y-3">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">
-                Connecting to {sourceLabel}...
-              </p>
-            </div>
-          )}
-          
+          {/* City-level progress for Navio imports */}
+          {source === "navio" && cityProgress && cityProgress.phase !== "idle" ? (
+            <NavioCityProgress progress={cityProgress} />
+          ) : (
+            <>
+              {/* Show connecting state when no progress yet */}
+              {!Object.values(progress).some(p => p.status !== "pending") && !isComplete && (
+                <div className="flex flex-col items-center py-6 space-y-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">
+                    Connecting to {sourceLabel}...
+                  </p>
+                </div>
+              )}
           {entities.map((entity) => {
             const entityProgress = progress[entity];
             if (!entityProgress) return null;
@@ -225,10 +232,22 @@ export function SyncProgressDialog({
             );
           })}
 
-          {!isComplete && totalProgress.total > 0 && (
+          {!isComplete && totalProgress.total > 0 && source !== "navio" && (
             <div className="pt-4 border-t">
               <div className="flex items-center justify-between text-sm mb-2">
                 <span className="font-medium">Overall Progress</span>
+                <span className="text-muted-foreground">{overallPercent}%</span>
+              </div>
+              <Progress value={overallPercent} className="h-2" />
+            </div>
+          )}
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
                 <span className="text-muted-foreground">{overallPercent}%</span>
               </div>
               <Progress value={overallPercent} className="h-2" />
