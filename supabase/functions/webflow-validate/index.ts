@@ -136,8 +136,6 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     // Branding fields - Image type
     { slug: "client-logo", type: "Image", required: false, description: "Partner's company logo (image)." },
     { slug: "noddi-logo", type: "Image", required: false, description: "Noddi-specific partner logo (image)." },
-    // Intro content
-    { slug: "intro-content", type: "RichText", required: false, description: "Rich text intro for SEO and partner context." },
     // Control fields
     { slug: "partner-active", type: "Switch", required: false, description: "Toggles whether partner shows in service lists." },
     // Reference multi-refs
