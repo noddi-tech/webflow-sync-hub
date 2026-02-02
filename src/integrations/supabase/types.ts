@@ -124,6 +124,7 @@ export type Database = {
       }
       cities: {
         Row: {
+          country_code: string | null
           created_at: string
           id: string
           intro: string | null
@@ -151,6 +152,7 @@ export type Database = {
           webflow_item_id: string | null
         }
         Insert: {
+          country_code?: string | null
           created_at?: string
           id?: string
           intro?: string | null
@@ -178,6 +180,7 @@ export type Database = {
           webflow_item_id?: string | null
         }
         Update: {
+          country_code?: string | null
           created_at?: string
           id?: string
           intro?: string | null
