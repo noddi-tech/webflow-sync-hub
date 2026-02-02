@@ -1,140 +1,161 @@
 
+# Add Missing Webflow Fields to App Database & UI
 
-# Complete Collection Field Parity Audit
+## Problem Statement
 
-## Summary
+The System Health panel shows "Missing Fields" and "Extra Webflow Fields" for several collections. The current UI messaging incorrectly tells users to "Create these fields in Webflow CMS Designer" - but since this app is the **source of truth**, we need to:
 
-After a full review of all 7 collections, I found several gaps between what Webflow expects, what the database has, and what the UI form supports. Here's the complete analysis:
+1. **Add database columns** for all Webflow fields that we're not currently storing
+2. **Add UI form inputs** so users can edit these values in the app
+3. **Fix the Health Card messaging** to reflect that fields should be added to our app, not Webflow
+4. **Update sync functions** to push these new fields to Webflow
 
-## Collection Analysis
+## Analysis of Missing Fields
 
-### 1. Cities
+### Services Collection (Most Gaps)
 
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Missing `noindex` | Has: name, slug, seo_title, seo_meta_description, intro, sitemap_priority, is_delivery (all localized). Missing: `noindex` column |
-| **UI Form** | Missing `noindex` toggle | Form has all SEO fields but no noindex toggle |
-| **Webflow Expected** | Matches well | Expects: name, slug, seo-title, seo-meta-description, intro-content, sitemap-priority, noindex |
+| Field in Webflow | Type | Status | Action |
+|-----------------|------|--------|--------|
+| `shared-key` | PlainText | In DB, NOT in EXPECTED_FIELDS | Fix validation config |
+| `description` | PlainText | Already in DB + UI | Fix validation config |
+| `active` | Switch | Already in DB + UI | Map to Webflow Draft, fix validation |
+| `short-description` | PlainText | NOT in DB | Add column + UI |
+| `price` | PlainText | NOT in DB | Add column + UI |
+| `price-from` | PlainText | NOT in DB | Add column + UI |
+| `service-includes` | RichText | NOT in DB | Add column + UI |
+| `step-1---text` | PlainText | NOT in DB | Add column + UI |
+| `step-1---illustration` | PlainText | NOT in DB | Add column + UI |
+| `step-2---text` | PlainText | NOT in DB | Add column + UI |
+| `step-2---illustration` | PlainText | NOT in DB | Add column + UI |
+| `step-3---text` | PlainText | NOT in DB | Add column + UI |
+| `step-3---illustration` | PlainText | NOT in DB | Add column + UI |
+| `price---first-column-description` | RichText | NOT in DB | Add column + UI |
+| `price---second-column-description` | RichText | NOT in DB | Add column + UI |
+| `price---third-column-description` | RichText | NOT in DB | Add column + UI |
+| `season-product` | Switch | NOT in DB | Add column + UI |
+| `service-type-schema` | PlainText | NOT in DB | Add column + UI |
 
-**Gaps to fix:**
-- Add `noindex` boolean column to database
-- Add `noindex` toggle to Cities form UI
+### Service Categories Collection
 
----
+| Field in Webflow | Type | Status | Action |
+|-----------------|------|--------|--------|
+| `services` | Multi-Reference | Cannot store/sync directly | Computed from services table |
+| `associated-services` | Multi-Reference | Same as above | Computed, reverse reference |
 
-### 2. Districts
+### Service Locations Collection
 
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Missing `noindex` | Has all localized fields. Missing: `noindex` column |
-| **UI Form** | Missing `noindex` toggle | Form complete except noindex |
-| **Webflow Expected** | Matches well | Same as Cities |
+| Field in Webflow | Type | Status | Action |
+|-----------------|------|--------|--------|
+| `shared-key-service-location` | PlainText | In DB as computed | Add to sync function |
+| `shared-key-service-location-2` | PlainText | Duplicate? | Ignore or add to validation |
 
-**Gaps to fix:**
-- Add `noindex` boolean column to database
-- Add `noindex` toggle to Districts form UI
+## Implementation Plan
 
----
-
-### 3. Areas
-
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Missing `noindex` | Has all localized fields including is_delivery. Missing: `noindex` column |
-| **UI Form** | Missing `noindex` toggle | Form complete except noindex |
-| **Webflow Expected** | Complete | Expects is-delivery and noindex |
-
-**Gaps to fix:**
-- Add `noindex` boolean column to database
-- Add `noindex` toggle to Areas form UI
-
----
-
-### 4. Service Categories
-
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Complete | Has: name, slug, description, seo_title, seo_meta_description, intro, icon_url, sort_order, active (all localized) |
-| **UI Form** | Complete | All fields present in tabbed UI |
-| **Webflow Expected** | Complete | icon, sort-order, active, services reference |
-
-**Status: COMPLETE - No changes needed**
-
----
-
-### 5. Services
-
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Complete | Has all localized fields, category reference, icon, sort_order, active |
-| **UI Form** | Complete | All fields present |
-| **Webflow Expected** | Complete | service-category, description, service-intro-seo, icon, sort-order, active |
-
-**Status: COMPLETE - No changes needed**
-
----
-
-### 6. Partners
-
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Recently Updated | Now has seo_title, seo_meta_description, intro (all localized) |
-| **UI Form** | Recently Updated | Now includes SEO fields and coverage selectors (cities, districts, areas, services) |
-| **Webflow Expected** | Mostly Complete | client-information, client-information-summary, heading-text, logos, contact info, SEO fields, primary-city, service-areas-optional, services-provided |
-
-**Status: COMPLETE - Recent changes covered this**
-
----
-
-### 7. Service Locations
-
-| Category | Status | Details |
-|----------|--------|---------|
-| **Database** | Complete | Has all fields: slug, canonical_url, seo_title, seo_meta_description, hero_content, structured_data_json, sitemap_priority, noindex (all localized) |
-| **UI Form** | Read-Only | Computed entity - no form needed |
-| **Webflow Expected** | Complete | service, city-2, district-2, area-2, partners-2, seo-title-2, hero-intro-content-2, json-ld-structured-data-2, canonical-path-2, noindex-2 |
-
-**Status: COMPLETE - Computed entity, read-only**
-
----
-
-## Required Changes
-
-### Phase 1: Database Migration - Add `noindex` to Geographic Entities
+### Phase 1: Database Migration - Add Missing Service Fields
 
 ```sql
-ALTER TABLE cities ADD COLUMN IF NOT EXISTS noindex boolean DEFAULT false;
-ALTER TABLE districts ADD COLUMN IF NOT EXISTS noindex boolean DEFAULT false;
-ALTER TABLE areas ADD COLUMN IF NOT EXISTS noindex boolean DEFAULT false;
+-- Add all missing fields to services table
+ALTER TABLE services
+ADD COLUMN IF NOT EXISTS short_description text,
+ADD COLUMN IF NOT EXISTS short_description_en text,
+ADD COLUMN IF NOT EXISTS short_description_sv text,
+ADD COLUMN IF NOT EXISTS price text,
+ADD COLUMN IF NOT EXISTS price_from text,
+ADD COLUMN IF NOT EXISTS service_includes text,
+ADD COLUMN IF NOT EXISTS service_includes_en text,
+ADD COLUMN IF NOT EXISTS service_includes_sv text,
+ADD COLUMN IF NOT EXISTS step_1_text text,
+ADD COLUMN IF NOT EXISTS step_1_text_en text,
+ADD COLUMN IF NOT EXISTS step_1_text_sv text,
+ADD COLUMN IF NOT EXISTS step_1_illustration text,
+ADD COLUMN IF NOT EXISTS step_2_text text,
+ADD COLUMN IF NOT EXISTS step_2_text_en text,
+ADD COLUMN IF NOT EXISTS step_2_text_sv text,
+ADD COLUMN IF NOT EXISTS step_2_illustration text,
+ADD COLUMN IF NOT EXISTS step_3_text text,
+ADD COLUMN IF NOT EXISTS step_3_text_en text,
+ADD COLUMN IF NOT EXISTS step_3_text_sv text,
+ADD COLUMN IF NOT EXISTS step_3_illustration text,
+ADD COLUMN IF NOT EXISTS price_first_column text,
+ADD COLUMN IF NOT EXISTS price_first_column_en text,
+ADD COLUMN IF NOT EXISTS price_first_column_sv text,
+ADD COLUMN IF NOT EXISTS price_second_column text,
+ADD COLUMN IF NOT EXISTS price_second_column_en text,
+ADD COLUMN IF NOT EXISTS price_second_column_sv text,
+ADD COLUMN IF NOT EXISTS price_third_column text,
+ADD COLUMN IF NOT EXISTS price_third_column_en text,
+ADD COLUMN IF NOT EXISTS price_third_column_sv text,
+ADD COLUMN IF NOT EXISTS season_product boolean DEFAULT false,
+ADD COLUMN IF NOT EXISTS service_type_schema text;
 ```
 
-### Phase 2: UI Updates - Add `noindex` Toggle
+### Phase 2: Update Services Form UI
 
-Update the following files to add a `noindex` toggle:
-1. `src/pages/Cities.tsx` - Add noindex to form data and toggle in UI
-2. `src/pages/Districts.tsx` - Add noindex to form data and toggle in UI
-3. `src/pages/Areas.tsx` - Add noindex to form data and toggle in UI
+Update `src/pages/Services.tsx` to add form inputs for:
+- Short Description (localized)
+- Price, Price From
+- Service Includes (rich text, localized)
+- 3 Steps (text + illustration for each, localized text)
+- 3 Price Columns (rich text, localized)
+- Season Product toggle
+- Service Type Schema
 
-Each will need:
-- Add `noindex: boolean` to the form data interface
-- Add toggle in the form next to other control switches
-- Include in payload for create/update mutations
-- Map from entity when opening edit dialog
-
-### Visual Layout for noindex Toggle
-
-```
-+-----------------------------------------------+
-| Control Fields                                 |
-+-----------------------------------------------+
-| [Sitemap Priority: 0.7] [is_delivery toggle]  |
-|                         [noindex toggle]       |
-+-----------------------------------------------+
-```
+Group these in collapsible sections for better UX:
+- **Pricing Section**: price, price_from, price columns
+- **Steps Section**: step 1/2/3 text + illustrations
+- **Content Section**: short_description, service_includes
+- **Control Section**: season_product, service_type_schema
 
 ### Phase 3: Update webflow-validate EXPECTED_FIELDS
 
-Update the validation function to include `noindex` for Cities and Districts (currently only Areas has is-delivery in Webflow, but all three need noindex in our app).
+Update `supabase/functions/webflow-validate/index.ts` to include ALL Webflow fields:
+
+```typescript
+services: [
+  // Core + existing fields...
+  { slug: "shared-key", type: "PlainText", required: false, description: "..." },
+  { slug: "description", type: "PlainText", required: false, description: "..." },
+  { slug: "active", type: "Switch", required: false, description: "..." },
+  // New fields
+  { slug: "short-description", type: "PlainText", required: false, description: "..." },
+  { slug: "price", type: "PlainText", required: false, description: "..." },
+  { slug: "price-from", type: "PlainText", required: false, description: "..." },
+  { slug: "service-includes", type: "RichText", required: false, description: "..." },
+  { slug: "step-1---text", type: "PlainText", required: false, description: "..." },
+  { slug: "step-1---illustration", type: "PlainText", required: false, description: "..." },
+  // ... all step fields
+  { slug: "price---first-column-description", type: "RichText", required: false, description: "..." },
+  // ... all price column fields
+  { slug: "season-product", type: "Switch", required: false, description: "..." },
+  { slug: "service-type-schema", type: "PlainText", required: false, description: "..." },
+]
+```
+
+### Phase 4: Update webflow-sync for Services
+
+Update `supabase/functions/webflow-sync/index.ts` to:
+1. Include all new fields in the sync payload
+2. Map `active: false` to `isDraft: true` (instead of requiring a Webflow field)
+3. Add field mappings for localized content
+
+### Phase 5: Update webflow-import for Services
+
+Update `supabase/functions/webflow-import/index.ts` to import all the new fields from Webflow into the database.
+
+### Phase 6: Fix Health Card Messaging
+
+Update `src/components/health/CollectionHealthCard.tsx` to:
+- Change "Create these fields in Webflow CMS Designer" to "Add these fields to the app"
+- Add an "Adopt Field" action button that shows what needs to be added to the database/UI
+- Clarify that "Extra Webflow Fields" = fields in Webflow we're not yet syncing
+
+### Phase 7: Update Service Categories Validation
+
+For Service Categories, the `services` multi-reference is **computed** from the services table (services that have `service_category_id` set). Update validation to mark this as "computed, not synced" rather than "missing".
+
+### Phase 8: Update Service Locations Sync
+
+Add `shared-key-service-location` to the sync payload (computed as `{service_slug}-{city_slug}-{district_slug}-{area_slug}`).
 
 ---
 
@@ -142,33 +163,58 @@ Update the validation function to include `noindex` for Cities and Districts (cu
 
 | File | Changes |
 |------|---------|
-| **Database Migration** | Add `noindex` column to cities, districts, areas tables |
-| `src/pages/Cities.tsx` | Add noindex to form interface, add toggle, update mutations |
-| `src/pages/Districts.tsx` | Add noindex to form interface, add toggle, update mutations |
-| `src/pages/Areas.tsx` | Add noindex to form interface, add toggle, update mutations |
-| `supabase/functions/webflow-validate/index.ts` | Already correct for Webflow expectations |
+| Database Migration | Add 20+ columns to services table |
+| `src/pages/Services.tsx` | Add form sections for all new fields |
+| `supabase/functions/webflow-validate/index.ts` | Add all new fields to EXPECTED_FIELDS |
+| `supabase/functions/webflow-sync/index.ts` | Add field mappings, implement Draft mode for inactive |
+| `supabase/functions/webflow-import/index.ts` | Import all new fields |
+| `src/components/health/CollectionHealthCard.tsx` | Fix messaging direction |
 
 ---
 
-## Complete Field Matrix After Changes
+## UI Layout for Services Form (After Changes)
 
-| Collection | Core Fields | SEO Fields | Control Fields | References | Status |
-|------------|-------------|------------|----------------|------------|--------|
-| **Cities** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sitemap_priority, is_delivery, **noindex** | districts, areas | Will be complete |
-| **Districts** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sitemap_priority, is_delivery, **noindex** | city, areas | Will be complete |
-| **Areas** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sitemap_priority, is_delivery, **noindex** | district, city | Will be complete |
-| **Service Categories** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sort_order, active, icon_url | services | Complete |
-| **Services** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | sort_order, active, icon_url | service_category | Complete |
-| **Partners** | name, slug (localized) | seo_title, seo_meta_description, intro (localized) | active, rating, heading_text, logos, contact | services, areas, cities, districts | Complete |
-| **Service Locations** | slug, canonical_url (localized) | seo_title, seo_meta_description, hero_content, structured_data_json (localized) | sitemap_priority, noindex | service, city, district, area, partners | Complete |
+```
++----------------------------------------------------------+
+| Create/Edit Service                                        |
++----------------------------------------------------------+
+| Category: [Dropdown]    Icon URL: [Input]                 |
+| Sort Order: [Number]    Active: [Toggle]                  |
+|                         Season Product: [Toggle]          |
++----------------------------------------------------------+
+| [Norwegian] [English] [Swedish]                           |
+| Name *: [Input]          Slug *: [Input]                  |
+| Description: [Textarea]                                   |
+| Short Description: [Input]                                |
+| SEO Title: [Input]                                        |
+| SEO Meta Description: [Textarea]                          |
+| Intro Content: [Textarea]                                 |
+| Service Includes: [Rich Text Editor]                      |
++----------------------------------------------------------+
+| [> Pricing (collapsed by default)]                        |
+|   Price: [Input]    Price From: [Input]                   |
+|   First Column Description: [Rich Text]                   |
+|   Second Column Description: [Rich Text]                  |
+|   Third Column Description: [Rich Text]                   |
++----------------------------------------------------------+
+| [> Steps (collapsed by default)]                          |
+|   Step 1 Text: [Textarea]   Illustration URL: [Input]     |
+|   Step 2 Text: [Textarea]   Illustration URL: [Input]     |
+|   Step 3 Text: [Textarea]   Illustration URL: [Input]     |
++----------------------------------------------------------+
+| [> Advanced (collapsed by default)]                       |
+|   Service Type Schema: [Input]                            |
++----------------------------------------------------------+
+```
 
 ---
 
 ## Expected Outcome
 
 After implementation:
-1. All geographic entities (Cities, Districts, Areas) will have full `noindex` control
-2. The System Health panel will show all collections as "Ready"
-3. Webflow sync can properly set noindex flags on pages that shouldn't be indexed
-4. Full schema parity between our app and Webflow CMS
-
+1. All 7 collections will show "Ready" status in System Health
+2. No "Missing Fields" or "Extra Webflow Fields" warnings
+3. Users can edit ALL Webflow content fields directly in this app
+4. Sync will push all content to Webflow correctly
+5. Import will pull all content from Webflow correctly
+6. The app is truly the single source of truth for Webflow CMS
