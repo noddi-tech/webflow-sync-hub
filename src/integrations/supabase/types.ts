@@ -304,6 +304,54 @@ export type Database = {
           },
         ]
       }
+      navio_import_queue: {
+        Row: {
+          batch_id: string
+          city_name: string
+          completed_at: string | null
+          country_code: string
+          created_at: string
+          discovered_hierarchy: Json | null
+          districts_discovered: number | null
+          error_message: string | null
+          id: string
+          navio_areas: Json
+          neighborhoods_discovered: number | null
+          started_at: string | null
+          status: string
+        }
+        Insert: {
+          batch_id: string
+          city_name: string
+          completed_at?: string | null
+          country_code?: string
+          created_at?: string
+          discovered_hierarchy?: Json | null
+          districts_discovered?: number | null
+          error_message?: string | null
+          id?: string
+          navio_areas?: Json
+          neighborhoods_discovered?: number | null
+          started_at?: string | null
+          status?: string
+        }
+        Update: {
+          batch_id?: string
+          city_name?: string
+          completed_at?: string | null
+          country_code?: string
+          created_at?: string
+          discovered_hierarchy?: Json | null
+          districts_discovered?: number | null
+          error_message?: string | null
+          id?: string
+          navio_areas?: Json
+          neighborhoods_discovered?: number | null
+          started_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
       navio_staging_areas: {
         Row: {
           batch_id: string

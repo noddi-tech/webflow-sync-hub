@@ -6,7 +6,7 @@ import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree,
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
 import { SystemHealthPanel } from "@/components/health/SystemHealthPanel";
+import { useNavioImport } from "@/hooks/useNavioImport";
 
 type EntityType = "all" | "service_categories" | "services" | "cities" | "districts" | "areas" | "partners" | "service_locations";
 
@@ -33,13 +34,15 @@ const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
 export default function Dashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   
   const [progressOpen, setProgressOpen] = useState(false);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
   const [currentOperation, setCurrentOperation] = useState<"import" | "sync">("import");
   const [currentEntities, setCurrentEntities] = useState<string[]>([]);
   const [currentSource, setCurrentSource] = useState<"webflow" | "navio">("webflow");
+
+  // Use the new incremental Navio import hook
+  const { cityProgress, navioIncrementalImport, isImporting: isNavioImporting } = useNavioImport();
 
   const { data: counts, isLoading } = useQuery({
     queryKey: ["entity-counts"],
@@ -181,83 +184,7 @@ export default function Dashboard() {
     },
   });
 
-  const navioPreviewMutation = useMutation({
-    mutationFn: async ({ batchId }: { batchId: string }) => {
-      const { data, error } = await supabase.functions.invoke("navio-import", {
-        body: { batch_id: batchId, mode: "preview" },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    },
-    onMutate: ({ batchId }) => {
-      setCurrentEntities(["navio"]);
-      setCurrentOperation("import");
-      setCurrentBatchId(batchId);
-      setCurrentSource("navio");
-      setProgressOpen(true);
-    },
-    onSuccess: (data) => {
-      // The function returns immediately with status: "processing"
-      // The SyncProgressDialog will poll sync_logs and show completion
-      // Don't close the dialog here - let the dialog handle it when complete
-      if (data.status !== "processing") {
-        toast({
-          title: "Preview Ready",
-          description: `Staged ${data.staged?.cities || 0} cities, ${data.staged?.districts || 0} districts, ${data.staged?.areas || 0} areas for review.`,
-        });
-        navigate("/navio-preview");
-      }
-    },
-    onError: (error: Error) => {
-      setProgressOpen(false);
-      toast({
-        title: "Navio Fetch Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-    // Don't auto-close - let the dialog handle completion via polling
-  });
-
-  const navioImportMutation = useMutation({
-    mutationFn: async ({ batchId }: { batchId: string }) => {
-      const { data, error } = await supabase.functions.invoke("navio-import", {
-        body: { batch_id: batchId, mode: "direct" },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    },
-    onMutate: ({ batchId }) => {
-      setCurrentEntities(["navio"]);
-      setCurrentOperation("import");
-      setCurrentBatchId(batchId);
-      setCurrentSource("navio");
-      setProgressOpen(true);
-    },
-    onSuccess: (data) => {
-      // The function returns immediately with status: "processing"
-      // The SyncProgressDialog will poll sync_logs and show completion
-      if (data.status !== "processing") {
-        queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
-        const { imported } = data;
-        toast({
-          title: "Navio Import Complete",
-          description: `Created ${imported?.cities || 0} cities, ${imported?.districts || 0} districts, ${imported?.areas_created || 0} areas. Updated ${imported?.areas_updated || 0} areas.`,
-        });
-      }
-    },
-    onError: (error: Error) => {
-      setProgressOpen(false);
-      toast({
-        title: "Navio Import Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-    // Don't auto-close - let the dialog handle completion via polling
-  });
+  // Legacy Navio mutations removed - using useNavioImport hook instead
 
   const stats = [
     { name: "Service Categories", value: counts?.service_categories ?? 0, icon: FolderTree, href: "/service-categories" },
@@ -272,7 +199,7 @@ export default function Dashboard() {
 
   const isConfigured = settings?.hasCollectionIds ?? false;
   const configuredEntities = settings?.configuredEntities ?? {};
-  const isSyncing = importMutation.isPending || syncMutation.isPending || navioImportMutation.isPending || navioPreviewMutation.isPending;
+  const isSyncing = importMutation.isPending || syncMutation.isPending || isNavioImporting;
 
   const isEntityConfigured = (entity: EntityType) => {
     if (entity === "all") return isConfigured;
@@ -421,27 +348,15 @@ export default function Dashboard() {
             </p>
             <div className="flex flex-wrap gap-2">
               <Button 
-                onClick={() => navioPreviewMutation.mutate({ batchId: crypto.randomUUID() })}
+                onClick={() => navioIncrementalImport.mutate({ batchId: crypto.randomUUID() })}
                 disabled={isSyncing}
               >
-                {navioPreviewMutation.isPending ? (
+                {isNavioImporting ? (
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <Eye className="mr-2 h-4 w-4" />
                 )}
                 Fetch & Preview
-              </Button>
-              <Button 
-                variant="outline"
-                onClick={() => navioImportMutation.mutate({ batchId: crypto.randomUUID() })}
-                disabled={isSyncing}
-              >
-                {navioImportMutation.isPending ? (
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-2 h-4 w-4" />
-                )}
-                Direct Import
               </Button>
             </div>
           </CardContent>
@@ -455,6 +370,7 @@ export default function Dashboard() {
         operation={currentOperation}
         entities={currentEntities}
         source={currentSource}
+        cityProgress={cityProgress}
         onComplete={() => {
           queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
         }}
