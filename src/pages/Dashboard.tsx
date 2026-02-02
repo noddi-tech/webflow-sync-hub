@@ -198,12 +198,16 @@ export default function Dashboard() {
       setProgressOpen(true);
     },
     onSuccess: (data) => {
-      toast({
-        title: "Preview Ready",
-        description: `Staged ${data.staged.cities} cities, ${data.staged.districts} districts, ${data.staged.areas} areas for review.`,
-      });
-      // Navigate to preview page
-      navigate("/navio-preview");
+      // The function returns immediately with status: "processing"
+      // The SyncProgressDialog will poll sync_logs and show completion
+      // Don't close the dialog here - let the dialog handle it when complete
+      if (data.status !== "processing") {
+        toast({
+          title: "Preview Ready",
+          description: `Staged ${data.staged?.cities || 0} cities, ${data.staged?.districts || 0} districts, ${data.staged?.areas || 0} areas for review.`,
+        });
+        navigate("/navio-preview");
+      }
     },
     onError: (error: Error) => {
       setProgressOpen(false);
@@ -213,9 +217,7 @@ export default function Dashboard() {
         variant: "destructive",
       });
     },
-    onSettled: () => {
-      setTimeout(() => setProgressOpen(false), 1500);
-    },
+    // Don't auto-close - let the dialog handle completion via polling
   });
 
   const navioImportMutation = useMutation({
@@ -235,12 +237,16 @@ export default function Dashboard() {
       setProgressOpen(true);
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
-      const { imported } = data;
-      toast({
-        title: "Navio Import Complete",
-        description: `Created ${imported.cities} cities, ${imported.districts} districts, ${imported.areas_created} areas. Updated ${imported.areas_updated} areas.`,
-      });
+      // The function returns immediately with status: "processing"
+      // The SyncProgressDialog will poll sync_logs and show completion
+      if (data.status !== "processing") {
+        queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
+        const { imported } = data;
+        toast({
+          title: "Navio Import Complete",
+          description: `Created ${imported?.cities || 0} cities, ${imported?.districts || 0} districts, ${imported?.areas_created || 0} areas. Updated ${imported?.areas_updated || 0} areas.`,
+        });
+      }
     },
     onError: (error: Error) => {
       setProgressOpen(false);
@@ -250,9 +256,7 @@ export default function Dashboard() {
         variant: "destructive",
       });
     },
-    onSettled: () => {
-      setTimeout(() => setProgressOpen(false), 1500);
-    },
+    // Don't auto-close - let the dialog handle completion via polling
   });
 
   const stats = [
