@@ -313,6 +313,7 @@ export type Database = {
           name: string
           navio_service_area_id: string
           original_name: string
+          source: string
           staging_district_id: string
           status: string
         }
@@ -324,6 +325,7 @@ export type Database = {
           name: string
           navio_service_area_id: string
           original_name: string
+          source?: string
           staging_district_id: string
           status?: string
         }
@@ -335,6 +337,7 @@ export type Database = {
           name?: string
           navio_service_area_id?: string
           original_name?: string
+          source?: string
           staging_district_id?: string
           status?: string
         }
@@ -404,6 +407,7 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          source: string
           staging_city_id: string
           status: string
         }
@@ -414,6 +418,7 @@ export type Database = {
           created_at?: string
           id?: string
           name: string
+          source?: string
           staging_city_id: string
           status?: string
         }
@@ -424,6 +429,7 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+          source?: string
           staging_city_id?: string
           status?: string
         }
