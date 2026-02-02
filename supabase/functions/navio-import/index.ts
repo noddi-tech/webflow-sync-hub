@@ -23,107 +23,259 @@ interface NavioServiceArea {
   [key: string]: unknown;
 }
 
-// Norwegian postal code → bydel reference data for enhanced AI context
-const norwegianPostalDistricts: Record<string, string> = {
-  // Bergen bydeler (5xxx)
-  '5003': 'Bergenhus', '5004': 'Bergenhus', '5005': 'Bergenhus', '5006': 'Bergenhus', '5007': 'Bergenhus',
-  '5008': 'Bergenhus', '5009': 'Bergenhus', '5010': 'Bergenhus', '5011': 'Bergenhus', '5012': 'Bergenhus',
-  '5013': 'Bergenhus', '5014': 'Bergenhus', '5015': 'Bergenhus', '5016': 'Bergenhus', '5017': 'Bergenhus',
-  '5018': 'Bergenhus', '5020': 'Bergenhus', '5021': 'Bergenhus',
-  '5031': 'Laksevåg', '5032': 'Laksevåg', '5033': 'Laksevåg', '5034': 'Laksevåg', '5035': 'Laksevåg',
-  '5036': 'Laksevåg', '5037': 'Laksevåg', '5038': 'Laksevåg', '5039': 'Laksevåg', '5041': 'Laksevåg',
-  '5042': 'Laksevåg', '5043': 'Laksevåg', '5045': 'Laksevåg',
-  '5052': 'Årstad', '5053': 'Årstad', '5054': 'Årstad', '5055': 'Årstad', '5057': 'Årstad',
-  '5058': 'Årstad', '5059': 'Årstad', '5063': 'Årstad', '5067': 'Årstad', '5068': 'Årstad',
-  '5072': 'Fana', '5073': 'Fana', '5075': 'Fana', '5076': 'Fana', '5078': 'Fana',
-  '5081': 'Fana', '5082': 'Fana', '5089': 'Fana', '5093': 'Fana', '5094': 'Fana',
-  '5096': 'Fana', '5097': 'Fana', '5098': 'Fana',
-  '5115': 'Ytrebygda', '5116': 'Ytrebygda', '5117': 'Ytrebygda', '5118': 'Ytrebygda',
-  '5119': 'Ytrebygda', '5132': 'Ytrebygda', '5134': 'Ytrebygda',
-  '5130': 'Åsane', '5131': 'Åsane', '5136': 'Åsane', '5137': 'Åsane', '5141': 'Åsane',
-  '5142': 'Åsane', '5143': 'Åsane', '5144': 'Åsane', '5145': 'Åsane', '5146': 'Åsane',
-  '5147': 'Åsane', '5148': 'Åsane', '5149': 'Åsane',
-  '5160': 'Arna', '5161': 'Arna', '5162': 'Arna', '5163': 'Arna', '5164': 'Arna',
-  '5165': 'Arna', '5170': 'Arna', '5171': 'Arna', '5172': 'Arna', '5173': 'Arna',
-  '5174': 'Arna', '5176': 'Arna', '5177': 'Arna', '5178': 'Arna',
-  '5200': 'Fyllingsdalen', '5201': 'Fyllingsdalen', '5202': 'Fyllingsdalen',
-  '5224': 'Nesttun', '5225': 'Nesttun', '5226': 'Nesttun', '5227': 'Nesttun', '5228': 'Nesttun',
-  '5229': 'Nesttun', '5231': 'Paradis', '5232': 'Paradis', '5235': 'Rådal',
-  // Oslo bydeler (0xxx)
-  '0150': 'Frogner', '0151': 'Frogner', '0152': 'Frogner', '0153': 'Frogner', '0154': 'Frogner',
-  '0155': 'Frogner', '0157': 'Frogner', '0158': 'Frogner', '0159': 'Frogner', '0160': 'Frogner',
-  '0161': 'Frogner', '0162': 'Frogner', '0163': 'Frogner', '0164': 'Frogner', '0165': 'Frogner',
-  '0166': 'Frogner', '0167': 'Frogner', '0168': 'Frogner', '0169': 'Frogner', '0170': 'Frogner',
-  '0171': 'Frogner', '0172': 'Frogner', '0173': 'Frogner', '0174': 'Frogner', '0175': 'Frogner',
-  '0176': 'Grünerløkka', '0177': 'Grünerløkka', '0178': 'Grünerløkka', '0179': 'Grünerløkka',
-  '0180': 'Sentrum', '0181': 'Sentrum', '0182': 'Gamle Oslo', '0183': 'Gamle Oslo',
-  '0184': 'Gamle Oslo', '0185': 'Gamle Oslo', '0186': 'Gamle Oslo', '0187': 'Gamle Oslo',
-  '0188': 'Gamle Oslo', '0190': 'Gamle Oslo', '0191': 'Gamle Oslo', '0192': 'Gamle Oslo',
-  '0193': 'Gamle Oslo', '0194': 'Gamle Oslo', '0195': 'Gamle Oslo', '0196': 'Gamle Oslo',
-  '0350': 'Sagene', '0351': 'Sagene', '0352': 'Sagene', '0353': 'Sagene', '0354': 'Sagene',
-  '0355': 'Sagene', '0356': 'Sagene', '0357': 'Sagene', '0358': 'Sagene', '0359': 'Sagene',
-  '0360': 'Sagene', '0361': 'Sagene', '0362': 'Sagene', '0363': 'Sagene', '0364': 'Sagene',
-  '0365': 'Nordre Aker', '0366': 'Nordre Aker', '0367': 'Nordre Aker', '0368': 'Nordre Aker',
-  '0369': 'Nordre Aker', '0370': 'Nordre Aker', '0371': 'Nordre Aker', '0372': 'Nordre Aker',
-  '0373': 'Nordre Aker', '0374': 'Nordre Aker', '0375': 'Nordre Aker', '0376': 'Nordre Aker',
-  '0377': 'Nordre Aker', '0378': 'Nordre Aker', '0379': 'Nordre Aker', '0380': 'Nordre Aker',
-  '0451': 'St. Hanshaugen', '0452': 'St. Hanshaugen', '0453': 'St. Hanshaugen', '0454': 'St. Hanshaugen',
-  '0455': 'St. Hanshaugen', '0456': 'St. Hanshaugen', '0457': 'St. Hanshaugen', '0458': 'St. Hanshaugen',
-  '0459': 'St. Hanshaugen', '0460': 'St. Hanshaugen', '0461': 'St. Hanshaugen', '0462': 'St. Hanshaugen',
-  '0463': 'St. Hanshaugen', '0464': 'St. Hanshaugen', '0465': 'St. Hanshaugen', '0466': 'St. Hanshaugen',
-  '0467': 'St. Hanshaugen', '0468': 'St. Hanshaugen', '0469': 'St. Hanshaugen', '0470': 'Grünerløkka',
-  '0550': 'Grünerløkka', '0551': 'Grünerløkka', '0552': 'Grünerløkka', '0553': 'Grünerløkka',
-  '0554': 'Grünerløkka', '0555': 'Grünerløkka', '0556': 'Grünerløkka', '0557': 'Grünerløkka',
-  '0558': 'Grünerløkka', '0559': 'Grünerløkka', '0560': 'Grünerløkka', '0561': 'Grünerløkka',
-  '0562': 'Grünerløkka', '0563': 'Grünerløkka', '0564': 'Grünerløkka', '0565': 'Grünerløkka',
-  // Kristiansand (46xx)
-  '4608': 'Sentrum', '4609': 'Sentrum', '4610': 'Lund', '4611': 'Lund', '4612': 'Grim',
-  '4613': 'Grim', '4614': 'Hellemyr', '4615': 'Hellemyr', '4616': 'Hånes', '4617': 'Hånes',
-  '4618': 'Justvik', '4619': 'Justvik', '4620': 'Vågsbygd', '4621': 'Vågsbygd', '4622': 'Vågsbygd',
-  '4623': 'Vågsbygd', '4624': 'Vågsbygd', '4625': 'Vågsbygd', '4626': 'Voiebyen', '4628': 'Voiebyen',
-  '4629': 'Gimlekollen', '4630': 'Gimlekollen', '4631': 'Randesund', '4632': 'Randesund',
-  '4633': 'Randesund', '4634': 'Randesund', '4635': 'Randesund', '4636': 'Randesund',
-  '4637': 'Randesund', '4638': 'Randesund', '4639': 'Randesund',
+// =============================================================================
+// NATIVE LANGUAGE TERMINOLOGY FOR GEOGRAPHIC DISCOVERY
+// =============================================================================
+
+interface NeighborhoodTerminology {
+  languageName: string;
+  district: { singular: string; plural: string };
+  neighborhood: { singular: string; plural: string; searchTerms: string[] };
+}
+
+const neighborhoodTerminology: Record<string, NeighborhoodTerminology> = {
+  'NO': {
+    languageName: 'Norwegian',
+    district: { singular: 'bydel', plural: 'bydeler' },
+    neighborhood: { singular: 'nabolag', plural: 'nabolag', searchTerms: ['nabolag', 'strøk', 'områder', 'grend'] }
+  },
+  'SE': {
+    languageName: 'Swedish',
+    district: { singular: 'stadsdel', plural: 'stadsdelar' },
+    neighborhood: { singular: 'grannskap', plural: 'grannskap', searchTerms: ['grannskap', 'kvarter', 'områden'] }
+  },
+  'DE': {
+    languageName: 'German',
+    district: { singular: 'Stadtbezirk', plural: 'Stadtbezirke' },
+    neighborhood: { singular: 'Nachbarschaft', plural: 'Nachbarschaften', searchTerms: ['Nachbarschaft', 'Viertel', 'Gegend', 'Kiez'] }
+  },
+  'DK': {
+    languageName: 'Danish',
+    district: { singular: 'bydel', plural: 'bydele' },
+    neighborhood: { singular: 'kvarter', plural: 'kvarterer', searchTerms: ['kvarter', 'område', 'nabolag'] }
+  },
+  'FI': {
+    languageName: 'Finnish',
+    district: { singular: 'kaupunginosa', plural: 'kaupunginosat' },
+    neighborhood: { singular: 'naapurusto', plural: 'naapurustot', searchTerms: ['naapurusto', 'alue', 'lähiö'] }
+  },
+  'CA': {
+    languageName: 'English',
+    district: { singular: 'district', plural: 'districts' },
+    neighborhood: { singular: 'neighborhood', plural: 'neighborhoods', searchTerms: ['neighborhood', 'area', 'community'] }
+  },
+  'XX': {
+    languageName: 'English',
+    district: { singular: 'district', plural: 'districts' },
+    neighborhood: { singular: 'neighborhood', plural: 'neighborhoods', searchTerms: ['neighborhood', 'area'] }
+  }
 };
 
-interface CountryInfo {
-  name: string;
-  city_description: string;
-  district_description: string;
-  area_description: string;
-  example_cities: string[];
-  example_districts: string[];
+// =============================================================================
+// AI CALLER FUNCTIONS - MULTI-MODEL SUPPORT (GEMINI + OPENAI)
+// =============================================================================
+
+async function callGemini(prompt: string, apiKey: string): Promise<string> {
+  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [
+        { role: "system", content: "You are a geography expert specializing in administrative divisions and neighborhoods. Return only valid JSON arrays, no markdown formatting or explanation." },
+        { role: "user", content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("Gemini API error:", response.status, errorText);
+    throw new Error(`Gemini API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "[]";
 }
 
-interface CountryAnalysis {
-  countries: Record<string, CountryInfo>;
+async function callOpenAI(prompt: string, apiKey: string): Promise<string> {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You are a geography expert specializing in administrative divisions and neighborhoods. Return only valid JSON arrays, no markdown formatting or explanation." },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.3,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("OpenAI API error:", response.status, errorText);
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "[]";
 }
 
-interface ClassifiedArea {
-  original: string;
-  navio_id: number;
-  country_code: string;
-  city: string;
-  district: string;
-  area: string;
+function parseJsonArray(content: string): string[] {
+  try {
+    const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed)) {
+      return parsed.map(item => typeof item === 'string' ? item : String(item));
+    }
+    return [];
+  } catch (e) {
+    console.error("Failed to parse JSON array:", content.slice(0, 200));
+    return [];
+  }
 }
 
-type ImportMode = "preview" | "commit" | "direct";
+function mergeAndDeduplicate(arr1: string[], arr2: string[]): string[] {
+  const normalized = new Map<string, string>();
+  
+  for (const item of [...arr1, ...arr2]) {
+    const key = item.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+    // Keep the version with special characters if available
+    if (!normalized.has(key) || /[æøåäöüß]/i.test(item)) {
+      normalized.set(key, item.trim());
+    }
+  }
+  
+  return Array.from(normalized.values());
+}
 
-// City name normalization: English → Local language
-const cityNormalizations: Record<string, string> = {
-  'munich': 'München',
-  'cologne': 'Köln',
-  'gothenburg': 'Göteborg',
-  'copenhagen': 'København',
-  'vienna': 'Wien',
-  'zurich': 'Zürich',
-  'prague': 'Praha',
-  'warsaw': 'Warszawa',
-  'rome': 'Roma',
-  'lisbon': 'Lisboa',
-  'athens': 'Athína',
-};
+async function callAI(
+  prompt: string,
+  lovableKey: string,
+  openAIKey?: string
+): Promise<string[]> {
+  // Try Gemini first
+  let geminiResults: string[] = [];
+  try {
+    const geminiResponse = await callGemini(prompt, lovableKey);
+    geminiResults = parseJsonArray(geminiResponse);
+    console.log(`Gemini returned ${geminiResults.length} results`);
+  } catch (e) {
+    console.error("Gemini call failed:", e);
+  }
+
+  // If OpenAI key provided, also call OpenAI for cross-validation
+  if (openAIKey) {
+    try {
+      const openAIResponse = await callOpenAI(prompt, openAIKey);
+      const openAIResults = parseJsonArray(openAIResponse);
+      console.log(`OpenAI returned ${openAIResults.length} results`);
+      
+      // Merge and deduplicate results from both models
+      return mergeAndDeduplicate(geminiResults, openAIResults);
+    } catch (e) {
+      console.error("OpenAI call failed, using Gemini results only:", e);
+    }
+  }
+
+  return geminiResults;
+}
+
+// =============================================================================
+// AI-POWERED DISTRICT DISCOVERY
+// =============================================================================
+
+async function discoverDistrictsForCity(
+  cityName: string,
+  countryCode: string,
+  lovableKey: string,
+  openAIKey?: string
+): Promise<string[]> {
+  const terms = neighborhoodTerminology[countryCode] || neighborhoodTerminology['NO'];
+  
+  const prompt = `You are an expert in ${terms.languageName} geography and administrative divisions.
+
+List ALL official administrative districts (${terms.district.plural} / ${terms.district.singular}) for the city of ${cityName}.
+
+IMPORTANT RULES:
+1. Return ONLY officially recognized administrative districts
+2. Use the local ${terms.languageName} names with proper characters (æ, ø, å, ä, ö, ü, ß, etc.)
+3. Do NOT include neighborhoods - only the district/${terms.district.singular} level
+4. For cities without official districts, return the city name as the single district
+5. Be COMPREHENSIVE - include ALL districts, not just the most famous ones
+
+KNOWN EXAMPLES:
+- Oslo has 15 bydeler: Frogner, Grünerløkka, Gamle Oslo, Sagene, St. Hanshaugen, Nordre Aker, Vestre Aker, Ullern, Bjerke, Grorud, Stovner, Alna, Østensjø, Nordstrand, Søndre Nordstrand
+- Bergen has 8 bydeler: Arna, Bergenhus, Fana, Fyllingsdalen, Laksevåg, Årstad, Ytrebygda, Åsane
+- Trondheim has 4 bydeler: Midtbyen, Østbyen, Lerkendal, Heimdal (plus Byåsen area)
+- München has 25 Stadtbezirke
+
+Return ONLY a valid JSON array of district names:
+["District1", "District2", "District3"]`;
+
+  console.log(`Discovering districts for ${cityName} (${countryCode})...`);
+  
+  const results = await callAI(prompt, lovableKey, openAIKey);
+  console.log(`Discovered ${results.length} districts for ${cityName}: ${results.slice(0, 5).join(', ')}...`);
+  
+  return results;
+}
+
+// =============================================================================
+// AI-POWERED NEIGHBORHOOD DISCOVERY
+// =============================================================================
+
+async function discoverNeighborhoodsForDistrict(
+  cityName: string,
+  districtName: string,
+  countryCode: string,
+  lovableKey: string,
+  openAIKey?: string
+): Promise<string[]> {
+  const terms = neighborhoodTerminology[countryCode] || neighborhoodTerminology['NO'];
+  
+  const prompt = `You are an expert in ${terms.languageName} geography.
+
+List ALL neighborhoods, areas, and localities (${terms.neighborhood.searchTerms.join(' / ')}) within the ${districtName} ${terms.district.singular} in ${cityName}.
+
+BE COMPREHENSIVE - search for:
+- ${terms.neighborhood.searchTerms.map(t => `"${t}"`).join(', ')}
+- Residential areas with established names
+- Well-known localities and places
+- Named streets and squares that define areas
+- Both popular and lesser-known neighborhoods
+
+IMPORTANT:
+1. Use local ${terms.languageName} spelling with proper characters (æ, ø, å, ä, ö, ü, ß)
+2. Include 15-30 neighborhoods per district (large districts may have more, small ones may have fewer)
+3. Do NOT include sub-neighborhoods or street addresses
+4. Do NOT repeat the district name as a neighborhood unless it's also a distinct area
+5. Include areas that locals would recognize as distinct places
+
+EXAMPLES for Oslo's Vestre Aker bydel:
+["Holmenkollen", "Tryvann", "Vinderen", "Røa", "Sørkedalen", "Smestad", "Slemdal", "Ris", "Voksen", "Hovseter", "Holmen", "Voksenlia", "Voksenkollen", "Bogstad", "Huseby", "Montebello", "Ullernåsen", "Frognerseteren", "Besserud", "Midtstuen", "Grini", "Husebyskogen"]
+
+Return ONLY a valid JSON array of neighborhood names:
+["Neighborhood1", "Neighborhood2", "Neighborhood3"]`;
+
+  console.log(`Discovering neighborhoods for ${cityName} > ${districtName}...`);
+  
+  const results = await callAI(prompt, lovableKey, openAIKey);
+  console.log(`Discovered ${results.length} neighborhoods in ${districtName}: ${results.slice(0, 5).join(', ')}...`);
+  
+  return results;
+}
+
+// =============================================================================
+// EXISTING HELPER FUNCTIONS (PRESERVED)
+// =============================================================================
 
 // City spelling normalization: Handles ASCII variants and misspellings
 const citySpellingNormalizations: Record<string, string> = {
@@ -150,195 +302,20 @@ const citySpellingNormalizations: Record<string, string> = {
   'nuremberg': 'Nürnberg', 'nuernberg': 'Nürnberg',
 };
 
-// Norwegian district → area (neighborhood) reference data
-// This maps known neighborhoods to their official districts (bydeler)
-const norwegianDistrictAreas: Record<string, Record<string, string[]>> = {
-  'Oslo': {
-    'Vestre Aker': ['Ris', 'Slemdal', 'Vinderen', 'Holmenkollen', 'Røa', 'Bogstad', 'Holmen', 'Hovseter', 'Montebello', 'Smestad', 'Tåsen'],
-    'Frogner': ['Bygdøy', 'Frogner', 'Majorstuen', 'Skillebekk', 'Solli', 'Homansbyen', 'Briskeby', 'Uranienborg', 'Fagerborg'],
-    'Nordre Aker': ['Nydalen', 'Ullevål', 'Korsvoll', 'Tåsen', 'Nordberg', 'Grefsen', 'Kjelsås', 'Frysja', 'Maridalen', 'Sognsvann'],
-    'Sagene': ['Torshov', 'Bjølsen', 'Sagene', 'Iladalen', 'Sandaker', 'Åsen'],
-    'St. Hanshaugen': ['St. Hanshaugen', 'Bislett', 'Adamstuen', 'Marienlyst', 'Bolteløkka', 'Ila'],
-    'Grünerløkka': ['Grünerløkka', 'Sofienberg', 'Rodeløkka', 'Dælenenga', 'Hasle', 'Sinsen', 'Løren', 'Carl Berner'],
-    'Gamle Oslo': ['Gamlebyen', 'Grønland', 'Tøyen', 'Kampen', 'Vålerenga', 'Ensjø', 'Helsfyr', 'Bryn', 'Etterstad', 'Kværnerbyen'],
-    'Bjerke': ['Bjerke', 'Årvoll', 'Vollebekk', 'Refstad', 'Linderud', 'Veitvet', 'Økern'],
-    'Grorud': ['Grorud', 'Romsås', 'Ammerud', 'Rødtvet', 'Huken'],
-    'Stovner': ['Stovner', 'Vestli', 'Haugenstua', 'Fossum', 'Rommen'],
-    'Alna': ['Alna', 'Furuset', 'Ellingsrud', 'Lindeberg', 'Trosterud', 'Haugerud', 'Tveita'],
-    'Østensjø': ['Østensjø', 'Bøler', 'Manglerud', 'Abildsø', 'Godlia', 'Skullerud', 'Oppsal', 'Langerud'],
-    'Nordstrand': ['Nordstrand', 'Bekkelaget', 'Ljan', 'Sæter', 'Lambertseter', 'Karlsrud', 'Ekeberg'],
-    'Søndre Nordstrand': ['Søndre Nordstrand', 'Holmlia', 'Mortensrud', 'Bjørndal', 'Prinsdal', 'Hauketo', 'Kolbotn'],
-    'Ullern': ['Ullern', 'Lilleaker', 'Lysaker', 'Bestum', 'Skøyen', 'Borgen', 'Røa'],
-    'Sentrum': ['Sentrum', 'Karl Johans gate', 'Aker Brygge', 'Tjuvholmen', 'Bjørvika', 'Kvadraturen'],
-  },
-  'Bergen': {
-    'Bergenhus': ['Sentrum', 'Nordnes', 'Sandviken', 'Skuteviken', 'Møhlenpris', 'Nygård', 'Marken', 'Bryggen'],
-    'Årstad': ['Årstad', 'Kronstad', 'Haukeland', 'Minde', 'Landås', 'Sletten', 'Fantoft'],
-    'Fana': ['Nesttun', 'Paradis', 'Hop', 'Skjold', 'Rådal', 'Nordås', 'Sædalen', 'Sandsli', 'Kokstad'],
-    'Ytrebygda': ['Sandsli', 'Kokstad', 'Blomsterdalen', 'Bønes'],
-    'Laksevåg': ['Laksevåg', 'Damsgård', 'Gyldenpris', 'Loddefjord', 'Olsvik'],
-    'Fyllingsdalen': ['Fyllingsdalen', 'Oasen', 'Ortun', 'Sælen'],
-    'Åsane': ['Åsane', 'Nyborg', 'Tertnes', 'Ulset', 'Eidsvåg', 'Flaktveit'],
-    'Arna': ['Arna', 'Ytre Arna', 'Garnes', 'Indre Arna', 'Espeland'],
-  },
-  'Trondheim': {
-    'Midtbyen': ['Midtbyen', 'Bakklandet', 'Solsiden', 'Nedre Elvehavn', 'Ila', 'Kalvskinnet'],
-    'Østbyen': ['Møllenberg', 'Rosenborg', 'Berg', 'Persaunet', 'Nardo', 'Strindheim', 'Bromstad'],
-    'Lerkendal': ['Lerkendal', 'Nardo', 'Singsaker', 'Berg', 'Persaunet', 'Risvollan', 'Moholt', 'Tempe', 'Dragvoll'],
-    'Heimdal': ['Heimdal', 'Saupstad', 'Kolstad', 'Flatåsen', 'Hallset', 'Tiller', 'Kattem', 'Byneset'],
-    'Byåsen': ['Byåsen', 'Sverresborg', 'Stavset', 'Ugla', 'Munkvoll', 'Brundalen'],
-  },
-  'Stavanger': {
-    'Sentrum': ['Stavanger sentrum', 'Våland', 'Storhaug', 'Eiganes', 'Kampen', 'Lervig'],
-    'Hinna': ['Hinna', 'Jåttå', 'Gausel', 'Mariero'],
-    'Hundvåg': ['Hundvåg', 'Buøy', 'Bjørnøy', 'Austbø'],
-    'Hillevåg': ['Hillevåg', 'Tjensvoll', 'Ullandhaug'],
-    'Madla': ['Madla', 'Revheim', 'Sunde', 'Kvernevik'],
-  },
-  'Kristiansand': {
-    'Kvadraturen': ['Kvadraturen', 'Posebyen', 'Odderøya', 'Lund'],
-    'Vågsbygd': ['Vågsbygd', 'Slettheia', 'Hellemyr', 'Voiebyen'],
-    'Randesund': ['Randesund', 'Søm', 'Korsvik', 'Hamresanden'],
-    'Lund': ['Lund', 'Grim', 'Gimle', 'Tinnheia'],
-  },
-  'Bærum': {
-    'Sandvika': ['Sandvika', 'Høvik', 'Stabekk', 'Bekkestua', 'Lysaker'],
-    'Fornebu': ['Fornebu', 'Snarøya', 'Oksenøya'],
-    'Bærums Verk': ['Bærums Verk', 'Lommedalen', 'Eiksmarka', 'Haslum'],
-    'Rykkinn': ['Rykkinn', 'Kolsås', 'Bærums Verk', 'Gommerud'],
-    'Østerås': ['Østerås', 'Haslum', 'Gjettum', 'Jar'],
-  },
-  'Asker': {
-    'Asker sentrum': ['Asker sentrum', 'Nesbru', 'Holmen', 'Vendla'],
-    'Heggedal': ['Heggedal', 'Semsvann', 'Bondi'],
-    'Holmen': ['Holmen', 'Vettre', 'Blakstad'],
-  },
+// City name normalization: English → Local language
+const cityNormalizations: Record<string, string> = {
+  'munich': 'München',
+  'cologne': 'Köln',
+  'gothenburg': 'Göteborg',
+  'copenhagen': 'København',
+  'vienna': 'Wien',
+  'zurich': 'Zürich',
+  'prague': 'Praha',
+  'warsaw': 'Warszawa',
+  'rome': 'Roma',
+  'lisbon': 'Lisboa',
+  'athens': 'Athína',
 };
-
-// Reverse lookup: find district for a given area name
-function findDistrictForArea(cityName: string, areaName: string): string | null {
-  const normalizedCity = cityName.trim();
-  const normalizedArea = areaName.trim().toLowerCase();
-  
-  const cityDistricts = norwegianDistrictAreas[normalizedCity];
-  if (!cityDistricts) return null;
-  
-  for (const [districtName, areas] of Object.entries(cityDistricts)) {
-    // Check if areaName matches any known area in this district
-    if (areas.some(a => a.toLowerCase() === normalizedArea)) {
-      return districtName;
-    }
-    // Check if areaName contains any known area (partial match)
-    if (areas.some(a => normalizedArea.includes(a.toLowerCase()))) {
-      return districtName;
-    }
-  }
-  
-  // Check if the area name itself IS a district name
-  if (Object.keys(cityDistricts).some(d => d.toLowerCase() === normalizedArea)) {
-    return null; // It's a district, not an area
-  }
-  
-  return null;
-}
-
-// Check if a name is a known district name
-function isKnownDistrict(cityName: string, name: string): boolean {
-  const normalizedCity = cityName.trim();
-  const normalizedName = name.trim().toLowerCase();
-  
-  const cityDistricts = norwegianDistrictAreas[normalizedCity];
-  if (!cityDistricts) return false;
-  
-  return Object.keys(cityDistricts).some(d => d.toLowerCase() === normalizedName);
-}
-
-// Normalize city name for deduplication (strips accents and special chars)
-function normalizeForDedup(name: string): string {
-  return name.toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // Remove accents
-    .replace(/[^a-z0-9]/g, '');  // Remove non-alphanumeric
-}
-
-// Parse structured Navio names to extract hierarchy
-interface ParsedNavioName {
-  countryCode: string | null;
-  city: string | null;
-  district: string | null;
-  area: string;
-  isInternalCode: boolean;
-}
-
-function parseNavioName(name: string): ParsedNavioName {
-  // Pattern 1: "Country City Area" format (e.g., "Germany Munich Unterföhring")
-  const countryAreaMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)\s+(.+)$/i);
-  if (countryAreaMatch) {
-    const countryMap: Record<string, string> = {
-      'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA',
-      'denmark': 'DK', 'finland': 'FI'
-    };
-    const rawCity = countryAreaMatch[2];
-    const normalizedCity = normalizeCityName(rawCity);
-    return {
-      countryCode: countryMap[countryAreaMatch[1].toLowerCase()],
-      city: normalizedCity,
-      district: normalizedCity, // Suburb becomes district, city stays as parent
-      area: countryAreaMatch[3],
-      isInternalCode: false,
-    };
-  }
-  
-  // Pattern 2: Internal codes like "NO BRG 6", "NO OSL 1", "NO KRS 3"
-  const codeMatch = name.match(/^([A-Z]{2})\s+([A-Z]{3})\s+(\d+)$/);
-  if (codeMatch) {
-    // Map internal city codes to real city names
-    const cityCodeMap: Record<string, string> = {
-      'BRG': 'Bergen',
-      'OSL': 'Oslo',
-      'KRS': 'Kristiansand',
-      'TNS': 'Tønsberg',
-      'TRD': 'Trondheim',
-      'SVG': 'Stavanger',
-      'BDO': 'Bodø',
-      'TOS': 'Tromsø',
-    };
-    const cityName = cityCodeMap[codeMatch[2]] || null;
-    return {
-      countryCode: codeMatch[1],
-      city: cityName,
-      district: cityName, // Will use city as district for now
-      area: name, // Keep original code as area name for manual mapping
-      isInternalCode: true,
-    };
-  }
-  
-  // Pattern 3: Simple "City Area" without country prefix
-  const simpleMatch = name.match(/^(\S+)\s+(.+)$/);
-  if (simpleMatch && simpleMatch[1].length > 2) {
-    // Check if first word could be a city name
-    const potentialCity = simpleMatch[1];
-    const normalizedCity = normalizeCityName(potentialCity);
-    // Only use if it looks like a proper city name (not a code)
-    if (!/^[A-Z]{2,3}$/.test(potentialCity)) {
-      return {
-        countryCode: null, // Let AI determine
-        city: normalizedCity,
-        district: normalizedCity,
-        area: simpleMatch[2],
-        isInternalCode: false,
-      };
-    }
-  }
-  
-  // Fallback: Cannot parse, let AI classify
-  return { 
-    countryCode: null, 
-    city: null, 
-    district: null,
-    area: name, 
-    isInternalCode: false 
-  };
-}
 
 // Normalize city names to local language versions AND fix spelling variations
 function normalizeCityName(city: string): string {
@@ -349,6 +326,13 @@ function normalizeCityName(city: string): string {
   }
   // Then check language normalizations (handles Munich → München, etc.)
   return cityNormalizations[lower] || city;
+}
+
+// Normalize city name for deduplication (strips accents and special chars)
+function normalizeForDedup(name: string): string {
+  return name.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // Remove accents
+    .replace(/[^a-z0-9]/g, '');  // Remove non-alphanumeric
 }
 
 // Helper to create slug from name
@@ -386,7 +370,116 @@ async function logSync(
   });
 }
 
-// Phase 1: Analyze areas to detect countries and their administrative structures
+// =============================================================================
+// NAVIO DATA PARSING
+// =============================================================================
+
+interface ParsedNavioName {
+  countryCode: string | null;
+  city: string | null;
+  district: string | null;
+  area: string;
+  isInternalCode: boolean;
+}
+
+function parseNavioName(name: string): ParsedNavioName {
+  // Pattern 1: "Country City Area" format (e.g., "Germany Munich Unterföhring")
+  const countryAreaMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)\s+(.+)$/i);
+  if (countryAreaMatch) {
+    const countryMap: Record<string, string> = {
+      'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA',
+      'denmark': 'DK', 'finland': 'FI'
+    };
+    const rawCity = countryAreaMatch[2];
+    const normalizedCity = normalizeCityName(rawCity);
+    return {
+      countryCode: countryMap[countryAreaMatch[1].toLowerCase()],
+      city: normalizedCity,
+      district: null, // Will be discovered by AI
+      area: countryAreaMatch[3],
+      isInternalCode: false,
+    };
+  }
+  
+  // Pattern 2: Internal codes like "NO BRG 6", "NO OSL 1", "NO KRS 3"
+  const codeMatch = name.match(/^([A-Z]{2})\s+([A-Z]{3})\s+(\d+)$/);
+  if (codeMatch) {
+    // Map internal city codes to real city names
+    const cityCodeMap: Record<string, string> = {
+      'BRG': 'Bergen',
+      'OSL': 'Oslo',
+      'KRS': 'Kristiansand',
+      'TNS': 'Tønsberg',
+      'TRD': 'Trondheim',
+      'TRH': 'Trondheim',
+      'SVG': 'Stavanger',
+      'BDO': 'Bodø',
+      'TOS': 'Tromsø',
+    };
+    const cityName = cityCodeMap[codeMatch[2]] || null;
+    return {
+      countryCode: codeMatch[1],
+      city: cityName,
+      district: null,
+      area: name, // Keep original code as area name for mapping
+      isInternalCode: true,
+    };
+  }
+  
+  // Pattern 3: Simple "City Area" without country prefix
+  const simpleMatch = name.match(/^(\S+)\s+(.+)$/);
+  if (simpleMatch && simpleMatch[1].length > 2) {
+    const potentialCity = simpleMatch[1];
+    const normalizedCity = normalizeCityName(potentialCity);
+    if (!/^[A-Z]{2,3}$/.test(potentialCity)) {
+      return {
+        countryCode: null,
+        city: normalizedCity,
+        district: null,
+        area: simpleMatch[2],
+        isInternalCode: false,
+      };
+    }
+  }
+  
+  return { 
+    countryCode: null, 
+    city: null, 
+    district: null,
+    area: name, 
+    isInternalCode: false 
+  };
+}
+
+// =============================================================================
+// COUNTRY ANALYSIS
+// =============================================================================
+
+interface CountryInfo {
+  name: string;
+  city_description: string;
+  district_description: string;
+  area_description: string;
+  example_cities: string[];
+  example_districts: string[];
+}
+
+interface CountryAnalysis {
+  countries: Record<string, CountryInfo>;
+}
+
+interface ClassifiedArea {
+  original: string;
+  navio_id: number;
+  country_code: string;
+  city: string;
+  district: string;
+  area: string;
+  source: 'navio' | 'discovered' | 'expanded';
+}
+
+type ImportMode = "preview" | "commit" | "direct";
+
 async function analyzeCountries(
   areaNames: string[],
   apiKey: string
@@ -416,14 +509,6 @@ Return ONLY valid JSON with this exact structure:
       "area_description": "Specific neighborhood or postal area",
       "example_cities": ["Oslo", "Bergen", "Trondheim", "Stavanger"],
       "example_districts": ["Frogner", "Grünerløkka", "Gamle Oslo", "St. Hanshaugen"]
-    },
-    "SE": {
-      "name": "Sweden",
-      "city_description": "Kommun or major city (e.g., Stockholm, Göteborg)",
-      "district_description": "Stadsdel - city districts",
-      "area_description": "Specific neighborhood",
-      "example_cities": ["Stockholm", "Göteborg", "Malmö"],
-      "example_districts": ["Södermalm", "Kungsholmen", "Östermalm"]
     }
   }
 }`;
@@ -448,7 +533,6 @@ Return ONLY valid JSON with this exact structure:
 
   if (!response.ok) {
     console.error("Country analysis API error:", response.status);
-    // Return default structure for unknown
     return {
       countries: {
         "XX": {
@@ -486,222 +570,31 @@ Return ONLY valid JSON with this exact structure:
   }
 }
 
-// Build context string from country analysis
-function buildCountryContext(analysis: CountryAnalysis): string {
-  const parts: string[] = [];
-  
-  for (const [code, info] of Object.entries(analysis.countries)) {
-    parts.push(`
-**${info.name} (${code}):**
-- City level: ${info.city_description}
-- District level: ${info.district_description}
-- Area level: ${info.area_description}
-${info.example_cities.length > 0 ? `- Example cities: ${info.example_cities.join(", ")}` : ""}
-${info.example_districts.length > 0 ? `- Example districts: ${info.example_districts.join(", ")}` : ""}`);
-  }
-  
-  return parts.join("\n");
+// =============================================================================
+// MAIN DISCOVERY AND CLASSIFICATION FLOW
+// =============================================================================
+
+interface DiscoveredHierarchy {
+  city: string;
+  countryCode: string;
+  districts: Map<string, {
+    name: string;
+    neighborhoods: string[];
+    source: 'navio' | 'discovered';
+  }>;
 }
 
-// Determine district from postal codes using reference data
-function determineDistrictFromPostalCodes(
-  postalCodes: Array<{ postal_code: string; city: string }>
-): { district: string | null; confidence: 'high' | 'medium' | 'low'; source: 'reference' | 'ai' } {
-  if (!postalCodes || postalCodes.length === 0) {
-    return { district: null, confidence: 'low', source: 'reference' };
-  }
-
-  // Count district occurrences from postal codes
-  const districtCounts = new Map<string, number>();
-  
-  for (const pc of postalCodes) {
-    const district = norwegianPostalDistricts[pc.postal_code];
-    if (district) {
-      districtCounts.set(district, (districtCounts.get(district) || 0) + 1);
-    }
-  }
-
-  if (districtCounts.size === 0) {
-    return { district: null, confidence: 'low', source: 'reference' };
-  }
-
-  // Find the most common district
-  let maxCount = 0;
-  let primaryDistrict = '';
-  for (const [district, count] of districtCounts) {
-    if (count > maxCount) {
-      maxCount = count;
-      primaryDistrict = district;
-    }
-  }
-
-  // Calculate confidence based on coverage
-  const totalPostalCodes = postalCodes.length;
-  const matchedPostalCodes = Array.from(districtCounts.values()).reduce((a, b) => a + b, 0);
-  const coverageRatio = matchedPostalCodes / totalPostalCodes;
-  const dominanceRatio = maxCount / matchedPostalCodes;
-
-  // High confidence: >80% matched AND >70% point to same district
-  if (coverageRatio > 0.8 && dominanceRatio > 0.7) {
-    return { district: primaryDistrict, confidence: 'high', source: 'reference' };
-  }
-  
-  // Medium confidence: >50% matched AND >60% point to same district
-  if (coverageRatio > 0.5 && dominanceRatio > 0.6) {
-    return { district: primaryDistrict, confidence: 'medium', source: 'reference' };
-  }
-
-  return { district: primaryDistrict, confidence: 'low', source: 'reference' };
-}
-
-// Enhanced AI classification for internal codes using postal code data
-interface PostalCodeDistrictResult {
-  district: string;
-  neighborhoods: string[];  // List of neighborhoods within this district
-  confidence: 'high' | 'medium' | 'low';
-  reasoning: string;
-}
-
-// Get neighborhoods for a district from reference data
-function getNeighborhoodsForDistrict(cityName: string, districtName: string): string[] {
-  const cityDistricts = norwegianDistrictAreas[cityName];
-  if (!cityDistricts) return [];
-  
-  // Find district (case-insensitive match)
-  for (const [district, neighborhoods] of Object.entries(cityDistricts)) {
-    if (district.toLowerCase() === districtName.toLowerCase()) {
-      return neighborhoods;
-    }
-  }
-  return [];
-}
-
-async function classifyInternalCodeWithPostalData(
-  areaName: string,
-  cityName: string,
-  postalCodeCities: Array<{ postal_code: string; city: string }>,
-  lovableKey: string
-): Promise<PostalCodeDistrictResult> {
-  // First try reference data
-  const referenceResult = determineDistrictFromPostalCodes(postalCodeCities);
-  if (referenceResult.confidence === 'high' && referenceResult.district) {
-    // Get neighborhoods from reference data
-    const neighborhoods = getNeighborhoodsForDistrict(cityName, referenceResult.district);
-    return {
-      district: referenceResult.district,
-      neighborhoods,
-      confidence: 'high',
-      reasoning: `Reference data matched ${referenceResult.district} with high confidence`
-    };
-  }
-
-  // If reference data has medium confidence, still use it but note it
-  if (referenceResult.confidence === 'medium' && referenceResult.district) {
-    const neighborhoods = getNeighborhoodsForDistrict(cityName, referenceResult.district);
-    return {
-      district: referenceResult.district,
-      neighborhoods,
-      confidence: 'medium',
-      reasoning: `Reference data suggests ${referenceResult.district} but with moderate coverage`
-    };
-  }
-
-  // Fall back to AI with postal code context
-  const postalCodeSummary = postalCodeCities
-    .slice(0, 20) // Limit to first 20 for prompt size
-    .map(pc => `${pc.postal_code} (${pc.city})`)
-    .join(', ');
-
-  const prompt = `You are an expert in Norwegian administrative geography.
-
-Given this internal logistics zone code and its postal code data, determine the REAL district name (bydel) AND list the neighborhoods covered:
-
-Zone code: "${areaName}"
-City: "${cityName}"
-Postal codes covered: ${postalCodeSummary}
-
-Norwegian postal code patterns for reference:
-- Bergen (5xxx): 5003-5020=Bergenhus, 5031-5045=Laksevåg, 5052-5068=Årstad, 5072-5098=Fana, 5115-5134=Ytrebygda, 5130-5149=Åsane, 5160-5178=Arna, 5200-5235=Fyllingsdalen/Nesttun
-- Oslo (0xxx): 0150-0175=Frogner, 0176-0179=Grünerløkka, 0180-0196=Sentrum/Gamle Oslo, 0350-0380=Sagene/Nordre Aker, 0450-0470=St. Hanshaugen, 0550-0565=Grünerløkka
-- Kristiansand (46xx): 4608-4609=Sentrum, 4610-4611=Lund, 4620-4625=Vågsbygd, 4631-4639=Randesund
-- Trondheim (7xxx): 7010-7030=Midtbyen, 7031-7040=Østbyen, 7041-7080=Lerkendal, 7081-7100=Heimdal, 7020-7029=Byåsen
-
-Based on the postal codes, determine:
-1. The official bydel/district name
-2. The specific neighborhoods (nabolag) within that district that these postal codes cover
-
-Return ONLY valid JSON with this exact structure:
-{"district": "Fana", "neighborhoods": ["Nesttun", "Paradis", "Hop"], "confidence": "high", "reasoning": "Postal codes 5224-5226 cover Nesttun area in Fana bydel"}
-
-Valid confidence levels: "high", "medium", "low"`;
-
-  try {
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${lovableKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: "You are an expert in Norwegian geography. Return only valid JSON." },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      console.error("AI postal code analysis failed:", response.status);
-      return {
-        district: cityName, // Fallback to city name as district
-        neighborhoods: [],
-        confidence: 'low',
-        reasoning: 'AI classification failed, using city as fallback'
-      };
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-    
-    const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(jsonStr) as PostalCodeDistrictResult;
-    
-    // If AI didn't return neighborhoods, try to get them from reference data
-    let neighborhoods = parsed.neighborhoods || [];
-    if (neighborhoods.length === 0 && parsed.district) {
-      neighborhoods = getNeighborhoodsForDistrict(cityName, parsed.district);
-    }
-    
-    return {
-      district: parsed.district || cityName,
-      neighborhoods,
-      confidence: parsed.confidence || 'low',
-      reasoning: parsed.reasoning || 'AI classification'
-    };
-  } catch (error) {
-    console.error("Failed to classify with postal data:", error);
-    return {
-      district: cityName,
-      neighborhoods: [],
-      confidence: 'low',
-      reasoning: 'Classification failed, using city as fallback'
-    };
-  }
-}
-
-// Fetch and classify areas from Navio API
 // deno-lint-ignore no-explicit-any
-async function fetchAndClassifyAreas(
+async function fetchAndClassifyWithDiscovery(
   supabase: any,
   batchId: string,
   navioToken: string,
-  lovableKey: string
+  lovableKey: string,
+  openAIKey?: string
 ): Promise<{ classifiedAreas: ClassifiedArea[]; countryAnalysis: CountryAnalysis }> {
-  // Step 1: Fetch from Navio API with pagination parameters for consistent response
+  // Step 1: Fetch from Navio API
   console.log("Fetching from Navio API...");
   const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
-  // Request paginated response with large page size to get all results
   navioUrl.searchParams.set("page_size", "1000");
   navioUrl.searchParams.set("page_index", "0");
 
@@ -716,28 +609,18 @@ async function fetchAndClassifyAreas(
   if (!navioResponse.ok) {
     const errorText = await navioResponse.text();
     console.error("Navio API error:", navioResponse.status, errorText);
-    // Log full error for debugging
     await logSync(supabase, "navio", "import", "error", null, 
       `Navio API error ${navioResponse.status}: ${errorText.slice(0, 200)}`, batchId);
     throw new Error(`Navio API error: ${navioResponse.status}`);
   }
 
   const navioData = await navioResponse.json();
-  console.log("Navio API response structure:", JSON.stringify({
-    hasCount: "count" in navioData,
-    hasResults: "results" in navioData,
-    isArray: Array.isArray(navioData),
-    keys: Object.keys(navioData),
-  }));
   
-  // Handle paginated response structure
   let serviceAreas: NavioServiceArea[] = [];
   if (navioData.results && Array.isArray(navioData.results)) {
-    // Paginated response from API
     serviceAreas = navioData.results;
     console.log(`Paginated response: ${serviceAreas.length} results of ${navioData.count} total`);
   } else if (Array.isArray(navioData)) {
-    // Direct list response (fallback)
     serviceAreas = navioData;
   } else {
     console.error("Unexpected response structure:", JSON.stringify(navioData).slice(0, 500));
@@ -748,317 +631,214 @@ async function fetchAndClassifyAreas(
     return { classifiedAreas: [], countryAnalysis: { countries: {} } };
   }
 
-  await logSync(supabase, "navio", "import", "in_progress", null, `Fetched ${serviceAreas.length} areas from Navio`, batchId, 0, serviceAreas.length);
+  await logSync(supabase, "navio", "import", "in_progress", null, 
+    `Fetched ${serviceAreas.length} areas from Navio. Starting AI discovery...`, batchId, 0, serviceAreas.length);
 
-  // Step 2: Extract area names for AI classification with pre-parsing
-  // Also include postal_code_cities for enhanced internal code classification
-  const areaNames = serviceAreas.map(sa => {
+  // Step 2: Parse and extract cities from Navio data
+  const navioAreas = serviceAreas.map(sa => {
     const rawName = sa.name || sa.display_name || `Area ${sa.id}`;
     const parsed = parseNavioName(rawName);
     return {
       id: sa.id,
       name: rawName,
-      parsed, // Include pre-parsed data for smarter AI prompting
-      postal_code_cities: sa.postal_code_cities || [], // Include postal code data
+      parsed,
+      postal_code_cities: sa.postal_code_cities || [],
     };
   });
 
-  // Log pre-parsing results
-  const internalCodeCount = areaNames.filter(a => a.parsed.isInternalCode).length;
-  const preParsedCount = areaNames.filter(a => a.parsed.city !== null).length;
-  const withPostalData = areaNames.filter(a => a.postal_code_cities.length > 0).length;
-  console.log(`Pre-parsing: ${preParsedCount} areas with hierarchy, ${internalCodeCount} internal codes, ${withPostalData} with postal data`);
-
-  // Step 3: Phase 1 - Analyze countries from area names
-  await logSync(supabase, "navio", "import", "in_progress", null, "Analyzing countries from area names...", batchId, 0, serviceAreas.length);
-  
+  // Step 3: Analyze countries
   const countryAnalysis = await analyzeCountries(
-    areaNames.map(a => a.name),
+    navioAreas.map(a => a.name),
     lovableKey
   );
+  const detectedCountries = Object.keys(countryAnalysis.countries);
+  console.log(`Detected countries: ${detectedCountries.join(', ')}`);
+
+  // Step 4: Extract unique cities from Navio data
+  const cityMap = new Map<string, { name: string; countryCode: string; navioAreas: typeof navioAreas }>();
   
-  const countryContext = buildCountryContext(countryAnalysis);
-  const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
-  
-  await logSync(supabase, "navio", "import", "in_progress", null, `Detected countries: ${detectedCountries}. Pre-parsed ${preParsedCount} areas, ${internalCodeCount} internal codes. Starting AI classification...`, batchId, 0, serviceAreas.length);
-
-  // Step 4: Phase 2 - Use AI to classify areas with country context (batch in groups of 50)
-  const batchSize = 50; // Increased from 30
-  const classifiedAreas: ClassifiedArea[] = [];
-  
-  for (let i = 0; i < areaNames.length; i += batchSize) {
-    const batch = areaNames.slice(i, i + batchSize);
-    const batchNum = Math.floor(i / batchSize) + 1;
-    const totalBatches = Math.ceil(areaNames.length / batchSize);
-    
-    await logSync(supabase, "navio", "import", "in_progress", null, `AI classifying batch ${batchNum}/${totalBatches}...`, batchId, i, serviceAreas.length);
-
-    const classificationPrompt = `You are an expert in international geography and administrative divisions.
-
-Based on the following country information:
-${countryContext}
-
-Given these delivery area names from a logistics provider, classify each into the three-level hierarchy:
-1. **City** - The top-level city/municipality (ALWAYS the major city or kommune)
-2. **District** - The official administrative district (bydel/stadsdel) WITHIN the city
-3. **Area** - The specific local neighborhood within the district
-
-=== NORWEGIAN ADMINISTRATIVE HIERARCHY ===
-
-**CITY (By/Kommune)**: Oslo, Bergen, Trondheim, Stavanger, Bærum, Asker, Kristiansand
-- These are the TOP level. NEVER put district names as cities.
-
-**DISTRICT (Bydel)**: Official city districts - these are WITHIN cities, not separate cities!
-Oslo has 15 official bydeler:
-- Frogner, Grünerløkka, Gamle Oslo, Sagene, St. Hanshaugen, Nordre Aker, Vestre Aker, Ullern, Bjerke, Grorud, Stovner, Alna, Østensjø, Nordstrand, Søndre Nordstrand
-
-Bergen has 8 bydeler:
-- Arna, Bergenhus, Fana, Fyllingsdalen, Laksevåg, Årstad, Ytrebygda, Åsane
-
-**AREA (Nabolag/Neighborhood)**: Specific localities WITHIN districts
-- Vestre Aker contains: Ris, Slemdal, Vinderen, Holmenkollen, Røa, Bogstad
-- Frogner contains: Bygdøy, Majorstuen, Skillebekk, Solli, Briskeby
-- Nordre Aker contains: Nydalen, Ullevål, Grefsen, Kjelsås, Korsvoll
-
-=== CRITICAL CLASSIFICATION RULES ===
-
-1. **NEIGHBORHOOD → DISTRICT MAPPING**: When you see a neighborhood name, find its parent district:
-   - "Norway Oslo Holmenkollen" → city=Oslo, district=Vestre Aker, area=Holmenkollen
-   - "Norway Oslo Ris" → city=Oslo, district=Vestre Aker, area=Ris
-   - "Norway Oslo Majorstuen" → city=Oslo, district=Frogner, area=Majorstuen
-   - "Skillebekk" → city=Oslo, district=Frogner, area=Skillebekk
-
-2. **DISTRICT-ONLY ENTRIES**: If only a district name is given, use it for both district AND area:
-   - "Norway Oslo Vestre Aker" → city=Oslo, district=Vestre Aker, area=Vestre Aker
-
-3. **CITY SPELLING**: Use proper Norwegian spelling with special characters:
-   - Bærum (NOT Barum), Lillestrøm (NOT Lillestrom), Lørenskog (NOT Lorenskog)
-
-4. **SUBURB HANDLING** (for German/international cities):
-   - "Germany Munich Unterföhring" → city=München, district=Unterföhring, area=Unterföhring
-
-5. **INTERNAL CODES**: "NO BRG 6", "NO OSL 1" are internal logistics zones - keep original as area
-
-6. **NEVER**: Put district names as city names. Vestre Aker is NOT a city - it's a district OF Oslo!
-
-Input areas (id and name):
-${JSON.stringify(batch)}
-
-Return ONLY a valid JSON array with this exact structure:
-[
-  {"original": "Norway Oslo Holmenkollen", "navio_id": 123, "country_code": "NO", "city": "Oslo", "district": "Vestre Aker", "area": "Holmenkollen"},
-  {"original": "Skillebekk", "navio_id": 124, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
-  {"original": "Germany Munich Unterföhring", "navio_id": 456, "country_code": "DE", "city": "München", "district": "Unterföhring", "area": "Unterföhring"}
-]`;
-
-    try {
-      const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${lovableKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: [
-            { role: "system", content: "You are an international geography expert. Return only valid JSON, no markdown formatting or explanation." },
-            { role: "user", content: classificationPrompt },
-          ],
-        }),
-      });
-
-      if (!aiResponse.ok) {
-        if (aiResponse.status === 429) {
-          console.log("Rate limited, waiting 5 seconds...");
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          i -= batchSize; // Retry this batch
-          continue;
-        }
-        console.error("AI API error:", aiResponse.status);
-        // Fallback: create basic classification
-        for (const area of batch) {
-          classifiedAreas.push({
-            original: area.name,
-            navio_id: area.id,
-            country_code: "XX",
-            city: "Unknown",
-            district: "Unknown",
-            area: area.name,
-          });
-        }
-        continue;
-      }
-
-      const aiData = await aiResponse.json();
-      const content = aiData.choices?.[0]?.message?.content || "";
+  for (const area of navioAreas) {
+    if (area.parsed.city) {
+      const normalizedCity = normalizeCityName(area.parsed.city);
+      const countryCode = area.parsed.countryCode || detectedCountries[0] || 'XX';
+      const key = `${countryCode}_${normalizeForDedup(normalizedCity)}`;
       
-      // Parse AI response - handle potential markdown formatting
-      let parsed: ClassifiedArea[] = [];
-      try {
-        // Remove markdown code blocks if present
-        const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        parsed = JSON.parse(jsonStr);
-      } catch (parseError) {
-        console.error("Failed to parse AI response:", content.slice(0, 200));
-        // Fallback classification
-        for (const area of batch) {
-          classifiedAreas.push({
-            original: area.name,
-            navio_id: area.id,
-            country_code: "XX",
-            city: "Unknown",
-            district: "Unknown",
-            area: area.name,
-          });
-        }
-        continue;
-      }
-
-      // Post-process: normalize city names, apply hierarchy rules, and fix district assignments
-      const normalizedParsed = parsed.map((item: ClassifiedArea) => {
-        // Find matching pre-parsed data
-        const preParsed = batch.find(b => b.id === item.navio_id)?.parsed;
-        
-        // Normalize city name first
-        let normalizedCity = normalizeCityName(item.city);
-        let normalizedDistrict = item.district;
-        let normalizedArea = item.area;
-        
-        // If pre-parsed has better data, use it
-        if (preParsed && preParsed.city && !preParsed.isInternalCode) {
-          normalizedCity = normalizeCityName(preParsed.city);
-          normalizedDistrict = preParsed.district || item.district;
-        }
-        
-        // Apply neighborhood-to-district mapping for Norwegian cities
-        // If the "district" is actually a known neighborhood, find its real district
-        const realDistrictFromArea = findDistrictForArea(normalizedCity, normalizedDistrict);
-        if (realDistrictFromArea) {
-          // The AI put a neighborhood as the district - fix it
-          normalizedArea = normalizedDistrict; // The "district" was actually the area
-          normalizedDistrict = realDistrictFromArea;
-        }
-        
-        // If the area is actually a known district name and no specific neighborhood was given
-        // keep it as both district and area
-        if (isKnownDistrict(normalizedCity, normalizedArea) && normalizedDistrict === normalizedArea) {
-          // This is fine - district-level entry
-        }
-        
-        // Check if area is a neighborhood and we need to find its district
-        const districtFromArea = findDistrictForArea(normalizedCity, normalizedArea);
-        if (districtFromArea && normalizedDistrict !== districtFromArea) {
-          // The area is a known neighborhood but district wasn't set correctly
-          normalizedDistrict = districtFromArea;
-        }
-        
-        return {
-          ...item,
-          city: normalizedCity,
-          district: normalizedDistrict,
-          area: normalizedArea,
-          country_code: preParsed?.countryCode || item.country_code,
-        };
-      });
-      
-      classifiedAreas.push(...normalizedParsed);
-      
-      // Small delay between batches to avoid rate limiting (reduced from 500ms)
-      if (i + batchSize < areaNames.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-    } catch (aiError) {
-      console.error("AI classification error:", aiError);
-      // Fallback classification
-      for (const area of batch) {
-        classifiedAreas.push({
-          original: area.name,
-          navio_id: area.id,
-          country_code: "XX",
-          city: "Unknown",
-          district: "Unknown",
-          area: area.name,
+      if (!cityMap.has(key)) {
+        cityMap.set(key, { 
+          name: normalizedCity, 
+          countryCode, 
+          navioAreas: [] 
         });
       }
+      cityMap.get(key)!.navioAreas.push(area);
     }
   }
 
-  // Step 5: Enhanced Pass - Classify internal codes with postal code data
-  const internalCodeAreas = classifiedAreas.filter(ca => {
-    const originalArea = areaNames.find(a => a.id === ca.navio_id);
-    return originalArea?.parsed.isInternalCode;
-  });
+  console.log(`Found ${cityMap.size} unique cities in Navio data`);
+  await logSync(supabase, "navio", "import", "in_progress", null, 
+    `Found ${cityMap.size} cities. Starting district discovery...`, batchId, 0, serviceAreas.length);
 
-  if (internalCodeAreas.length > 0) {
+  // Step 5: For each city, discover ALL districts (not just what Navio mentions)
+  const discoveredHierarchies = new Map<string, DiscoveredHierarchy>();
+  let cityIndex = 0;
+  
+  for (const [cityKey, cityData] of cityMap) {
+    cityIndex++;
+    console.log(`\n=== Processing city ${cityIndex}/${cityMap.size}: ${cityData.name} ===`);
+    
     await logSync(supabase, "navio", "import", "in_progress", null, 
-      `Enhanced classification: ${internalCodeAreas.length} internal codes with postal data...`, 
-      batchId, classifiedAreas.length, serviceAreas.length);
+      `Discovering districts for ${cityData.name} (${cityIndex}/${cityMap.size})...`, 
+      batchId, cityIndex, cityMap.size);
 
-    // Process internal codes with postal data for better district mapping
-    for (const internalArea of internalCodeAreas) {
-      const originalArea = areaNames.find(a => a.id === internalArea.navio_id);
+    // Discover all districts for this city using AI
+    const discoveredDistricts = await discoverDistrictsForCity(
+      cityData.name,
+      cityData.countryCode,
+      lovableKey,
+      openAIKey
+    );
+
+    const hierarchy: DiscoveredHierarchy = {
+      city: cityData.name,
+      countryCode: cityData.countryCode,
+      districts: new Map(),
+    };
+
+    // Step 6: For each discovered district, discover all neighborhoods
+    let districtIndex = 0;
+    for (const districtName of discoveredDistricts) {
+      districtIndex++;
+      console.log(`  District ${districtIndex}/${discoveredDistricts.length}: ${districtName}`);
       
-      if (originalArea && originalArea.postal_code_cities.length > 0) {
-        const cityName = internalArea.city || originalArea.parsed.city || 'Unknown';
-        
-        console.log(`Enhanced classification for ${internalArea.original} (city: ${cityName}, postal codes: ${originalArea.postal_code_cities.length})`);
-        
-        const postalResult = await classifyInternalCodeWithPostalData(
-          internalArea.original,
-          cityName,
-          originalArea.postal_code_cities,
-          lovableKey
+      // Add small delay to avoid rate limiting
+      if (districtIndex > 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
+      const discoveredNeighborhoods = await discoverNeighborhoodsForDistrict(
+        cityData.name,
+        districtName,
+        cityData.countryCode,
+        lovableKey,
+        openAIKey
+      );
+
+      hierarchy.districts.set(normalizeForDedup(districtName), {
+        name: districtName,
+        neighborhoods: discoveredNeighborhoods,
+        source: 'discovered',
+      });
+    }
+
+    discoveredHierarchies.set(cityKey, hierarchy);
+    
+    // Add delay between cities
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  await logSync(supabase, "navio", "import", "in_progress", null, 
+    `Discovery complete. Mapping Navio data to discovered hierarchy...`, batchId, cityMap.size, serviceAreas.length);
+
+  // Step 7: Map Navio areas to discovered hierarchy and create classified areas
+  const classifiedAreas: ClassifiedArea[] = [];
+  
+  for (const [cityKey, hierarchy] of discoveredHierarchies) {
+    const cityData = cityMap.get(cityKey)!;
+    
+    // First, add all Navio-provided areas, mapped to their correct districts
+    for (const navioArea of cityData.navioAreas) {
+      const areaName = navioArea.parsed.area;
+      
+      // Try to find which discovered district contains this area
+      let matchedDistrict: string | null = null;
+      
+      for (const [, district] of hierarchy.districts) {
+        // Check if the area name matches any discovered neighborhood
+        const normalizedAreaName = areaName.toLowerCase();
+        const matchingNeighborhood = district.neighborhoods.find(n => 
+          normalizedAreaName.includes(n.toLowerCase()) || 
+          n.toLowerCase().includes(normalizedAreaName)
         );
-
-        console.log(`  → District: ${postalResult.district} (confidence: ${postalResult.confidence})`);
-
-        // Update the classified area with better district info
-        const idx = classifiedAreas.findIndex(ca => ca.navio_id === internalArea.navio_id);
-        if (idx !== -1) {
-          // If we have neighborhoods, expand the internal code into multiple area entries
-          if (postalResult.neighborhoods.length > 0 && (postalResult.confidence === 'high' || postalResult.confidence === 'medium')) {
-            console.log(`  → Expanding to ${postalResult.neighborhoods.length} neighborhoods: ${postalResult.neighborhoods.join(', ')}`);
-            
-            // Update the first entry with the first neighborhood
-            classifiedAreas[idx] = {
-              ...classifiedAreas[idx],
-              district: postalResult.district,
-              area: postalResult.neighborhoods[0],
-            };
-            
-            // Add additional entries for remaining neighborhoods
-            for (let n = 1; n < postalResult.neighborhoods.length; n++) {
-              classifiedAreas.push({
-                original: internalArea.original,
-                navio_id: internalArea.navio_id,
-                country_code: internalArea.country_code,
-                city: internalArea.city,
-                district: postalResult.district,
-                area: postalResult.neighborhoods[n],
-              });
-            }
-          } else {
-            // No neighborhoods, just use district as area
-            classifiedAreas[idx] = {
-              ...classifiedAreas[idx],
-              district: postalResult.district,
-              area: postalResult.confidence === 'high' || postalResult.confidence === 'medium'
-                ? postalResult.district  // Use district name as area
-                : classifiedAreas[idx].area, // Keep original code if low confidence
-            };
-          }
-        }
         
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
+        if (matchingNeighborhood) {
+          matchedDistrict = district.name;
+          break;
+        }
+      }
+      
+      // If no match found, use the first district or city name as fallback
+      if (!matchedDistrict) {
+        const firstDistrict = hierarchy.districts.values().next().value;
+        matchedDistrict = firstDistrict?.name || hierarchy.city;
+      }
+      
+      classifiedAreas.push({
+        original: navioArea.name,
+        navio_id: navioArea.id,
+        country_code: hierarchy.countryCode,
+        city: hierarchy.city,
+        district: matchedDistrict,
+        area: areaName,
+        source: 'navio',
+      });
+    }
+    
+    // Then, add ALL discovered neighborhoods that weren't in Navio data
+    // This ensures comprehensive coverage
+    const navioAreaNames = new Set(
+      cityData.navioAreas.map(a => normalizeForDedup(a.parsed.area))
+    );
+    
+    for (const [, district] of hierarchy.districts) {
+      for (const neighborhood of district.neighborhoods) {
+        const normalizedNeighborhood = normalizeForDedup(neighborhood);
+        
+        // Only add if not already covered by Navio data
+        if (!navioAreaNames.has(normalizedNeighborhood)) {
+          classifiedAreas.push({
+            original: `[AI Discovered] ${hierarchy.city} > ${district.name} > ${neighborhood}`,
+            navio_id: -1, // Negative ID indicates discovered, not from Navio
+            country_code: hierarchy.countryCode,
+            city: hierarchy.city,
+            district: district.name,
+            area: neighborhood,
+            source: 'discovered',
+          });
+        }
       }
     }
   }
+
+  // Handle any remaining areas that weren't assigned to a city
+  const unassignedAreas = navioAreas.filter(a => !a.parsed.city);
+  if (unassignedAreas.length > 0) {
+    console.log(`${unassignedAreas.length} areas without city assignment, classifying with AI...`);
+    
+    // Classify these with a simpler AI call
+    for (const area of unassignedAreas) {
+      classifiedAreas.push({
+        original: area.name,
+        navio_id: area.id,
+        country_code: 'XX',
+        city: 'Unknown',
+        district: 'Unknown',
+        area: area.name,
+        source: 'navio',
+      });
+    }
+  }
+
+  console.log(`\nClassification complete: ${classifiedAreas.length} total areas`);
+  console.log(`  - From Navio: ${classifiedAreas.filter(a => a.source === 'navio').length}`);
+  console.log(`  - AI Discovered: ${classifiedAreas.filter(a => a.source === 'discovered').length}`);
 
   return { classifiedAreas, countryAnalysis };
 }
 
-// Save classified areas to staging tables
+// =============================================================================
+// SAVE TO STAGING
+// =============================================================================
+
 // deno-lint-ignore no-explicit-any
 async function saveToStaging(
   supabase: any,
@@ -1066,21 +846,24 @@ async function saveToStaging(
   classifiedAreas: ClassifiedArea[]
 ): Promise<{ cities: number; districts: number; areas: number }> {
   // Group by city and district using NORMALIZED keys for deduplication
-  // This prevents Bærum and Barum from being treated as different cities
   const cityMap = new Map<string, {
     name: string;
     countryCode: string;
     areaNames: Set<string>;
-    districts: Map<string, { name: string; areaNames: Set<string>; areas: ClassifiedArea[] }>;
+    districts: Map<string, { 
+      name: string; 
+      areaNames: Set<string>; 
+      areas: ClassifiedArea[];
+      source: 'navio' | 'discovered';
+    }>;
   }>();
 
   for (const area of classifiedAreas) {
-    // Use normalized key for grouping (strips accents for matching)
     const normalizedCityKey = `${area.country_code}_${normalizeForDedup(area.city)}`;
     
     if (!cityMap.has(normalizedCityKey)) {
       cityMap.set(normalizedCityKey, {
-        name: area.city, // Use the FIRST city name encountered (should be normalized)
+        name: area.city,
         countryCode: area.country_code,
         areaNames: new Set(),
         districts: new Map(),
@@ -1091,12 +874,11 @@ async function saveToStaging(
     
     // Prefer the properly accented version of the city name
     if (area.city.length > city.name.length || /[æøåäöü]/i.test(area.city)) {
-      city.name = area.city; // Use the version with special characters
+      city.name = area.city;
     }
     
     city.areaNames.add(area.original);
     
-    // Use normalized district key for deduplication too
     const normalizedDistrictKey = normalizeForDedup(area.district);
     
     if (!city.districts.has(normalizedDistrictKey)) {
@@ -1104,6 +886,7 @@ async function saveToStaging(
         name: area.district,
         areaNames: new Set(),
         areas: [],
+        source: area.source === 'navio' ? 'navio' : 'discovered',
       });
     }
     
@@ -1112,6 +895,11 @@ async function saveToStaging(
     // Prefer the properly accented version of the district name
     if (area.district.length > district.name.length || /[æøåäöü]/i.test(area.district)) {
       district.name = area.district;
+    }
+    
+    // If any area in district is from navio, mark district as navio
+    if (area.source === 'navio') {
+      district.source = 'navio';
     }
     
     district.areaNames.add(area.original);
@@ -1153,6 +941,7 @@ async function saveToStaging(
           name: districtData.name,
           area_names: Array.from(districtData.areaNames),
           status: "pending",
+          source: districtData.source,
         })
         .select("id")
         .single();
@@ -1165,24 +954,20 @@ async function saveToStaging(
 
       // Insert areas for this district
       for (const area of districtData.areas) {
-        // Check if this was an internal code
-        const parsed = parseNavioName(area.original);
-        
-        // Determine status: if internal code AND area name still looks like code, needs mapping
-        // If internal code but area name is now a proper district name, it's been classified
-        const looksLikeCode = /^[A-Z]{2}\s+[A-Z]{3}\s+\d+$/.test(area.area) || 
+        const isCodePattern = /^[A-Z]{2}\s+[A-Z]{3}\s+\d+$/.test(area.area) || 
                              /^[A-Z]{3}\s+\d+$/.test(area.area);
-        const areaStatus = parsed.isInternalCode && looksLikeCode ? "needs_mapping" : "pending";
+        const areaStatus = area.source === 'navio' && isCodePattern ? "needs_mapping" : "pending";
         
         const { error: areaError } = await supabase
           .from("navio_staging_areas")
           .insert({
             batch_id: batchId,
             staging_district_id: stagingDistrict.id,
-            navio_service_area_id: String(area.navio_id),
+            navio_service_area_id: area.navio_id > 0 ? String(area.navio_id) : `discovered_${crypto.randomUUID()}`,
             name: area.area,
             original_name: area.original,
             status: areaStatus,
+            source: area.source,
           });
 
         if (areaError) {
@@ -1197,7 +982,10 @@ async function saveToStaging(
   return { cities: citiesCount, districts: districtsCount, areas: areasCount };
 }
 
-// Commit approved staging data to production tables
+// =============================================================================
+// COMMIT TO PRODUCTION
+// =============================================================================
+
 // deno-lint-ignore no-explicit-any
 async function commitToProduction(
   supabase: any,
@@ -1209,9 +997,9 @@ async function commitToProduction(
     .select(`
       id, name, country_code,
       navio_staging_districts (
-        id, name,
+        id, name, source,
         navio_staging_areas (
-          id, navio_service_area_id, name, original_name
+          id, navio_service_area_id, name, original_name, source
         )
       )
     `)
@@ -1350,262 +1138,124 @@ async function commitToProduction(
 
       // Process areas
       for (const stagingArea of stagingDistrict.navio_staging_areas || []) {
-        const { data: existingArea } = await supabase
-          .from("areas")
-          .select("id")
-          .eq("navio_service_area_id", stagingArea.navio_service_area_id)
-          .maybeSingle();
-
-        if (existingArea) {
-          await supabase
+        // For discovered areas (negative navio_id), create new record
+        const isDiscovered = stagingArea.navio_service_area_id?.startsWith('discovered_');
+        
+        if (isDiscovered) {
+          // Check if area already exists by name and district
+          const { data: existingByName } = await supabase
             .from("areas")
-            .update({
-              name: stagingArea.name,
-              slug: slugify(stagingArea.name),
-              district_id: districtId,
-              city_id: cityId,
-              is_delivery: true,
-              navio_imported_at: new Date().toISOString(),
-            })
-            .eq("id", existingArea.id);
-          areasUpdated++;
-
-          // Update staging area
-          await supabase
-            .from("navio_staging_areas")
-            .update({ committed_area_id: existingArea.id, status: "committed" })
-            .eq("id", stagingArea.id);
-        } else {
-          const { data: newArea, error: areaError } = await supabase
-            .from("areas")
-            .insert({
-              name: stagingArea.name,
-              slug: slugify(stagingArea.name),
-              district_id: districtId,
-              city_id: cityId,
-              is_delivery: true,
-              navio_service_area_id: stagingArea.navio_service_area_id,
-              navio_imported_at: new Date().toISOString(),
-            })
             .select("id")
-            .single();
-
-          if (areaError) {
-            console.error("Error creating area:", areaError);
-            continue;
-          }
-          areasCreated++;
-
-          // Update staging area
-          await supabase
-            .from("navio_staging_areas")
-            .update({ committed_area_id: newArea.id, status: "committed" })
-            .eq("id", stagingArea.id);
-        }
-      }
-    }
-  }
-
-  return { cities: citiesCreated, districts: districtsCreated, areas_created: areasCreated, areas_updated: areasUpdated };
-}
-
-// Direct import (legacy mode) - writes directly to production tables
-// deno-lint-ignore no-explicit-any
-async function directImport(
-  supabase: any,
-  batchId: string,
-  classifiedAreas: ClassifiedArea[],
-  countryAnalysis: CountryAnalysis
-): Promise<{ cities: number; districts: number; areas_created: number; areas_updated: number }> {
-  const cityCache: Record<string, string> = {};
-  const districtCache: Record<string, string> = {};
-  
-  let citiesCreated = 0;
-  let districtsCreated = 0;
-  let areasCreated = 0;
-  let areasUpdated = 0;
-
-  for (let i = 0; i < classifiedAreas.length; i++) {
-    const classified = classifiedAreas[i];
-    const countryCode = classified.country_code || "XX";
-    const cityKey = `${countryCode}_${slugify(classified.city)}`;
-    const districtKey = `${cityKey}_${slugify(classified.district)}`;
-
-    try {
-      // Get or create city
-      if (!cityCache[cityKey]) {
-        const { data: existingCity } = await supabase
-          .from("cities")
-          .select("id")
-          .eq("navio_city_key", cityKey)
-          .maybeSingle();
-
-        if (existingCity) {
-          cityCache[cityKey] = existingCity.id;
-        } else {
-          const { data: existingBySlug } = await supabase
-            .from("cities")
-            .select("id")
-            .eq("slug", slugify(classified.city))
-            .eq("country_code", countryCode)
+            .eq("district_id", districtId)
+            .eq("slug", slugify(stagingArea.name))
             .maybeSingle();
 
-          if (existingBySlug) {
-            await supabase
-              .from("cities")
-              .update({ navio_city_key: cityKey })
-              .eq("id", existingBySlug.id);
-            cityCache[cityKey] = existingBySlug.id;
-          } else {
-            const { data: newCity, error: cityError } = await supabase
-              .from("cities")
+          if (!existingByName) {
+            const { data: newArea, error: areaError } = await supabase
+              .from("areas")
               .insert({
-                name: classified.city,
-                slug: slugify(classified.city),
-                is_delivery: true,
-                navio_city_key: cityKey,
-                country_code: countryCode,
+                name: stagingArea.name,
+                slug: slugify(stagingArea.name),
+                district_id: districtId,
+                city_id: cityId,
+                is_delivery: false, // Discovered areas are not confirmed delivery areas
+                navio_imported_at: new Date().toISOString(),
               })
               .select("id")
               .single();
 
-            if (cityError) {
-              console.error("Error creating city:", cityError);
+            if (areaError) {
+              console.error("Error creating discovered area:", areaError);
               continue;
             }
-            cityCache[cityKey] = newCity.id;
-            citiesCreated++;
+            areasCreated++;
+
+            await supabase
+              .from("navio_staging_areas")
+              .update({ committed_area_id: newArea.id, status: "committed" })
+              .eq("id", stagingArea.id);
           }
-        }
-      }
-
-      const cityId = cityCache[cityKey];
-
-      // Get or create district
-      if (!districtCache[districtKey]) {
-        const { data: existingDistrict } = await supabase
-          .from("districts")
-          .select("id")
-          .eq("city_id", cityId)
-          .eq("navio_district_key", districtKey)
-          .maybeSingle();
-
-        if (existingDistrict) {
-          districtCache[districtKey] = existingDistrict.id;
         } else {
-          const { data: existingBySlug } = await supabase
-            .from("districts")
+          // Original Navio area handling
+          const { data: existingArea } = await supabase
+            .from("areas")
             .select("id")
-            .eq("city_id", cityId)
-            .eq("slug", slugify(classified.district))
+            .eq("navio_service_area_id", stagingArea.navio_service_area_id)
             .maybeSingle();
 
-          if (existingBySlug) {
+          if (existingArea) {
             await supabase
-              .from("districts")
-              .update({ navio_district_key: districtKey })
-              .eq("id", existingBySlug.id);
-            districtCache[districtKey] = existingBySlug.id;
-          } else {
-            const { data: newDistrict, error: districtError } = await supabase
-              .from("districts")
-              .insert({
-                name: classified.district,
-                slug: slugify(classified.district),
+              .from("areas")
+              .update({
+                name: stagingArea.name,
+                slug: slugify(stagingArea.name),
+                district_id: districtId,
                 city_id: cityId,
                 is_delivery: true,
-                navio_district_key: districtKey,
+                navio_imported_at: new Date().toISOString(),
+              })
+              .eq("id", existingArea.id);
+            areasUpdated++;
+
+            await supabase
+              .from("navio_staging_areas")
+              .update({ committed_area_id: existingArea.id, status: "committed" })
+              .eq("id", stagingArea.id);
+          } else {
+            const { data: newArea, error: areaError } = await supabase
+              .from("areas")
+              .insert({
+                name: stagingArea.name,
+                slug: slugify(stagingArea.name),
+                district_id: districtId,
+                city_id: cityId,
+                is_delivery: true,
+                navio_service_area_id: stagingArea.navio_service_area_id,
+                navio_imported_at: new Date().toISOString(),
               })
               .select("id")
               .single();
 
-            if (districtError) {
-              console.error("Error creating district:", districtError);
+            if (areaError) {
+              console.error("Error creating area:", areaError);
               continue;
             }
-            districtCache[districtKey] = newDistrict.id;
-            districtsCreated++;
+            areasCreated++;
+
+            await supabase
+              .from("navio_staging_areas")
+              .update({ committed_area_id: newArea.id, status: "committed" })
+              .eq("id", stagingArea.id);
           }
         }
       }
-
-      const districtId = districtCache[districtKey];
-
-      // Get or create area
-      const { data: existingArea } = await supabase
-        .from("areas")
-        .select("id")
-        .eq("navio_service_area_id", String(classified.navio_id))
-        .maybeSingle();
-
-      if (existingArea) {
-        await supabase
-          .from("areas")
-          .update({
-            name: classified.area,
-            slug: slugify(classified.area),
-            district_id: districtId,
-            city_id: cityId,
-            is_delivery: true,
-            navio_imported_at: new Date().toISOString(),
-          })
-          .eq("id", existingArea.id);
-        areasUpdated++;
-      } else {
-        const { error: areaError } = await supabase
-          .from("areas")
-          .insert({
-            name: classified.area,
-            slug: slugify(classified.area),
-            district_id: districtId,
-            city_id: cityId,
-            is_delivery: true,
-            navio_service_area_id: String(classified.navio_id),
-            navio_imported_at: new Date().toISOString(),
-          });
-
-        if (areaError) {
-          console.error("Error creating area:", areaError);
-          continue;
-        }
-        areasCreated++;
-      }
-
-      // Log progress every 10 items
-      if (i % 10 === 0) {
-        await logSync(supabase, "navio", "import", "in_progress", null, 
-          `Saved ${i + 1}/${classifiedAreas.length} areas`, batchId, i + 1, classifiedAreas.length);
-      }
-    } catch (dbError) {
-      console.error("Database error for area:", classified.area, dbError);
     }
   }
-
-  // Store last import timestamp in settings
-  await supabase.from("settings").upsert({
-    key: "navio_last_import",
-    value: new Date().toISOString(),
-  }, { onConflict: "key" });
 
   return { cities: citiesCreated, districts: districtsCreated, areas_created: areasCreated, areas_updated: areasUpdated };
 }
 
-// Background processing function for async imports
+// =============================================================================
+// BACKGROUND PROCESSING
+// =============================================================================
+
 // deno-lint-ignore no-explicit-any
 async function processInBackground(
   supabase: any,
   batchId: string,
   mode: ImportMode,
   navioToken: string,
-  lovableKey: string
+  lovableKey: string,
+  openAIKey?: string
 ): Promise<void> {
   try {
-    // For preview and direct modes, fetch and classify areas
-    const { classifiedAreas, countryAnalysis } = await fetchAndClassifyAreas(
+    // Use the new discovery-based classification
+    const { classifiedAreas, countryAnalysis } = await fetchAndClassifyWithDiscovery(
       supabase,
       batchId,
       navioToken,
-      lovableKey
+      lovableKey,
+      openAIKey
     );
 
     if (classifiedAreas.length === 0) {
@@ -1613,20 +1263,33 @@ async function processInBackground(
       return;
     }
 
-    await logSync(supabase, "navio", "import", "in_progress", null, `AI classified ${classifiedAreas.length} areas, now saving...`, batchId, classifiedAreas.length, classifiedAreas.length);
+    const navioCount = classifiedAreas.filter(a => a.source === 'navio').length;
+    const discoveredCount = classifiedAreas.filter(a => a.source === 'discovered').length;
+    
+    await logSync(supabase, "navio", "import", "in_progress", null, 
+      `Classified ${classifiedAreas.length} areas (${navioCount} from Navio, ${discoveredCount} AI-discovered). Saving to staging...`, 
+      batchId, classifiedAreas.length, classifiedAreas.length);
 
     if (mode === "preview") {
       // Save to staging tables only
       const stagingResult = await saveToStaging(supabase, batchId, classifiedAreas);
       
-      const summary = `Preview complete: ${stagingResult.cities} cities, ${stagingResult.districts} districts, ${stagingResult.areas} areas staged for review`;
+      const summary = `Preview complete: ${stagingResult.cities} cities, ${stagingResult.districts} districts, ${stagingResult.areas} areas staged (${discoveredCount} AI-discovered)`;
       await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
     } else {
-      // Direct mode - write directly to production (legacy behavior)
-      const result = await directImport(supabase, batchId, classifiedAreas, countryAnalysis);
+      // Direct mode - save to staging first, then auto-approve and commit
+      await saveToStaging(supabase, batchId, classifiedAreas);
+      
+      // Auto-approve all staging data for direct mode
+      await supabase
+        .from("navio_staging_cities")
+        .update({ status: "approved" })
+        .eq("batch_id", batchId);
+      
+      const result = await commitToProduction(supabase, batchId);
       
       const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
-      const summary = `Import complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated. Countries: ${detectedCountries}`;
+      const summary = `Import complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated. ${discoveredCount} AI-discovered neighborhoods. Countries: ${detectedCountries}`;
       await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
     }
   } catch (error) {
@@ -1636,6 +1299,10 @@ async function processInBackground(
   }
 }
 
+// =============================================================================
+// MAIN HTTP HANDLER
+// =============================================================================
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -1644,6 +1311,7 @@ serve(async (req) => {
   try {
     const NAVIO_API_TOKEN = Deno.env.get("NAVIO_API_TOKEN");
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY"); // Optional
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
@@ -1669,11 +1337,11 @@ serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // Log start
-    await logSync(supabase, "navio", "import", "in_progress", null, `Starting Navio import (mode: ${mode})...`, batchId, 0, 0);
+    await logSync(supabase, "navio", "import", "in_progress", null, 
+      `Starting Navio import with AI discovery (mode: ${mode}, OpenAI: ${OPENAI_API_KEY ? 'enabled' : 'disabled'})...`, batchId, 0, 0);
 
     // Handle commit mode synchronously (it's fast)
     if (mode === "commit") {
-      // Commit approved staging data to production
       await logSync(supabase, "navio", "import", "in_progress", null, "Committing approved data to production...", batchId, 0, 0);
       
       const result = await commitToProduction(supabase, batchId);
@@ -1688,28 +1356,46 @@ serve(async (req) => {
       }, { onConflict: "key" });
 
       return new Response(
-        JSON.stringify({
+        JSON.stringify({ 
+          success: true, 
+          batch_id: batchId,
+          result,
           message: summary,
-          committed: result,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // For preview and direct modes, process in background to avoid timeout
-    EdgeRuntime.waitUntil(
-      processInBackground(supabase, batchId, mode, NAVIO_API_TOKEN, LOVABLE_API_KEY)
-    );
-
-    // Return immediately with batch_id so frontend can poll for progress
-    return new Response(
-      JSON.stringify({
-        message: "Import started - check progress in sync logs",
-        batch_id: batchId,
-        status: "processing",
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    // For preview and direct modes, use background processing
+    // This returns immediately with batch_id for the client to poll
+    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+      EdgeRuntime.waitUntil(
+        processInBackground(supabase, batchId, mode, NAVIO_API_TOKEN, LOVABLE_API_KEY, OPENAI_API_KEY)
+      );
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          batch_id: batchId,
+          status: "processing",
+          message: "Import started with AI discovery. Poll sync_logs for progress.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    } else {
+      // Fallback: run synchronously if EdgeRuntime not available
+      await processInBackground(supabase, batchId, mode, NAVIO_API_TOKEN, LOVABLE_API_KEY, OPENAI_API_KEY);
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          batch_id: batchId,
+          status: "complete",
+          message: "Import completed with AI discovery.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
   } catch (error) {
     console.error("Navio import error:", error);
     return new Response(
