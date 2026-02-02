@@ -44,6 +44,107 @@ interface ClassifiedArea {
 
 type ImportMode = "preview" | "commit" | "direct";
 
+// City name normalization: English → Local language
+const cityNormalizations: Record<string, string> = {
+  'munich': 'München',
+  'cologne': 'Köln',
+  'gothenburg': 'Göteborg',
+  'copenhagen': 'København',
+  'vienna': 'Wien',
+  'zurich': 'Zürich',
+  'prague': 'Praha',
+  'warsaw': 'Warszawa',
+  'rome': 'Roma',
+  'lisbon': 'Lisboa',
+  'athens': 'Athína',
+};
+
+// Parse structured Navio names to extract hierarchy
+interface ParsedNavioName {
+  countryCode: string | null;
+  city: string | null;
+  district: string | null;
+  area: string;
+  isInternalCode: boolean;
+}
+
+function parseNavioName(name: string): ParsedNavioName {
+  // Pattern 1: "Country City Area" format (e.g., "Germany Munich Unterföhring")
+  const countryAreaMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)\s+(.+)$/i);
+  if (countryAreaMatch) {
+    const countryMap: Record<string, string> = {
+      'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA',
+      'denmark': 'DK', 'finland': 'FI'
+    };
+    const rawCity = countryAreaMatch[2];
+    const normalizedCity = normalizeCityName(rawCity);
+    return {
+      countryCode: countryMap[countryAreaMatch[1].toLowerCase()],
+      city: normalizedCity,
+      district: normalizedCity, // Suburb becomes district, city stays as parent
+      area: countryAreaMatch[3],
+      isInternalCode: false,
+    };
+  }
+  
+  // Pattern 2: Internal codes like "NO BRG 6", "NO OSL 1", "NO KRS 3"
+  const codeMatch = name.match(/^([A-Z]{2})\s+([A-Z]{3})\s+(\d+)$/);
+  if (codeMatch) {
+    // Map internal city codes to real city names
+    const cityCodeMap: Record<string, string> = {
+      'BRG': 'Bergen',
+      'OSL': 'Oslo',
+      'KRS': 'Kristiansand',
+      'TNS': 'Tønsberg',
+      'TRD': 'Trondheim',
+      'SVG': 'Stavanger',
+      'BDO': 'Bodø',
+      'TOS': 'Tromsø',
+    };
+    const cityName = cityCodeMap[codeMatch[2]] || null;
+    return {
+      countryCode: codeMatch[1],
+      city: cityName,
+      district: cityName, // Will use city as district for now
+      area: name, // Keep original code as area name for manual mapping
+      isInternalCode: true,
+    };
+  }
+  
+  // Pattern 3: Simple "City Area" without country prefix
+  const simpleMatch = name.match(/^(\S+)\s+(.+)$/);
+  if (simpleMatch && simpleMatch[1].length > 2) {
+    // Check if first word could be a city name
+    const potentialCity = simpleMatch[1];
+    const normalizedCity = normalizeCityName(potentialCity);
+    // Only use if it looks like a proper city name (not a code)
+    if (!/^[A-Z]{2,3}$/.test(potentialCity)) {
+      return {
+        countryCode: null, // Let AI determine
+        city: normalizedCity,
+        district: normalizedCity,
+        area: simpleMatch[2],
+        isInternalCode: false,
+      };
+    }
+  }
+  
+  // Fallback: Cannot parse, let AI classify
+  return { 
+    countryCode: null, 
+    city: null, 
+    district: null,
+    area: name, 
+    isInternalCode: false 
+  };
+}
+
+// Normalize city names to local language versions
+function normalizeCityName(city: string): string {
+  const lower = city.toLowerCase();
+  return cityNormalizations[lower] || city;
+}
+
 // Helper to create slug from name
 function slugify(text: string): string {
   return text
@@ -256,11 +357,21 @@ async function fetchAndClassifyAreas(
 
   await logSync(supabase, "navio", "import", "in_progress", null, `Fetched ${serviceAreas.length} areas from Navio`, batchId, 0, serviceAreas.length);
 
-  // Step 2: Extract area names for AI classification
-  const areaNames = serviceAreas.map(sa => ({
-    id: sa.id,
-    name: sa.name || sa.display_name || `Area ${sa.id}`,
-  }));
+  // Step 2: Extract area names for AI classification with pre-parsing
+  const areaNames = serviceAreas.map(sa => {
+    const rawName = sa.name || sa.display_name || `Area ${sa.id}`;
+    const parsed = parseNavioName(rawName);
+    return {
+      id: sa.id,
+      name: rawName,
+      parsed, // Include pre-parsed data for smarter AI prompting
+    };
+  });
+
+  // Log pre-parsing results
+  const internalCodeCount = areaNames.filter(a => a.parsed.isInternalCode).length;
+  const preParsedCount = areaNames.filter(a => a.parsed.city !== null).length;
+  console.log(`Pre-parsing: ${preParsedCount} areas with hierarchy, ${internalCodeCount} internal codes`);
 
   // Step 3: Phase 1 - Analyze countries from area names
   await logSync(supabase, "navio", "import", "in_progress", null, "Analyzing countries from area names...", batchId, 0, serviceAreas.length);
@@ -273,7 +384,7 @@ async function fetchAndClassifyAreas(
   const countryContext = buildCountryContext(countryAnalysis);
   const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
   
-  await logSync(supabase, "navio", "import", "in_progress", null, `Detected countries: ${detectedCountries}. Starting classification...`, batchId, 0, serviceAreas.length);
+  await logSync(supabase, "navio", "import", "in_progress", null, `Detected countries: ${detectedCountries}. Pre-parsed ${preParsedCount} areas, ${internalCodeCount} internal codes. Starting AI classification...`, batchId, 0, serviceAreas.length);
 
   // Step 4: Phase 2 - Use AI to classify areas with country context (batch in groups of 50)
   const batchSize = 50; // Increased from 30
@@ -292,17 +403,33 @@ Based on the following country information:
 ${countryContext}
 
 Given these delivery area names from a logistics provider, classify each into the three-level hierarchy:
-1. **City** - The top-level city/municipality
-2. **District** - The middle-level administrative division (use official district names where they exist)
+1. **City** - The top-level city/municipality (ALWAYS the major city)
+2. **District** - The middle-level administrative division (official districts OR suburb name if it's a suburb of major city)
 3. **Area** - The specific local neighborhood (usually preserve the original name)
 
-Rules:
-- Detect which country each area belongs to based on the name
-- Use official district/bydel/stadsdel names where they exist
-- If the district is unknown, use the city name as the district
-- Preserve the original name as the Area name
-- Include the ISO country_code (NO, SE, DK, DE, FI, etc.)
-- All names should be in the local language
+CRITICAL RULES:
+1. **LOCAL LANGUAGE NAMES**: Always use local language city names:
+   - München (NOT Munich)
+   - Göteborg (NOT Gothenburg)  
+   - København (NOT Copenhagen)
+   - Köln (NOT Cologne)
+   
+2. **SUBURB HANDLING**: When a name shows "Country MainCity Suburb" pattern (e.g., "Germany Munich Unterföhring"):
+   - city = München (the MAIN city, in local language)
+   - district = Unterföhring (the suburb name)
+   - area = Unterföhring
+   - Unterföhring, Unterhaching, Vaterstetten are suburbs OF München, NOT separate cities!
+
+3. **INTERNAL CODES**: Names like "NO BRG 6", "NO OSL 1" are internal logistics zone codes:
+   - BRG = Bergen zones
+   - OSL = Oslo zones
+   - These need special handling but classify with city if identifiable
+
+4. **CONSISTENCY**: Within the same city, always use identical city name spelling
+
+5. **NORWEGIAN DISTRICTS**: For Norwegian cities, use official bydel names when known:
+   - Oslo: Frogner, Grünerløkka, Gamle Oslo, St. Hanshaugen, Sagene, etc.
+   - Bergen: Arna, Åsane, Bergenhus, Årstad, Fana, Ytrebygda, Fyllingsdalen, Laksevåg
 
 Input areas (id and name):
 ${JSON.stringify(batch)}
@@ -310,7 +437,7 @@ ${JSON.stringify(batch)}
 Return ONLY a valid JSON array with this exact structure:
 [
   {"original": "Skillebekk", "navio_id": 123, "country_code": "NO", "city": "Oslo", "district": "Frogner", "area": "Skillebekk"},
-  {"original": "Södermalm", "navio_id": 456, "country_code": "SE", "city": "Stockholm", "district": "Södermalm", "area": "Södermalm"}
+  {"original": "Germany Munich Unterföhring", "navio_id": 456, "country_code": "DE", "city": "München", "district": "Unterföhring", "area": "Unterföhring"}
 ]`;
 
     try {
@@ -376,7 +503,29 @@ Return ONLY a valid JSON array with this exact structure:
         continue;
       }
 
-      classifiedAreas.push(...parsed);
+      // Post-process: normalize city names and apply pre-parsed data where available
+      const normalizedParsed = parsed.map((item: ClassifiedArea) => {
+        // Find matching pre-parsed data
+        const preParsed = batch.find(b => b.id === item.navio_id)?.parsed;
+        
+        // If pre-parsed has better data, use it
+        if (preParsed && preParsed.city && !preParsed.isInternalCode) {
+          return {
+            ...item,
+            city: normalizeCityName(preParsed.city),
+            district: preParsed.district || item.district,
+            country_code: preParsed.countryCode || item.country_code,
+          };
+        }
+        
+        // Normalize city name from AI response
+        return {
+          ...item,
+          city: normalizeCityName(item.city),
+        };
+      });
+      
+      classifiedAreas.push(...normalizedParsed);
       
       // Small delay between batches to avoid rate limiting (reduced from 500ms)
       if (i + batchSize < areaNames.length) {
@@ -491,6 +640,10 @@ async function saveToStaging(
 
       // Insert areas for this district
       for (const area of districtData.areas) {
+        // Check if this was an internal code
+        const parsed = parseNavioName(area.original);
+        const areaStatus = parsed.isInternalCode ? "needs_mapping" : "pending";
+        
         const { error: areaError } = await supabase
           .from("navio_staging_areas")
           .insert({
@@ -499,7 +652,7 @@ async function saveToStaging(
             navio_service_area_id: String(area.navio_id),
             name: area.area,
             original_name: area.original,
-            status: "pending",
+            status: areaStatus,
           });
 
         if (areaError) {
