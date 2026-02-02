@@ -60,7 +60,7 @@ export function useNavioImport() {
         cities: cities,
       });
 
-      // Phase 2: Process cities one by one
+      // Phase 2: Process cities one by one (with incremental district batching)
       let completed = false;
       let processedCount = 0;
 
@@ -72,7 +72,8 @@ export function useNavioImport() {
         if (result.error) throw result.error;
         if (result.data?.error) throw new Error(result.data.error);
 
-        if (result.data.processedCity) {
+        // Check if a city just fully completed (not just partial progress)
+        if (result.data.processedCity && !result.data.needsMoreProcessing) {
           processedCount++;
           
           // Find next city to process
@@ -86,6 +87,9 @@ export function useNavioImport() {
           }));
         }
 
+        // If we're still processing the same city (needsMoreProcessing), 
+        // just continue the loop without updating progress
+        
         completed = result.data.completed;
       }
 

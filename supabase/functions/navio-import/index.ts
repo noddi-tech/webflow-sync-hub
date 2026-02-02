@@ -515,10 +515,11 @@ async function initializeImport(
   console.log(`Found ${cityMap.size} unique cities in Navio data`);
 
   // Clear ALL old pending/processing entries from previous batches
+  // Using .or() syntax for better compatibility
   await supabase
     .from("navio_import_queue")
     .delete()
-    .in("status", ["pending", "processing"]);
+    .or("status.eq.pending,status.eq.processing");
 
   // Also clear this specific batch if it exists
   await supabase.from("navio_import_queue").delete().eq("batch_id", batchId);
@@ -581,6 +582,8 @@ async function getQueueProgress(supabase: any, batchId: string): Promise<QueuePr
   return { current: completed, total, completed, pending, processing, error };
 }
 
+const MAX_DISTRICTS_PER_CALL = 5;
+
 // deno-lint-ignore no-explicit-any
 async function processNextCity(
   supabase: any,
@@ -593,107 +596,212 @@ async function processNextCity(
   progress: QueueProgress;
   districtsDiscovered: number;
   neighborhoodsDiscovered: number;
+  needsMoreProcessing?: boolean;
 }> {
-  // Get next pending city
-  const { data: nextCity, error: fetchError } = await supabase
+  // First, check if there's a city still being processed (partial completion)
+  const { data: processingCity } = await supabase
     .from("navio_import_queue")
     .select("*")
     .eq("batch_id", batchId)
-    .eq("status", "pending")
-    .order("created_at", { ascending: true })
+    .eq("status", "processing")
+    .order("started_at", { ascending: true })
     .limit(1)
     .maybeSingle();
 
-  if (fetchError) {
-    console.error("Error fetching next city:", fetchError);
-    throw fetchError;
+  // If we have a city mid-processing, continue with it
+  const cityToProcess = processingCity;
+
+  if (!cityToProcess) {
+    // Get next pending city
+    const { data: nextCity, error: fetchError } = await supabase
+      .from("navio_import_queue")
+      .select("*")
+      .eq("batch_id", batchId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error("Error fetching next city:", fetchError);
+      throw fetchError;
+    }
+
+    if (!nextCity) {
+      // No more cities to process
+      const progress = await getQueueProgress(supabase, batchId);
+      return { city: null, completed: true, progress, districtsDiscovered: 0, neighborhoodsDiscovered: 0 };
+    }
+
+    // Mark as processing if this is a fresh city
+    await supabase
+      .from("navio_import_queue")
+      .update({ 
+        status: "processing", 
+        started_at: new Date().toISOString(),
+        districts_processed: 0 
+      })
+      .eq("id", nextCity.id);
+
+    await logSync(supabase, "navio", "import", "in_progress", null,
+      `Processing ${nextCity.city_name}...`, batchId);
+
+    return await processCityDistricts(supabase, nextCity, batchId, lovableKey, openAIKey);
   }
 
-  if (!nextCity) {
-    // No more cities to process
-    const progress = await getQueueProgress(supabase, batchId);
-    return { city: null, completed: true, progress, districtsDiscovered: 0, neighborhoodsDiscovered: 0 };
-  }
+  // Continue processing an existing city
+  return await processCityDistricts(supabase, cityToProcess, batchId, lovableKey, openAIKey);
+}
 
-  console.log(`\n=== PROCESSING: ${nextCity.city_name} (${nextCity.country_code}) ===`);
-
-  // Mark as processing
-  await supabase
-    .from("navio_import_queue")
-    .update({ status: "processing", started_at: new Date().toISOString() })
-    .eq("id", nextCity.id);
-
-  await logSync(supabase, "navio", "import", "in_progress", null,
-    `Processing ${nextCity.city_name}...`, batchId);
+// Process districts in batches to avoid timeout
+// deno-lint-ignore no-explicit-any
+async function processCityDistricts(
+  supabase: any,
+  // deno-lint-ignore no-explicit-any
+  city: any,
+  batchId: string,
+  lovableKey: string,
+  openAIKey?: string
+): Promise<{ 
+  city: string | null; 
+  completed: boolean; 
+  progress: QueueProgress;
+  districtsDiscovered: number;
+  neighborhoodsDiscovered: number;
+  needsMoreProcessing?: boolean;
+}> {
+  console.log(`\n=== PROCESSING: ${city.city_name} (${city.country_code}) ===`);
 
   try {
-    // Discover districts for this city
-    const districts = await discoverDistrictsForCity(
-      nextCity.city_name, 
-      nextCity.country_code, 
-      lovableKey, 
-      openAIKey
-    );
+    // Get existing hierarchy or initialize
+    let hierarchy: Record<string, { name: string; neighborhoods: string[]; source: string }> = 
+      city.discovered_hierarchy || {};
+    let allDistricts: string[] = Object.values(hierarchy).map(d => d.name);
+    const districtsProcessed = city.districts_processed || 0;
 
-    let neighborhoodCount = 0;
-    const hierarchy: Record<string, { name: string; neighborhoods: string[]; source: string }> = {};
+    // If no districts discovered yet, discover them first
+    if (allDistricts.length === 0) {
+      console.log(`Discovering districts for ${city.city_name}...`);
+      allDistricts = await discoverDistrictsForCity(
+        city.city_name, 
+        city.country_code, 
+        lovableKey, 
+        openAIKey
+      );
 
-    // Discover neighborhoods for each district
-    for (let i = 0; i < districts.length; i++) {
-      const districtName = districts[i];
-      console.log(`  District ${i + 1}/${districts.length}: ${districtName}`);
+      // Initialize hierarchy structure
+      for (const districtName of allDistricts) {
+        hierarchy[normalizeForDedup(districtName)] = {
+          name: districtName,
+          neighborhoods: [],
+          source: 'discovered'
+        };
+      }
+
+      // Save districts immediately so we don't re-discover on resume
+      await supabase
+        .from("navio_import_queue")
+        .update({ 
+          districts_discovered: allDistricts.length,
+          discovered_hierarchy: hierarchy
+        })
+        .eq("id", city.id);
+    }
+
+    const totalDistricts = allDistricts.length;
+    const startIndex = districtsProcessed;
+    const endIndex = Math.min(startIndex + MAX_DISTRICTS_PER_CALL, totalDistricts);
+
+    console.log(`Processing districts ${startIndex + 1} to ${endIndex} of ${totalDistricts}`);
+
+    let neighborhoodCount = city.neighborhoods_discovered || 0;
+
+    // Process the next batch of districts
+    for (let i = startIndex; i < endIndex; i++) {
+      const districtName = allDistricts[i];
+      console.log(`  District ${i + 1}/${totalDistricts}: ${districtName}`);
       
       // Small delay between districts to avoid rate limiting
-      if (i > 0) {
+      if (i > startIndex) {
         await new Promise(r => setTimeout(r, 200));
       }
 
       const neighborhoods = await discoverNeighborhoodsForDistrict(
-        nextCity.city_name,
+        city.city_name,
         districtName,
-        nextCity.country_code,
+        city.country_code,
         lovableKey,
         openAIKey
       );
 
-      hierarchy[normalizeForDedup(districtName)] = {
-        name: districtName,
-        neighborhoods,
-        source: 'discovered'
-      };
+      // Update hierarchy with discovered neighborhoods
+      const districtKey = normalizeForDedup(districtName);
+      if (hierarchy[districtKey]) {
+        hierarchy[districtKey].neighborhoods = neighborhoods;
+      }
 
       neighborhoodCount += neighborhoods.length;
     }
 
-    // Store discovered hierarchy in queue row
+    // Check if more districts remain
+    const moreDistrictsRemain = endIndex < totalDistricts;
+
+    if (moreDistrictsRemain) {
+      // Save progress and return - need more calls to complete this city
+      await supabase
+        .from("navio_import_queue")
+        .update({ 
+          districts_processed: endIndex,
+          neighborhoods_discovered: neighborhoodCount,
+          discovered_hierarchy: hierarchy
+        })
+        .eq("id", city.id);
+
+      console.log(`Partial progress: ${endIndex}/${totalDistricts} districts, ${neighborhoodCount} neighborhoods. Need more processing.`);
+
+      const progress = await getQueueProgress(supabase, batchId);
+      
+      return { 
+        city: city.city_name, 
+        completed: false, 
+        progress,
+        districtsDiscovered: endIndex,
+        neighborhoodsDiscovered: neighborhoodCount,
+        needsMoreProcessing: true
+      };
+    }
+
+    // City fully completed
     await supabase
       .from("navio_import_queue")
       .update({ 
         status: "completed",
         completed_at: new Date().toISOString(),
-        districts_discovered: districts.length,
+        districts_processed: totalDistricts,
+        districts_discovered: totalDistricts,
         neighborhoods_discovered: neighborhoodCount,
         discovered_hierarchy: hierarchy
       })
-      .eq("id", nextCity.id);
+      .eq("id", city.id);
 
-    console.log(`Completed ${nextCity.city_name}: ${districts.length} districts, ${neighborhoodCount} neighborhoods`);
+    console.log(`Completed ${city.city_name}: ${totalDistricts} districts, ${neighborhoodCount} neighborhoods`);
 
     const progress = await getQueueProgress(supabase, batchId);
     
     await logSync(supabase, "navio", "import", "in_progress", null,
-      `Completed ${nextCity.city_name}: ${districts.length} districts, ${neighborhoodCount} neighborhoods`, 
+      `Completed ${city.city_name}: ${totalDistricts} districts, ${neighborhoodCount} neighborhoods`, 
       batchId, progress.completed, progress.total);
 
     return { 
-      city: nextCity.city_name, 
+      city: city.city_name, 
       completed: false, 
       progress,
-      districtsDiscovered: districts.length,
-      neighborhoodsDiscovered: neighborhoodCount
+      districtsDiscovered: totalDistricts,
+      neighborhoodsDiscovered: neighborhoodCount,
+      needsMoreProcessing: false
     };
   } catch (error) {
-    console.error(`Error processing ${nextCity.city_name}:`, error);
+    console.error(`Error processing ${city.city_name}:`, error);
     
     await supabase
       .from("navio_import_queue")
@@ -701,16 +809,17 @@ async function processNextCity(
         status: "error", 
         error_message: error instanceof Error ? error.message : "Unknown error"
       })
-      .eq("id", nextCity.id);
+      .eq("id", city.id);
 
     // Continue with next city instead of throwing
     const progress = await getQueueProgress(supabase, batchId);
     return { 
-      city: nextCity.city_name, 
+      city: city.city_name, 
       completed: false, 
       progress,
       districtsDiscovered: 0,
-      neighborhoodsDiscovered: 0
+      neighborhoodsDiscovered: 0,
+      needsMoreProcessing: false
     };
   }
 }
