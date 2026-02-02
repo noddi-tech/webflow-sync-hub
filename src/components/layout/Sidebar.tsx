@@ -14,6 +14,7 @@ import {
   Wrench,
   Link2,
   Globe,
+  Eye,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ const navigation = [
   { name: "Partner Coverage", href: "/partner-service-locations", icon: Link2 },
   { type: "separator" as const },
   { name: "Service Locations", href: "/service-locations", icon: Globe },
+  { name: "Navio Preview", href: "/navio-preview", icon: Eye },
   { name: "Sync History", href: "/sync-history", icon: History },
   { type: "separator" as const },
   { name: "Settings", href: "/settings", icon: Settings },

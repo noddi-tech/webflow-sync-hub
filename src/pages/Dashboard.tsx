@@ -2,11 +2,11 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Download, Brain } from "lucide-react";
+import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Download, Brain, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,7 @@ const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
 export default function Dashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   
   const [progressOpen, setProgressOpen] = useState(false);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
@@ -177,10 +178,46 @@ export default function Dashboard() {
     },
   });
 
+  const navioPreviewMutation = useMutation({
+    mutationFn: async ({ batchId }: { batchId: string }) => {
+      const { data, error } = await supabase.functions.invoke("navio-import", {
+        body: { batch_id: batchId, mode: "preview" },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onMutate: ({ batchId }) => {
+      setCurrentEntities(["navio"]);
+      setCurrentOperation("import");
+      setCurrentBatchId(batchId);
+      setProgressOpen(true);
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Preview Ready",
+        description: `Staged ${data.staged.cities} cities, ${data.staged.districts} districts, ${data.staged.areas} areas for review.`,
+      });
+      // Navigate to preview page
+      navigate("/navio-preview");
+    },
+    onError: (error: Error) => {
+      setProgressOpen(false);
+      toast({
+        title: "Navio Fetch Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setTimeout(() => setProgressOpen(false), 1500);
+    },
+  });
+
   const navioImportMutation = useMutation({
     mutationFn: async ({ batchId }: { batchId: string }) => {
       const { data, error } = await supabase.functions.invoke("navio-import", {
-        body: { batch_id: batchId },
+        body: { batch_id: batchId, mode: "direct" },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -226,7 +263,7 @@ export default function Dashboard() {
 
   const isConfigured = settings?.hasCollectionIds ?? false;
   const configuredEntities = settings?.configuredEntities ?? {};
-  const isSyncing = importMutation.isPending || syncMutation.isPending || navioImportMutation.isPending;
+  const isSyncing = importMutation.isPending || syncMutation.isPending || navioImportMutation.isPending || navioPreviewMutation.isPending;
 
   const isEntityConfigured = (entity: EntityType) => {
     if (entity === "all") return isConfigured;
@@ -373,17 +410,31 @@ export default function Dashboard() {
             <p className="text-muted-foreground mb-4">
               Fetch delivery areas from Navio and use AI to organize them into Cities, Districts, and Areas.
             </p>
-            <Button 
-              onClick={() => navioImportMutation.mutate({ batchId: crypto.randomUUID() })}
-              disabled={isSyncing}
-            >
-              {navioImportMutation.isPending ? (
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="mr-2 h-4 w-4" />
-              )}
-              Import Delivery Areas
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button 
+                onClick={() => navioPreviewMutation.mutate({ batchId: crypto.randomUUID() })}
+                disabled={isSyncing}
+              >
+                {navioPreviewMutation.isPending ? (
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Eye className="mr-2 h-4 w-4" />
+                )}
+                Fetch & Preview
+              </Button>
+              <Button 
+                variant="outline"
+                onClick={() => navioImportMutation.mutate({ batchId: crypto.randomUUID() })}
+                disabled={isSyncing}
+              >
+                {navioImportMutation.isPending ? (
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-2 h-4 w-4" />
+                )}
+                Direct Import
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
