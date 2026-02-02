@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.webflow-health-cron]
 verify_jwt = false
+
+[functions.navio-import]
+verify_jwt = false
