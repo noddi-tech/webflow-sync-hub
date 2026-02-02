@@ -1238,6 +1238,9 @@ Deno.serve(async (req) => {
             name: "name",
             slug: "slug",
             description: "client-information",
+            seo_title: "seo-title",
+            seo_meta_description: "seo-meta-description",
+            intro: "intro-content",
           };
         }
 
@@ -1269,6 +1272,21 @@ Deno.serve(async (req) => {
             baseFieldData["icon"] = item.icon_url || "";
             baseFieldData["sort-order"] = item.sort_order ?? 0;
             baseFieldData["active"] = item.active ?? true;
+            
+            // Fetch services that belong to this category and add as associated-services
+            const { data: servicesForCategory } = await supabase
+              .from("services")
+              .select("webflow_item_id")
+              .eq("service_category_id", item.id)
+              .not("webflow_item_id", "is", null);
+            
+            const serviceWebflowIds = (servicesForCategory || [])
+              .map((s: any) => s.webflow_item_id)
+              .filter(Boolean);
+            
+            if (serviceWebflowIds.length > 0) {
+              baseFieldData["associated-services"] = serviceWebflowIds;
+            }
           } else if (entity === "services") {
             const categoryWebflowId = (item as any).service_categories?.webflow_item_id;
             baseFieldData["shared-key"] = item.shared_key || item.slug;
@@ -1326,9 +1344,12 @@ Deno.serve(async (req) => {
             baseFieldData["phone-number"] = item.phone || "";
             baseFieldData["client-information-summary"] = item.description_summary || "";
             baseFieldData["heading-text"] = item.heading_text || "";
+            baseFieldData["heading-text-2"] = item.heading_text_2 || "";
             baseFieldData["client-logo"] = item.logo_url || "";
             baseFieldData["noddi-logo"] = item.noddi_logo_url || "";
             baseFieldData["website-link"] = item.website_url || "";
+            // Maps instagram_url to Webflow's legacy twitter-link field
+            baseFieldData["twitter-link"] = item.instagram_url || "";
             baseFieldData["facebook-link"] = item.facebook_url || "";
             baseFieldData["partner-active"] = item.active ?? true;
             

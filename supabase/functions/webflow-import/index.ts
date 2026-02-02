@@ -150,6 +150,16 @@ function getString(value: unknown): string | null {
   return null;
 }
 
+// NEW: Extract URL from Webflow Image field objects
+function getImageUrl(value: unknown): string | null {
+  if (typeof value === 'string') return value || null;
+  if (typeof value === 'object' && value !== null) {
+    const imgObj = value as { url?: string };
+    return imgObj.url || null;
+  }
+  return null;
+}
+
 function getBoolean(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value;
   return null;
@@ -522,11 +532,24 @@ Deno.serve(async (req) => {
               description_sv: getString(svData["client-information"]),
               description_summary: getString(noData["client-information-summary"]),
               heading_text: getString(noData["heading-text"]),
-              logo_url: getString(noData["client-logo"]),
-              noddi_logo_url: getString(noData["noddi-logo"]),
+              heading_text_2: getString(noData["heading-text-2"]),
+              // Use getImageUrl for Image fields
+              logo_url: getImageUrl(noData["client-logo"]),
+              noddi_logo_url: getImageUrl(noData["noddi-logo"]),
               website_url: getString(noData["website-link"]),
-              instagram_url: getString(noData["instagram-link"]),
+              // Webflow uses "twitter-link" but it's actually Instagram
+              instagram_url: getString(noData["twitter-link"]),
               facebook_url: getString(noData["facebook-link"]),
+              // SEO fields
+              seo_title: getString(noData["seo-title"]),
+              seo_title_en: getString(enData["seo-title"]),
+              seo_title_sv: getString(svData["seo-title"]),
+              seo_meta_description: getString(noData["seo-meta-description"]),
+              seo_meta_description_en: getString(enData["seo-meta-description"]),
+              seo_meta_description_sv: getString(svData["seo-meta-description"]),
+              intro: getString(noData["intro-content"]),
+              intro_en: getString(enData["intro-content"]),
+              intro_sv: getString(svData["intro-content"]),
               rating: null,
               active: getBoolean(noData["partner-active"]) ?? true,
             };

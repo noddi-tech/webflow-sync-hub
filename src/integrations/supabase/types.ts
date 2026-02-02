@@ -523,6 +523,7 @@ export type Database = {
           email: string | null
           facebook_url: string | null
           heading_text: string | null
+          heading_text_2: string | null
           id: string
           instagram_url: string | null
           intro: string | null
@@ -560,6 +561,7 @@ export type Database = {
           email?: string | null
           facebook_url?: string | null
           heading_text?: string | null
+          heading_text_2?: string | null
           id?: string
           instagram_url?: string | null
           intro?: string | null
@@ -597,6 +599,7 @@ export type Database = {
           email?: string | null
           facebook_url?: string | null
           heading_text?: string | null
+          heading_text_2?: string | null
           id?: string
           instagram_url?: string | null
           intro?: string | null
