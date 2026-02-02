@@ -313,6 +313,7 @@ export type Database = {
           created_at: string
           discovered_hierarchy: Json | null
           districts_discovered: number | null
+          districts_processed: number
           error_message: string | null
           id: string
           navio_areas: Json
@@ -328,6 +329,7 @@ export type Database = {
           created_at?: string
           discovered_hierarchy?: Json | null
           districts_discovered?: number | null
+          districts_processed?: number
           error_message?: string | null
           id?: string
           navio_areas?: Json
@@ -343,6 +345,7 @@ export type Database = {
           created_at?: string
           discovered_hierarchy?: Json | null
           districts_discovered?: number | null
+          districts_processed?: number
           error_message?: string | null
           id?: string
           navio_areas?: Json
