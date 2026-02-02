@@ -65,7 +65,7 @@ export function SyncProgressDialog({
         .eq("batch_id", batchId)
         .order("created_at", { ascending: true });
 
-      if (!logs) return;
+      if (!logs || logs.length === 0) return;
 
       const newProgress: Record<string, EntityProgress> = { ...progress };
       let allComplete = true;
@@ -73,17 +73,16 @@ export function SyncProgressDialog({
 
       entities.forEach((entity) => {
         const entityLogs = logs.filter((log) => log.entity_type === entity);
-        const progressLog = entityLogs.find((log) => log.operation === "progress");
-        const completedLog = entityLogs.find(
-          (log) => log.status === "completed" && log.operation === operation
-        );
+        const progressLog = entityLogs.find((log) => log.status === "in_progress");
+        const completedLog = entityLogs.find((log) => log.status === "complete");
         const errorLog = entityLogs.find((log) => log.status === "error");
 
         if (completedLog) {
           newProgress[entity] = {
             ...newProgress[entity],
             status: "completed",
-            current: newProgress[entity].total || progressLog?.current_item || 0,
+            current: completedLog.current_item || completedLog.total_items || newProgress[entity].total || 0,
+            total: completedLog.total_items || newProgress[entity].total || 0,
           };
           hasAnyProgress = true;
         } else if (errorLog) {
@@ -92,6 +91,7 @@ export function SyncProgressDialog({
             status: "error",
           };
           hasAnyProgress = true;
+          allComplete = false;
         } else if (progressLog) {
           newProgress[entity] = {
             ...newProgress[entity],
@@ -108,9 +108,9 @@ export function SyncProgressDialog({
 
       setProgress(newProgress);
 
-      // Check if batch is complete
+      // Check for completion: any log with status "complete" for our entities
       const batchComplete = logs.some(
-        (log) => log.operation === "batch_complete" && log.batch_id === batchId
+        (log) => log.status === "complete" && entities.includes(log.entity_type)
       );
 
       if (batchComplete || (hasAnyProgress && allComplete)) {
@@ -118,12 +118,13 @@ export function SyncProgressDialog({
         clearInterval(pollInterval);
         setTimeout(() => {
           onComplete?.();
+          onOpenChange(false);
         }, 1500);
       }
-    }, 2000);
+    }, 1500); // Poll every 1.5 seconds for faster feedback
 
     return () => clearInterval(pollInterval);
-  }, [open, batchId, entities, operation, onComplete]);
+  }, [open, batchId, entities, operation, onComplete, onOpenChange]);
 
   const totalProgress = Object.values(progress).reduce(
     (acc, p) => {

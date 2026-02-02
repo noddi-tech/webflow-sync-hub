@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Declare EdgeRuntime for background processing
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+
 // deno-lint-ignore no-explicit-any
 type SupabaseClientAny = SupabaseClient<any, any, any>;
 
@@ -257,8 +260,8 @@ async function fetchAndClassifyAreas(
   
   await logSync(supabase, "navio", "import", "in_progress", null, `Detected countries: ${detectedCountries}. Starting classification...`, batchId, 0, serviceAreas.length);
 
-  // Step 4: Phase 2 - Use AI to classify areas with country context (batch in groups of 30)
-  const batchSize = 30;
+  // Step 4: Phase 2 - Use AI to classify areas with country context (batch in groups of 50)
+  const batchSize = 50; // Increased from 30
   const classifiedAreas: ClassifiedArea[] = [];
   
   for (let i = 0; i < areaNames.length; i += batchSize) {
@@ -360,9 +363,9 @@ Return ONLY a valid JSON array with this exact structure:
 
       classifiedAreas.push(...parsed);
       
-      // Small delay between batches to avoid rate limiting
+      // Small delay between batches to avoid rate limiting (reduced from 500ms)
       if (i + batchSize < areaNames.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     } catch (aiError) {
       console.error("AI classification error:", aiError);
@@ -889,6 +892,52 @@ async function directImport(
   return { cities: citiesCreated, districts: districtsCreated, areas_created: areasCreated, areas_updated: areasUpdated };
 }
 
+// Background processing function for async imports
+// deno-lint-ignore no-explicit-any
+async function processInBackground(
+  supabase: any,
+  batchId: string,
+  mode: ImportMode,
+  navioToken: string,
+  lovableKey: string
+): Promise<void> {
+  try {
+    // For preview and direct modes, fetch and classify areas
+    const { classifiedAreas, countryAnalysis } = await fetchAndClassifyAreas(
+      supabase,
+      batchId,
+      navioToken,
+      lovableKey
+    );
+
+    if (classifiedAreas.length === 0) {
+      await logSync(supabase, "navio", "import", "complete", null, "No service areas found in Navio", batchId, 0, 0);
+      return;
+    }
+
+    await logSync(supabase, "navio", "import", "in_progress", null, `AI classified ${classifiedAreas.length} areas, now saving...`, batchId, classifiedAreas.length, classifiedAreas.length);
+
+    if (mode === "preview") {
+      // Save to staging tables only
+      const stagingResult = await saveToStaging(supabase, batchId, classifiedAreas);
+      
+      const summary = `Preview complete: ${stagingResult.cities} cities, ${stagingResult.districts} districts, ${stagingResult.areas} areas staged for review`;
+      await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
+    } else {
+      // Direct mode - write directly to production (legacy behavior)
+      const result = await directImport(supabase, batchId, classifiedAreas, countryAnalysis);
+      
+      const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
+      const summary = `Import complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated. Countries: ${detectedCountries}`;
+      await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
+    }
+  } catch (error) {
+    console.error("Background processing error:", error);
+    await logSync(supabase, "navio", "import", "error", null, 
+      `Import failed: ${error instanceof Error ? error.message : "Unknown error"}`, batchId);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -924,7 +973,7 @@ serve(async (req) => {
     // Log start
     await logSync(supabase, "navio", "import", "in_progress", null, `Starting Navio import (mode: ${mode})...`, batchId, 0, 0);
 
-    // Handle different modes
+    // Handle commit mode synchronously (it's fast)
     if (mode === "commit") {
       // Commit approved staging data to production
       await logSync(supabase, "navio", "import", "in_progress", null, "Committing approved data to production...", batchId, 0, 0);
@@ -949,59 +998,17 @@ serve(async (req) => {
       );
     }
 
-    // For preview and direct modes, fetch and classify areas
-    const { classifiedAreas, countryAnalysis } = await fetchAndClassifyAreas(
-      supabase,
-      batchId,
-      NAVIO_API_TOKEN,
-      LOVABLE_API_KEY
+    // For preview and direct modes, process in background to avoid timeout
+    EdgeRuntime.waitUntil(
+      processInBackground(supabase, batchId, mode, NAVIO_API_TOKEN, LOVABLE_API_KEY)
     );
 
-    if (classifiedAreas.length === 0) {
-      await logSync(supabase, "navio", "import", "complete", null, "No service areas found in Navio", batchId, 0, 0);
-      return new Response(
-        JSON.stringify({ message: "No service areas found", imported: { cities: 0, districts: 0, areas: 0 } }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    await logSync(supabase, "navio", "import", "in_progress", null, `AI classified ${classifiedAreas.length} areas, now saving...`, batchId, classifiedAreas.length, classifiedAreas.length);
-
-    if (mode === "preview") {
-      // Save to staging tables only
-      const stagingResult = await saveToStaging(supabase, batchId, classifiedAreas);
-      
-      const summary = `Preview complete: ${stagingResult.cities} cities, ${stagingResult.districts} districts, ${stagingResult.areas} areas staged for review`;
-      await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
-
-      return new Response(
-        JSON.stringify({
-          message: summary,
-          batch_id: batchId,
-          staged: stagingResult,
-          detected_countries: Object.keys(countryAnalysis.countries),
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Direct mode - write directly to production (legacy behavior)
-    const result = await directImport(supabase, batchId, classifiedAreas, countryAnalysis);
-    
-    const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
-    const summary = `Import complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated. Countries: ${detectedCountries}`;
-    await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
-
+    // Return immediately with batch_id so frontend can poll for progress
     return new Response(
       JSON.stringify({
-        message: summary,
-        imported: {
-          cities: result.cities,
-          districts: result.districts,
-          areas_created: result.areas_created,
-          areas_updated: result.areas_updated,
-          detected_countries: Object.keys(countryAnalysis.countries),
-        },
+        message: "Import started - check progress in sync logs",
+        batch_id: batchId,
+        status: "processing",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
