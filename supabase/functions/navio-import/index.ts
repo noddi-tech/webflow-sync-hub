@@ -1,5 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// deno-lint-ignore no-explicit-any
+type SupabaseClientAny = SupabaseClient<any, any, any>;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,6 +38,8 @@ interface ClassifiedArea {
   district: string;
   area: string;
 }
+
+type ImportMode = "preview" | "commit" | "direct";
 
 // Helper to create slug from name
 function slugify(text: string): string {
@@ -188,121 +193,82 @@ ${info.example_districts.length > 0 ? `- Example districts: ${info.example_distr
   return parts.join("\n");
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+// Fetch and classify areas from Navio API
+// deno-lint-ignore no-explicit-any
+async function fetchAndClassifyAreas(
+  supabase: any,
+  batchId: string,
+  navioToken: string,
+  lovableKey: string
+): Promise<{ classifiedAreas: ClassifiedArea[]; countryAnalysis: CountryAnalysis }> {
+  // Step 1: Fetch from Navio API
+  console.log("Fetching from Navio API...");
+  const navioResponse = await fetch("https://api.noddi.co/v1/service-areas/for-landing-pages/", {
+    headers: {
+      Authorization: `Token ${navioToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!navioResponse.ok) {
+    const errorText = await navioResponse.text();
+    console.error("Navio API error:", navioResponse.status, errorText);
+    throw new Error(`Navio API error: ${navioResponse.status}`);
   }
 
-  try {
-    const NAVIO_API_TOKEN = Deno.env.get("NAVIO_API_TOKEN");
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const navioData = await navioResponse.json();
+  console.log("Navio API response structure:", Object.keys(navioData));
+  
+  // Handle different response structures
+  let serviceAreas: NavioServiceArea[] = [];
+  if (Array.isArray(navioData)) {
+    serviceAreas = navioData;
+  } else if (navioData.results && Array.isArray(navioData.results)) {
+    serviceAreas = navioData.results;
+  } else if (navioData.data && Array.isArray(navioData.data)) {
+    serviceAreas = navioData.data;
+  } else {
+    console.log("Unknown Navio response structure:", JSON.stringify(navioData).slice(0, 500));
+    throw new Error("Unknown Navio API response structure");
+  }
 
-    if (!NAVIO_API_TOKEN) {
-      return new Response(
-        JSON.stringify({ error: "NAVIO_API_TOKEN is not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+  if (serviceAreas.length === 0) {
+    return { classifiedAreas: [], countryAnalysis: { countries: {} } };
+  }
 
-    if (!LOVABLE_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY is not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+  await logSync(supabase, "navio", "import", "in_progress", null, `Fetched ${serviceAreas.length} areas from Navio`, batchId, 0, serviceAreas.length);
 
-    // Parse request body
-    const { batch_id } = await req.json();
-    const batchId = batch_id || crypto.randomUUID();
+  // Step 2: Extract area names for AI classification
+  const areaNames = serviceAreas.map(sa => ({
+    id: sa.id,
+    name: sa.name || sa.display_name || `Area ${sa.id}`,
+  }));
 
-    // Create Supabase client with service role for database operations
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  // Step 3: Phase 1 - Analyze countries from area names
+  await logSync(supabase, "navio", "import", "in_progress", null, "Analyzing countries from area names...", batchId, 0, serviceAreas.length);
+  
+  const countryAnalysis = await analyzeCountries(
+    areaNames.map(a => a.name),
+    lovableKey
+  );
+  
+  const countryContext = buildCountryContext(countryAnalysis);
+  const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
+  
+  await logSync(supabase, "navio", "import", "in_progress", null, `Detected countries: ${detectedCountries}. Starting classification...`, batchId, 0, serviceAreas.length);
 
-    // Log start
-    await logSync(supabase, "navio", "import", "in_progress", null, "Starting Navio import...", batchId, 0, 0);
-
-    // Step 1: Fetch from Navio API
-    console.log("Fetching from Navio API...");
-    const navioResponse = await fetch("https://api.noddi.co/v1/service-areas/for-landing-pages/", {
-      headers: {
-        Authorization: `Token ${NAVIO_API_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (!navioResponse.ok) {
-      const errorText = await navioResponse.text();
-      console.error("Navio API error:", navioResponse.status, errorText);
-      await logSync(supabase, "navio", "import", "error", null, `Navio API error: ${navioResponse.status}`, batchId);
-      return new Response(
-        JSON.stringify({ error: `Navio API error: ${navioResponse.status}` }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const navioData = await navioResponse.json();
-    console.log("Navio API response structure:", Object.keys(navioData));
+  // Step 4: Phase 2 - Use AI to classify areas with country context (batch in groups of 30)
+  const batchSize = 30;
+  const classifiedAreas: ClassifiedArea[] = [];
+  
+  for (let i = 0; i < areaNames.length; i += batchSize) {
+    const batch = areaNames.slice(i, i + batchSize);
+    const batchNum = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(areaNames.length / batchSize);
     
-    // Handle different response structures
-    let serviceAreas: NavioServiceArea[] = [];
-    if (Array.isArray(navioData)) {
-      serviceAreas = navioData;
-    } else if (navioData.results && Array.isArray(navioData.results)) {
-      serviceAreas = navioData.results;
-    } else if (navioData.data && Array.isArray(navioData.data)) {
-      serviceAreas = navioData.data;
-    } else {
-      console.log("Unknown Navio response structure:", JSON.stringify(navioData).slice(0, 500));
-      await logSync(supabase, "navio", "import", "error", null, "Unknown Navio API response structure", batchId);
-      return new Response(
-        JSON.stringify({ error: "Unknown Navio API response structure", data: navioData }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    await logSync(supabase, "navio", "import", "in_progress", null, `AI classifying batch ${batchNum}/${totalBatches}...`, batchId, i, serviceAreas.length);
 
-    if (serviceAreas.length === 0) {
-      await logSync(supabase, "navio", "import", "complete", null, "No service areas found in Navio", batchId, 0, 0);
-      return new Response(
-        JSON.stringify({ message: "No service areas found", imported: { cities: 0, districts: 0, areas: 0 } }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    await logSync(supabase, "navio", "import", "in_progress", null, `Fetched ${serviceAreas.length} areas from Navio`, batchId, 0, serviceAreas.length);
-
-    // Step 2: Extract area names for AI classification
-    const areaNames = serviceAreas.map(sa => ({
-      id: sa.id,
-      name: sa.name || sa.display_name || `Area ${sa.id}`,
-    }));
-
-    // Step 3: Phase 1 - Analyze countries from area names
-    await logSync(supabase, "navio", "import", "in_progress", null, "Analyzing countries from area names...", batchId, 0, serviceAreas.length);
-    
-    const countryAnalysis = await analyzeCountries(
-      areaNames.map(a => a.name),
-      LOVABLE_API_KEY
-    );
-    
-    const countryContext = buildCountryContext(countryAnalysis);
-    const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
-    
-    await logSync(supabase, "navio", "import", "in_progress", null, `Detected countries: ${detectedCountries}. Starting classification...`, batchId, 0, serviceAreas.length);
-
-    // Step 4: Phase 2 - Use AI to classify areas with country context (batch in groups of 30)
-    const batchSize = 30;
-    const classifiedAreas: ClassifiedArea[] = [];
-    
-    for (let i = 0; i < areaNames.length; i += batchSize) {
-      const batch = areaNames.slice(i, i + batchSize);
-      const batchNum = Math.floor(i / batchSize) + 1;
-      const totalBatches = Math.ceil(areaNames.length / batchSize);
-      
-      await logSync(supabase, "navio", "import", "in_progress", null, `AI classifying batch ${batchNum}/${totalBatches}...`, batchId, i, serviceAreas.length);
-
-      const classificationPrompt = `You are an expert in international geography and administrative divisions.
+    const classificationPrompt = `You are an expert in international geography and administrative divisions.
 
 Based on the following country information:
 ${countryContext}
@@ -329,77 +295,55 @@ Return ONLY a valid JSON array with this exact structure:
   {"original": "Södermalm", "navio_id": 456, "country_code": "SE", "city": "Stockholm", "district": "Södermalm", "area": "Södermalm"}
 ]`;
 
+    try {
+      const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${lovableKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: "You are an international geography expert. Return only valid JSON, no markdown formatting or explanation." },
+            { role: "user", content: classificationPrompt },
+          ],
+        }),
+      });
+
+      if (!aiResponse.ok) {
+        if (aiResponse.status === 429) {
+          console.log("Rate limited, waiting 5 seconds...");
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          i -= batchSize; // Retry this batch
+          continue;
+        }
+        console.error("AI API error:", aiResponse.status);
+        // Fallback: create basic classification
+        for (const area of batch) {
+          classifiedAreas.push({
+            original: area.name,
+            navio_id: area.id,
+            country_code: "XX",
+            city: "Unknown",
+            district: "Unknown",
+            area: area.name,
+          });
+        }
+        continue;
+      }
+
+      const aiData = await aiResponse.json();
+      const content = aiData.choices?.[0]?.message?.content || "";
+      
+      // Parse AI response - handle potential markdown formatting
+      let parsed: ClassifiedArea[] = [];
       try {
-        const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
-            messages: [
-              { role: "system", content: "You are an international geography expert. Return only valid JSON, no markdown formatting or explanation." },
-              { role: "user", content: classificationPrompt },
-            ],
-          }),
-        });
-
-        if (!aiResponse.ok) {
-          if (aiResponse.status === 429) {
-            console.log("Rate limited, waiting 5 seconds...");
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            i -= batchSize; // Retry this batch
-            continue;
-          }
-          console.error("AI API error:", aiResponse.status);
-          // Fallback: create basic classification
-          for (const area of batch) {
-            classifiedAreas.push({
-              original: area.name,
-              navio_id: area.id,
-              country_code: "XX",
-              city: "Unknown",
-              district: "Unknown",
-              area: area.name,
-            });
-          }
-          continue;
-        }
-
-        const aiData = await aiResponse.json();
-        const content = aiData.choices?.[0]?.message?.content || "";
-        
-        // Parse AI response - handle potential markdown formatting
-        let parsed: ClassifiedArea[] = [];
-        try {
-          // Remove markdown code blocks if present
-          const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-          parsed = JSON.parse(jsonStr);
-        } catch (parseError) {
-          console.error("Failed to parse AI response:", content.slice(0, 200));
-          // Fallback classification
-          for (const area of batch) {
-            classifiedAreas.push({
-              original: area.name,
-              navio_id: area.id,
-              country_code: "XX",
-              city: "Unknown",
-              district: "Unknown",
-              area: area.name,
-            });
-          }
-          continue;
-        }
-
-        classifiedAreas.push(...parsed);
-        
-        // Small delay between batches to avoid rate limiting
-        if (i + batchSize < areaNames.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      } catch (aiError) {
-        console.error("AI classification error:", aiError);
+        // Remove markdown code blocks if present
+        const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        parsed = JSON.parse(jsonStr);
+      } catch (parseError) {
+        console.error("Failed to parse AI response:", content.slice(0, 200));
         // Fallback classification
         for (const area of batch) {
           classifiedAreas.push({
@@ -411,144 +355,312 @@ Return ONLY a valid JSON array with this exact structure:
             area: area.name,
           });
         }
+        continue;
+      }
+
+      classifiedAreas.push(...parsed);
+      
+      // Small delay between batches to avoid rate limiting
+      if (i + batchSize < areaNames.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } catch (aiError) {
+      console.error("AI classification error:", aiError);
+      // Fallback classification
+      for (const area of batch) {
+        classifiedAreas.push({
+          original: area.name,
+          navio_id: area.id,
+          country_code: "XX",
+          city: "Unknown",
+          district: "Unknown",
+          area: area.name,
+        });
+      }
+    }
+  }
+
+  return { classifiedAreas, countryAnalysis };
+}
+
+// Save classified areas to staging tables
+// deno-lint-ignore no-explicit-any
+async function saveToStaging(
+  supabase: any,
+  batchId: string,
+  classifiedAreas: ClassifiedArea[]
+): Promise<{ cities: number; districts: number; areas: number }> {
+  // Group by city and district
+  const cityMap = new Map<string, {
+    name: string;
+    countryCode: string;
+    areaNames: Set<string>;
+    districts: Map<string, { name: string; areaNames: Set<string>; areas: ClassifiedArea[] }>;
+  }>();
+
+  for (const area of classifiedAreas) {
+    const cityKey = `${area.country_code}_${area.city}`;
+    
+    if (!cityMap.has(cityKey)) {
+      cityMap.set(cityKey, {
+        name: area.city,
+        countryCode: area.country_code,
+        areaNames: new Set(),
+        districts: new Map(),
+      });
+    }
+    
+    const city = cityMap.get(cityKey)!;
+    city.areaNames.add(area.original);
+    
+    if (!city.districts.has(area.district)) {
+      city.districts.set(area.district, {
+        name: area.district,
+        areaNames: new Set(),
+        areas: [],
+      });
+    }
+    
+    const district = city.districts.get(area.district)!;
+    district.areaNames.add(area.original);
+    district.areas.push(area);
+  }
+
+  let citiesCount = 0;
+  let districtsCount = 0;
+  let areasCount = 0;
+
+  // Insert cities, districts, and areas
+  for (const [, cityData] of cityMap) {
+    // Insert staging city
+    const { data: stagingCity, error: cityError } = await supabase
+      .from("navio_staging_cities")
+      .insert({
+        batch_id: batchId,
+        name: cityData.name,
+        country_code: cityData.countryCode,
+        area_names: Array.from(cityData.areaNames),
+        status: "pending",
+      })
+      .select("id")
+      .single();
+
+    if (cityError) {
+      console.error("Error creating staging city:", cityError);
+      continue;
+    }
+    citiesCount++;
+
+    // Insert districts for this city
+    for (const [, districtData] of cityData.districts) {
+      const { data: stagingDistrict, error: districtError } = await supabase
+        .from("navio_staging_districts")
+        .insert({
+          batch_id: batchId,
+          staging_city_id: stagingCity.id,
+          name: districtData.name,
+          area_names: Array.from(districtData.areaNames),
+          status: "pending",
+        })
+        .select("id")
+        .single();
+
+      if (districtError) {
+        console.error("Error creating staging district:", districtError);
+        continue;
+      }
+      districtsCount++;
+
+      // Insert areas for this district
+      for (const area of districtData.areas) {
+        const { error: areaError } = await supabase
+          .from("navio_staging_areas")
+          .insert({
+            batch_id: batchId,
+            staging_district_id: stagingDistrict.id,
+            navio_service_area_id: String(area.navio_id),
+            name: area.area,
+            original_name: area.original,
+            status: "pending",
+          });
+
+        if (areaError) {
+          console.error("Error creating staging area:", areaError);
+          continue;
+        }
+        areasCount++;
+      }
+    }
+  }
+
+  return { cities: citiesCount, districts: districtsCount, areas: areasCount };
+}
+
+// Commit approved staging data to production tables
+// deno-lint-ignore no-explicit-any
+async function commitToProduction(
+  supabase: any,
+  batchId: string
+): Promise<{ cities: number; districts: number; areas_created: number; areas_updated: number }> {
+  // Get all approved staging cities for this batch
+  const { data: stagingCities, error: citiesError } = await supabase
+    .from("navio_staging_cities")
+    .select(`
+      id, name, country_code,
+      navio_staging_districts (
+        id, name,
+        navio_staging_areas (
+          id, navio_service_area_id, name, original_name
+        )
+      )
+    `)
+    .eq("batch_id", batchId)
+    .eq("status", "approved");
+
+  if (citiesError) {
+    throw new Error(`Failed to fetch staging cities: ${citiesError.message}`);
+  }
+
+  let citiesCreated = 0;
+  let districtsCreated = 0;
+  let areasCreated = 0;
+  let areasUpdated = 0;
+
+  const cityCache: Record<string, string> = {};
+  const districtCache: Record<string, string> = {};
+
+  for (const stagingCity of stagingCities || []) {
+    const countryCode = stagingCity.country_code || "XX";
+    const cityKey = `${countryCode}_${slugify(stagingCity.name)}`;
+
+    // Get or create production city
+    if (!cityCache[cityKey]) {
+      const { data: existingCity } = await supabase
+        .from("cities")
+        .select("id")
+        .eq("navio_city_key", cityKey)
+        .maybeSingle();
+
+      if (existingCity) {
+        cityCache[cityKey] = existingCity.id;
+      } else {
+        const { data: existingBySlug } = await supabase
+          .from("cities")
+          .select("id")
+          .eq("slug", slugify(stagingCity.name))
+          .eq("country_code", countryCode)
+          .maybeSingle();
+
+        if (existingBySlug) {
+          await supabase
+            .from("cities")
+            .update({ navio_city_key: cityKey })
+            .eq("id", existingBySlug.id);
+          cityCache[cityKey] = existingBySlug.id;
+        } else {
+          const { data: newCity, error: cityError } = await supabase
+            .from("cities")
+            .insert({
+              name: stagingCity.name,
+              slug: slugify(stagingCity.name),
+              is_delivery: true,
+              navio_city_key: cityKey,
+              country_code: countryCode,
+            })
+            .select("id")
+            .single();
+
+          if (cityError) {
+            console.error("Error creating city:", cityError);
+            continue;
+          }
+          cityCache[cityKey] = newCity.id;
+          citiesCreated++;
+        }
       }
     }
 
-    await logSync(supabase, "navio", "import", "in_progress", null, `AI classified ${classifiedAreas.length} areas, now saving to database...`, batchId, serviceAreas.length, serviceAreas.length);
+    const cityId = cityCache[cityKey];
 
-    // Step 5: Create/update database records
-    const cityCache: Record<string, string> = {}; // country_city key -> city id
-    const districtCache: Record<string, string> = {}; // country_city_district key -> district id
-    
-    let citiesCreated = 0;
-    let districtsCreated = 0;
-    let areasCreated = 0;
-    let areasUpdated = 0;
+    // Update staging city with committed_city_id
+    await supabase
+      .from("navio_staging_cities")
+      .update({ committed_city_id: cityId, status: "committed" })
+      .eq("id", stagingCity.id);
 
-    for (let i = 0; i < classifiedAreas.length; i++) {
-      const classified = classifiedAreas[i];
-      const countryCode = classified.country_code || "XX";
-      const cityKey = `${countryCode}_${slugify(classified.city)}`;
-      const districtKey = `${cityKey}_${slugify(classified.district)}`;
+    // Process districts
+    for (const stagingDistrict of stagingCity.navio_staging_districts || []) {
+      const districtKey = `${cityKey}_${slugify(stagingDistrict.name)}`;
 
-      try {
-        // Get or create city
-        if (!cityCache[cityKey]) {
-          const { data: existingCity } = await supabase
-            .from("cities")
-            .select("id")
-            .eq("navio_city_key", cityKey)
-            .maybeSingle();
+      if (!districtCache[districtKey]) {
+        const { data: existingDistrict } = await supabase
+          .from("districts")
+          .select("id")
+          .eq("city_id", cityId)
+          .eq("navio_district_key", districtKey)
+          .maybeSingle();
 
-          if (existingCity) {
-            cityCache[cityKey] = existingCity.id;
-          } else {
-            // Also check by slug and country_code
-            const { data: existingBySlug } = await supabase
-              .from("cities")
-              .select("id")
-              .eq("slug", slugify(classified.city))
-              .eq("country_code", countryCode)
-              .maybeSingle();
-
-            if (existingBySlug) {
-              // Update with navio_city_key
-              await supabase
-                .from("cities")
-                .update({ navio_city_key: cityKey })
-                .eq("id", existingBySlug.id);
-              cityCache[cityKey] = existingBySlug.id;
-            } else {
-              const { data: newCity, error: cityError } = await supabase
-                .from("cities")
-                .insert({
-                  name: classified.city,
-                  slug: slugify(classified.city),
-                  is_delivery: true,
-                  navio_city_key: cityKey,
-                  country_code: countryCode,
-                })
-                .select("id")
-                .single();
-
-              if (cityError) {
-                console.error("Error creating city:", cityError);
-                continue;
-              }
-              cityCache[cityKey] = newCity.id;
-              citiesCreated++;
-            }
-          }
-        }
-
-        const cityId = cityCache[cityKey];
-
-        // Get or create district
-        if (!districtCache[districtKey]) {
-          const { data: existingDistrict } = await supabase
+        if (existingDistrict) {
+          districtCache[districtKey] = existingDistrict.id;
+        } else {
+          const { data: existingBySlug } = await supabase
             .from("districts")
             .select("id")
             .eq("city_id", cityId)
-            .eq("navio_district_key", districtKey)
+            .eq("slug", slugify(stagingDistrict.name))
             .maybeSingle();
 
-          if (existingDistrict) {
-            districtCache[districtKey] = existingDistrict.id;
-          } else {
-            // Also check by slug and city_id
-            const { data: existingBySlug } = await supabase
+          if (existingBySlug) {
+            await supabase
               .from("districts")
+              .update({ navio_district_key: districtKey })
+              .eq("id", existingBySlug.id);
+            districtCache[districtKey] = existingBySlug.id;
+          } else {
+            const { data: newDistrict, error: districtError } = await supabase
+              .from("districts")
+              .insert({
+                name: stagingDistrict.name,
+                slug: slugify(stagingDistrict.name),
+                city_id: cityId,
+                is_delivery: true,
+                navio_district_key: districtKey,
+              })
               .select("id")
-              .eq("city_id", cityId)
-              .eq("slug", slugify(classified.district))
-              .maybeSingle();
+              .single();
 
-            if (existingBySlug) {
-              // Update with navio_district_key
-              await supabase
-                .from("districts")
-                .update({ navio_district_key: districtKey })
-                .eq("id", existingBySlug.id);
-              districtCache[districtKey] = existingBySlug.id;
-            } else {
-              const { data: newDistrict, error: districtError } = await supabase
-                .from("districts")
-                .insert({
-                  name: classified.district,
-                  slug: slugify(classified.district),
-                  city_id: cityId,
-                  is_delivery: true,
-                  navio_district_key: districtKey,
-                })
-                .select("id")
-                .single();
-
-              if (districtError) {
-                console.error("Error creating district:", districtError);
-                continue;
-              }
-              districtCache[districtKey] = newDistrict.id;
-              districtsCreated++;
+            if (districtError) {
+              console.error("Error creating district:", districtError);
+              continue;
             }
+            districtCache[districtKey] = newDistrict.id;
+            districtsCreated++;
           }
         }
+      }
 
-        const districtId = districtCache[districtKey];
+      const districtId = districtCache[districtKey];
 
-        // Get or create area
+      // Update staging district with committed_district_id
+      await supabase
+        .from("navio_staging_districts")
+        .update({ committed_district_id: districtId, status: "committed" })
+        .eq("id", stagingDistrict.id);
+
+      // Process areas
+      for (const stagingArea of stagingDistrict.navio_staging_areas || []) {
         const { data: existingArea } = await supabase
           .from("areas")
           .select("id")
-          .eq("navio_service_area_id", String(classified.navio_id))
+          .eq("navio_service_area_id", stagingArea.navio_service_area_id)
           .maybeSingle();
 
         if (existingArea) {
-          // Update existing area
           await supabase
             .from("areas")
             .update({
-              name: classified.area,
-              slug: slugify(classified.area),
+              name: stagingArea.name,
+              slug: slugify(stagingArea.name),
               district_id: districtId,
               city_id: cityId,
               is_delivery: true,
@@ -556,55 +668,338 @@ Return ONLY a valid JSON array with this exact structure:
             })
             .eq("id", existingArea.id);
           areasUpdated++;
+
+          // Update staging area
+          await supabase
+            .from("navio_staging_areas")
+            .update({ committed_area_id: existingArea.id, status: "committed" })
+            .eq("id", stagingArea.id);
         } else {
-          // Create new area
-          const { error: areaError } = await supabase
+          const { data: newArea, error: areaError } = await supabase
             .from("areas")
             .insert({
-              name: classified.area,
-              slug: slugify(classified.area),
+              name: stagingArea.name,
+              slug: slugify(stagingArea.name),
               district_id: districtId,
               city_id: cityId,
               is_delivery: true,
-              navio_service_area_id: String(classified.navio_id),
+              navio_service_area_id: stagingArea.navio_service_area_id,
               navio_imported_at: new Date().toISOString(),
-            });
+            })
+            .select("id")
+            .single();
 
           if (areaError) {
             console.error("Error creating area:", areaError);
             continue;
           }
           areasCreated++;
-        }
 
-        // Log progress every 10 items
-        if (i % 10 === 0) {
-          await logSync(supabase, "navio", "import", "in_progress", null, 
-            `Saved ${i + 1}/${classifiedAreas.length} areas`, batchId, i + 1, classifiedAreas.length);
+          // Update staging area
+          await supabase
+            .from("navio_staging_areas")
+            .update({ committed_area_id: newArea.id, status: "committed" })
+            .eq("id", stagingArea.id);
         }
-      } catch (dbError) {
-        console.error("Database error for area:", classified.area, dbError);
       }
     }
+  }
 
-    // Log completion
-    const summary = `Import complete: ${citiesCreated} cities, ${districtsCreated} districts, ${areasCreated} areas created, ${areasUpdated} areas updated. Countries: ${detectedCountries}`;
+  return { cities: citiesCreated, districts: districtsCreated, areas_created: areasCreated, areas_updated: areasUpdated };
+}
+
+// Direct import (legacy mode) - writes directly to production tables
+// deno-lint-ignore no-explicit-any
+async function directImport(
+  supabase: any,
+  batchId: string,
+  classifiedAreas: ClassifiedArea[],
+  countryAnalysis: CountryAnalysis
+): Promise<{ cities: number; districts: number; areas_created: number; areas_updated: number }> {
+  const cityCache: Record<string, string> = {};
+  const districtCache: Record<string, string> = {};
+  
+  let citiesCreated = 0;
+  let districtsCreated = 0;
+  let areasCreated = 0;
+  let areasUpdated = 0;
+
+  for (let i = 0; i < classifiedAreas.length; i++) {
+    const classified = classifiedAreas[i];
+    const countryCode = classified.country_code || "XX";
+    const cityKey = `${countryCode}_${slugify(classified.city)}`;
+    const districtKey = `${cityKey}_${slugify(classified.district)}`;
+
+    try {
+      // Get or create city
+      if (!cityCache[cityKey]) {
+        const { data: existingCity } = await supabase
+          .from("cities")
+          .select("id")
+          .eq("navio_city_key", cityKey)
+          .maybeSingle();
+
+        if (existingCity) {
+          cityCache[cityKey] = existingCity.id;
+        } else {
+          const { data: existingBySlug } = await supabase
+            .from("cities")
+            .select("id")
+            .eq("slug", slugify(classified.city))
+            .eq("country_code", countryCode)
+            .maybeSingle();
+
+          if (existingBySlug) {
+            await supabase
+              .from("cities")
+              .update({ navio_city_key: cityKey })
+              .eq("id", existingBySlug.id);
+            cityCache[cityKey] = existingBySlug.id;
+          } else {
+            const { data: newCity, error: cityError } = await supabase
+              .from("cities")
+              .insert({
+                name: classified.city,
+                slug: slugify(classified.city),
+                is_delivery: true,
+                navio_city_key: cityKey,
+                country_code: countryCode,
+              })
+              .select("id")
+              .single();
+
+            if (cityError) {
+              console.error("Error creating city:", cityError);
+              continue;
+            }
+            cityCache[cityKey] = newCity.id;
+            citiesCreated++;
+          }
+        }
+      }
+
+      const cityId = cityCache[cityKey];
+
+      // Get or create district
+      if (!districtCache[districtKey]) {
+        const { data: existingDistrict } = await supabase
+          .from("districts")
+          .select("id")
+          .eq("city_id", cityId)
+          .eq("navio_district_key", districtKey)
+          .maybeSingle();
+
+        if (existingDistrict) {
+          districtCache[districtKey] = existingDistrict.id;
+        } else {
+          const { data: existingBySlug } = await supabase
+            .from("districts")
+            .select("id")
+            .eq("city_id", cityId)
+            .eq("slug", slugify(classified.district))
+            .maybeSingle();
+
+          if (existingBySlug) {
+            await supabase
+              .from("districts")
+              .update({ navio_district_key: districtKey })
+              .eq("id", existingBySlug.id);
+            districtCache[districtKey] = existingBySlug.id;
+          } else {
+            const { data: newDistrict, error: districtError } = await supabase
+              .from("districts")
+              .insert({
+                name: classified.district,
+                slug: slugify(classified.district),
+                city_id: cityId,
+                is_delivery: true,
+                navio_district_key: districtKey,
+              })
+              .select("id")
+              .single();
+
+            if (districtError) {
+              console.error("Error creating district:", districtError);
+              continue;
+            }
+            districtCache[districtKey] = newDistrict.id;
+            districtsCreated++;
+          }
+        }
+      }
+
+      const districtId = districtCache[districtKey];
+
+      // Get or create area
+      const { data: existingArea } = await supabase
+        .from("areas")
+        .select("id")
+        .eq("navio_service_area_id", String(classified.navio_id))
+        .maybeSingle();
+
+      if (existingArea) {
+        await supabase
+          .from("areas")
+          .update({
+            name: classified.area,
+            slug: slugify(classified.area),
+            district_id: districtId,
+            city_id: cityId,
+            is_delivery: true,
+            navio_imported_at: new Date().toISOString(),
+          })
+          .eq("id", existingArea.id);
+        areasUpdated++;
+      } else {
+        const { error: areaError } = await supabase
+          .from("areas")
+          .insert({
+            name: classified.area,
+            slug: slugify(classified.area),
+            district_id: districtId,
+            city_id: cityId,
+            is_delivery: true,
+            navio_service_area_id: String(classified.navio_id),
+            navio_imported_at: new Date().toISOString(),
+          });
+
+        if (areaError) {
+          console.error("Error creating area:", areaError);
+          continue;
+        }
+        areasCreated++;
+      }
+
+      // Log progress every 10 items
+      if (i % 10 === 0) {
+        await logSync(supabase, "navio", "import", "in_progress", null, 
+          `Saved ${i + 1}/${classifiedAreas.length} areas`, batchId, i + 1, classifiedAreas.length);
+      }
+    } catch (dbError) {
+      console.error("Database error for area:", classified.area, dbError);
+    }
+  }
+
+  // Store last import timestamp in settings
+  await supabase.from("settings").upsert({
+    key: "navio_last_import",
+    value: new Date().toISOString(),
+  }, { onConflict: "key" });
+
+  return { cities: citiesCreated, districts: districtsCreated, areas_created: areasCreated, areas_updated: areasUpdated };
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const NAVIO_API_TOKEN = Deno.env.get("NAVIO_API_TOKEN");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+    if (!NAVIO_API_TOKEN) {
+      return new Response(
+        JSON.stringify({ error: "NAVIO_API_TOKEN is not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!LOVABLE_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "LOVABLE_API_KEY is not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Parse request body
+    const { batch_id, mode = "preview" } = await req.json() as { batch_id?: string; mode?: ImportMode };
+    const batchId = batch_id || crypto.randomUUID();
+
+    // Create Supabase client with service role for database operations
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Log start
+    await logSync(supabase, "navio", "import", "in_progress", null, `Starting Navio import (mode: ${mode})...`, batchId, 0, 0);
+
+    // Handle different modes
+    if (mode === "commit") {
+      // Commit approved staging data to production
+      await logSync(supabase, "navio", "import", "in_progress", null, "Committing approved data to production...", batchId, 0, 0);
+      
+      const result = await commitToProduction(supabase, batchId);
+      
+      const summary = `Commit complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated`;
+      await logSync(supabase, "navio", "import", "complete", null, summary, batchId);
+
+      // Update last import timestamp
+      await supabase.from("settings").upsert({
+        key: "navio_last_import",
+        value: new Date().toISOString(),
+      }, { onConflict: "key" });
+
+      return new Response(
+        JSON.stringify({
+          message: summary,
+          committed: result,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // For preview and direct modes, fetch and classify areas
+    const { classifiedAreas, countryAnalysis } = await fetchAndClassifyAreas(
+      supabase,
+      batchId,
+      NAVIO_API_TOKEN,
+      LOVABLE_API_KEY
+    );
+
+    if (classifiedAreas.length === 0) {
+      await logSync(supabase, "navio", "import", "complete", null, "No service areas found in Navio", batchId, 0, 0);
+      return new Response(
+        JSON.stringify({ message: "No service areas found", imported: { cities: 0, districts: 0, areas: 0 } }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    await logSync(supabase, "navio", "import", "in_progress", null, `AI classified ${classifiedAreas.length} areas, now saving...`, batchId, classifiedAreas.length, classifiedAreas.length);
+
+    if (mode === "preview") {
+      // Save to staging tables only
+      const stagingResult = await saveToStaging(supabase, batchId, classifiedAreas);
+      
+      const summary = `Preview complete: ${stagingResult.cities} cities, ${stagingResult.districts} districts, ${stagingResult.areas} areas staged for review`;
+      await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
+
+      return new Response(
+        JSON.stringify({
+          message: summary,
+          batch_id: batchId,
+          staged: stagingResult,
+          detected_countries: Object.keys(countryAnalysis.countries),
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Direct mode - write directly to production (legacy behavior)
+    const result = await directImport(supabase, batchId, classifiedAreas, countryAnalysis);
+    
+    const detectedCountries = Object.keys(countryAnalysis.countries).join(", ");
+    const summary = `Import complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated. Countries: ${detectedCountries}`;
     await logSync(supabase, "navio", "import", "complete", null, summary, batchId, classifiedAreas.length, classifiedAreas.length);
-
-    // Store last import timestamp in settings
-    await supabase.from("settings").upsert({
-      key: "navio_last_import",
-      value: new Date().toISOString(),
-    }, { onConflict: "key" });
 
     return new Response(
       JSON.stringify({
         message: summary,
         imported: {
-          cities: citiesCreated,
-          districts: districtsCreated,
-          areas_created: areasCreated,
-          areas_updated: areasUpdated,
+          cities: result.cities,
+          districts: result.districts,
+          areas_created: result.areas_created,
+          areas_updated: result.areas_updated,
           detected_countries: Object.keys(countryAnalysis.countries),
         },
       }),

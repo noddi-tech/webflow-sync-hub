@@ -16,6 +16,7 @@ import PartnerServiceLocations from "./pages/PartnerServiceLocations";
 import ServiceLocations from "./pages/ServiceLocations";
 import SyncHistory from "./pages/SyncHistory";
 import Settings from "./pages/Settings";
+import NavioPreview from "./pages/NavioPreview";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ const App = () => (
             <Route path="/partners" element={<Partners />} />
             <Route path="/partner-service-locations" element={<PartnerServiceLocations />} />
             <Route path="/service-locations" element={<ServiceLocations />} />
+            <Route path="/navio-preview" element={<NavioPreview />} />
             <Route path="/sync-history" element={<SyncHistory />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

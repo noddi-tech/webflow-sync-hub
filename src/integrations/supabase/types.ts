@@ -304,6 +304,146 @@ export type Database = {
           },
         ]
       }
+      navio_staging_areas: {
+        Row: {
+          batch_id: string
+          committed_area_id: string | null
+          created_at: string
+          id: string
+          name: string
+          navio_service_area_id: string
+          original_name: string
+          staging_district_id: string
+          status: string
+        }
+        Insert: {
+          batch_id: string
+          committed_area_id?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          navio_service_area_id: string
+          original_name: string
+          staging_district_id: string
+          status?: string
+        }
+        Update: {
+          batch_id?: string
+          committed_area_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          navio_service_area_id?: string
+          original_name?: string
+          staging_district_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "navio_staging_areas_committed_area_id_fkey"
+            columns: ["committed_area_id"]
+            isOneToOne: false
+            referencedRelation: "areas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "navio_staging_areas_staging_district_id_fkey"
+            columns: ["staging_district_id"]
+            isOneToOne: false
+            referencedRelation: "navio_staging_districts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      navio_staging_cities: {
+        Row: {
+          area_names: string[] | null
+          batch_id: string
+          committed_city_id: string | null
+          country_code: string
+          created_at: string
+          id: string
+          name: string
+          status: string
+        }
+        Insert: {
+          area_names?: string[] | null
+          batch_id: string
+          committed_city_id?: string | null
+          country_code?: string
+          created_at?: string
+          id?: string
+          name: string
+          status?: string
+        }
+        Update: {
+          area_names?: string[] | null
+          batch_id?: string
+          committed_city_id?: string | null
+          country_code?: string
+          created_at?: string
+          id?: string
+          name?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "navio_staging_cities_committed_city_id_fkey"
+            columns: ["committed_city_id"]
+            isOneToOne: false
+            referencedRelation: "cities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      navio_staging_districts: {
+        Row: {
+          area_names: string[] | null
+          batch_id: string
+          committed_district_id: string | null
+          created_at: string
+          id: string
+          name: string
+          staging_city_id: string
+          status: string
+        }
+        Insert: {
+          area_names?: string[] | null
+          batch_id: string
+          committed_district_id?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          staging_city_id: string
+          status?: string
+        }
+        Update: {
+          area_names?: string[] | null
+          batch_id?: string
+          committed_district_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          staging_city_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "navio_staging_districts_committed_district_id_fkey"
+            columns: ["committed_district_id"]
+            isOneToOne: false
+            referencedRelation: "districts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "navio_staging_districts_staging_city_id_fkey"
+            columns: ["staging_city_id"]
+            isOneToOne: false
+            referencedRelation: "navio_staging_cities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       partner_areas: {
         Row: {
           area_id: string
