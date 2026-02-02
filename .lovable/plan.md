@@ -1,81 +1,181 @@
 
-# Fix Webflow Field Mapping Discrepancies
+# Comprehensive Fix: All Collections Field Mapping & Data Handling
 
-## Problem Identified
+## Summary of Issues Found
 
-The System Health check shows three collections with "Missing Fields" status, but the messaging and underlying logic are confusing. After deep analysis, here's what's actually happening:
+After a full review, the following systematic issues were identified across all 7 collections:
 
-### Root Cause Analysis
+### 1. Partners Collection - 5 Issues
 
-The validation compares:
-- **EXPECTED_FIELDS** (what our app expects to exist in Webflow)
-- **Webflow schema** (what actually exists in Webflow)
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Logo URLs are NULL after import | Webflow Image fields return objects `{url, alt}`, but `getString()` returns `null` for non-strings | Add `getImageUrl()` helper |
+| Description shows raw HTML | `client-information` is RichText; stored as-is but shown in plain Textarea | Either strip HTML on import OR use rich text editor |
+| Missing `heading_text_2` | Database column missing | Add column + form input |
+| Missing `twitter-link` mapping | Webflow uses `twitter-link` for Instagram (we have `instagram_url`) | Update import/sync to map correctly |
+| Missing SEO fields in sync | `seo_title`, `seo_meta_description`, `intro` not in fieldMappings | Add to webflow-sync |
 
-| Term | Meaning |
-|------|---------|
-| `missing_in_webflow` | Fields we EXPECT in Webflow but don't find there |
-| `extra_in_webflow` | Fields in Webflow that we're NOT expecting |
+### 2. Service Categories Collection - 2 Issues
 
-### Current Issues
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| "Associated Services" not shown in UI | Multi-reference field exists in Webflow but app doesn't display related services | Add query + read-only list showing services in this category |
+| "Associated Services" not synced to Webflow | Sync function doesn't populate this multi-reference | Add logic to collect service webflow_item_ids for category and send on sync |
 
-#### 1. Services Collection
-**Expected but not found in Webflow:**
-- `shared-key` - Webflow doesn't have this field (need to remove from expected OR add to Webflow)
-- `description` - Webflow doesn't have this field (our DB has it, but Webflow uses a different structure)
-- `active` - Webflow doesn't have this field (we map it to Draft status instead)
+### 3. Services Collection - Minor Issues
 
-**Solution:** These are app-internal fields that don't need to exist in Webflow. Remove from `EXPECTED_FIELDS`.
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Type mismatch for illustration fields | Webflow may return Image objects for illustration URLs | Check and handle Image type if needed |
 
-#### 2. Service Locations Collection
-**Expected but not found in Webflow:**
-- `shared-key-service-location` - Webflow has `shared-key-service-location-2` instead
+### 4. All Collections - Validation Type Mismatch
 
-**Solution:** Update `EXPECTED_FIELDS` to use `shared-key-service-location-2` (match actual Webflow slug).
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| `client-logo`, `noddi-logo` declared as PlainText | Should be `Image` type | Update EXPECTED_FIELDS |
 
-#### 3. Service Categories Collection
-**Expected but not found in Webflow:**
-- `services` - Webflow has `associated-services` instead
-
-**Extra in Webflow (not tracked by app):**
-- `associated-services` - This IS the services reference field
-
-**Solution:** Update `EXPECTED_FIELDS` to use `associated-services` instead of `services`.
+---
 
 ## Implementation Plan
 
-### Phase 1: Update EXPECTED_FIELDS in webflow-validate
+### Phase 1: Database Migration
 
-```typescript
-// Service Categories - fix slug mismatch
-{ slug: "associated-services", type: "ItemRefSet", ... }  // Was: "services"
+Add missing column to `partners` table:
 
-// Services - remove app-only fields
-// REMOVE: shared-key (we generate this internally, don't sync to Webflow)
-// REMOVE: description (we have it in DB but don't send to Webflow)  
-// REMOVE: active (we map to Draft status, not a Webflow field)
-
-// Service Locations - fix slug mismatch
-{ slug: "shared-key-service-location-2", type: "PlainText", ... }  // Was: "shared-key-service-location"
+```sql
+ALTER TABLE partners
+ADD COLUMN IF NOT EXISTS heading_text_2 text;
 ```
 
-### Phase 2: Update webflow-sync to match corrected slugs
+### Phase 2: Fix Import Helper Functions
 
-Update the field mapping in sync function:
-- `shared-key-service-location-2` instead of `shared-key-service-location`
-- `associated-services` (if we ever sync back from services)
+Update `supabase/functions/webflow-import/index.ts`:
 
-### Phase 3: Update webflow-import to match corrected slugs
+```typescript
+// NEW: Extract URL from Webflow Image field objects
+function getImageUrl(value: unknown): string | null {
+  if (typeof value === 'string') return value || null;
+  if (typeof value === 'object' && value !== null) {
+    const imgObj = value as { url?: string };
+    return imgObj.url || null;
+  }
+  return null;
+}
+```
 
-Update the field mapping in import function:
-- Read from `shared-key-service-location-2`
-- Read from `associated-services`
+Apply to Partners import:
+- `logo_url: getImageUrl(noData["client-logo"])`
+- `noddi_logo_url: getImageUrl(noData["noddi-logo"])`
+- `heading_text_2: getString(noData["heading-text-2"])`
+- `instagram_url: getString(noData["twitter-link"])` (Webflow uses "twitter-link" but it's actually Instagram)
 
-### Phase 4: Clarify UI Messaging
+### Phase 3: Fix Validation Field Types
 
-Update `CollectionHealthCard.tsx` to:
-- Change "Fields in Webflow not yet tracked by the app" to "App expects these fields in Webflow"
-- Make it clearer that `missing_in_webflow` means "we expect this but Webflow doesn't have it"
-- Provide appropriate action guidance based on field type
+Update `supabase/functions/webflow-validate/index.ts`:
+
+```typescript
+// Change from PlainText to Image
+{ slug: "client-logo", type: "Image", required: false, description: "Partner's company logo (image)." },
+{ slug: "noddi-logo", type: "Image", required: false, description: "Noddi-specific partner logo (image)." },
+```
+
+### Phase 4: Update Partners Sync Function
+
+Update `supabase/functions/webflow-sync/index.ts` to include:
+
+```typescript
+// In fieldMappings for partners
+fieldMappings = {
+  name: "name",
+  slug: "slug",
+  description: "client-information",
+  seo_title: "seo-title",
+  seo_meta_description: "seo-meta-description",
+  intro: "intro-content", // if applicable
+};
+
+// In baseFieldData for partners
+baseFieldData["heading-text-2"] = item.heading_text_2 || "";
+baseFieldData["twitter-link"] = item.instagram_url || "";  // Maps instagram_url to twitter-link
+```
+
+### Phase 5: Update Service Categories Sync Function
+
+Add logic to populate `associated-services` multi-reference when syncing a category:
+
+```typescript
+// After fetching service_categories, also fetch services for each category
+const servicesForCategory = await supabase
+  .from("services")
+  .select("webflow_item_id")
+  .eq("service_category_id", item.id)
+  .not("webflow_item_id", "is", null);
+
+const serviceWebflowIds = servicesForCategory.data
+  ?.map(s => s.webflow_item_id)
+  .filter(Boolean) || [];
+
+if (serviceWebflowIds.length > 0) {
+  baseFieldData["associated-services"] = serviceWebflowIds;
+}
+```
+
+### Phase 6: Update Partners Form UI
+
+Update `src/pages/Partners.tsx`:
+
+1. Add `heading_text_2` to `PartnerFormData` interface
+2. Add `heading_text_2` to `emptyFormData`
+3. Add form input for `heading_text_2`
+4. Map `heading_text_2` in `openEditDialog`
+5. Include in create/update mutation payloads
+
+### Phase 7: Update Service Categories Form UI
+
+Update `src/pages/ServiceCategories.tsx`:
+
+Add a read-only section showing services that belong to this category:
+
+```typescript
+// Add query for services in this category
+const { data: categoryServices = [] } = useQuery({
+  queryKey: ["category-services", editingItem?.id],
+  queryFn: async () => {
+    if (!editingItem) return [];
+    const { data, error } = await supabase
+      .from("services")
+      .select("id, name, webflow_item_id")
+      .eq("service_category_id", editingItem.id)
+      .order("name");
+    if (error) throw error;
+    return data;
+  },
+  enabled: !!editingItem,
+});
+
+// Add display in form
+<div className="space-y-2 mt-4 pt-4 border-t">
+  <Label>Associated Services ({categoryServices.length})</Label>
+  <div className="text-sm text-muted-foreground border rounded p-3 max-h-32 overflow-y-auto">
+    {categoryServices.length > 0 ? (
+      <ul className="list-disc list-inside">
+        {categoryServices.map(s => (
+          <li key={s.id} className="flex items-center gap-2">
+            {s.name}
+            {s.webflow_item_id && <span className="text-green-500 text-xs">synced</span>}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <span>No services in this category yet.</span>
+    )}
+  </div>
+  <p className="text-xs text-muted-foreground">
+    Assign services to this category from the Services page. 
+    On sync, these will populate the "Associated Services" field in Webflow.
+  </p>
+</div>
+```
 
 ---
 
@@ -83,23 +183,48 @@ Update `CollectionHealthCard.tsx` to:
 
 | File | Changes |
 |------|---------|
-| `supabase/functions/webflow-validate/index.ts` | Fix EXPECTED_FIELDS slugs, remove app-only fields |
-| `supabase/functions/webflow-sync/index.ts` | Update field mappings to match Webflow slugs |
-| `supabase/functions/webflow-import/index.ts` | Update field mappings to match Webflow slugs |
-| `src/components/health/CollectionHealthCard.tsx` | Clarify UI messaging |
+| Database Migration | Add `heading_text_2` column to partners |
+| `supabase/functions/webflow-import/index.ts` | Add `getImageUrl()` helper, fix logo/instagram mappings, add `heading_text_2` |
+| `supabase/functions/webflow-validate/index.ts` | Fix `client-logo` and `noddi-logo` types to `Image` |
+| `supabase/functions/webflow-sync/index.ts` | Add missing partner fields (SEO, heading_text_2, twitter-link), add associated-services logic for categories |
+| `src/pages/Partners.tsx` | Add `heading_text_2` to form |
+| `src/pages/ServiceCategories.tsx` | Add "Associated Services" read-only display |
 
 ---
 
-## Expected Result After Fix
+## Technical Details
 
-| Collection | Before | After |
-|------------|--------|-------|
-| Services | Missing Fields | Ready (23 fields mapped) |
-| Service Locations | Missing Fields | Ready (15 fields mapped) |
-| Service Categories | Missing Fields | Ready (10 fields mapped) |
-| Cities | Ready | Ready |
-| Districts | Ready | Ready |
-| Areas | Ready | Ready |
-| Partners | Ready | Ready |
+### Webflow Image Field Structure
 
-All 7 collections will show "Ready" status after the slug mismatches are corrected.
+Webflow returns Image fields as objects:
+```json
+{
+  "url": "https://uploads-ssl.webflow.com/...",
+  "alt": "Partner logo",
+  "fileId": "abc123"
+}
+```
+
+The `getString()` helper returns `null` for objects, which is why logos are currently NULL. The new `getImageUrl()` helper will extract the `url` property.
+
+### Field Name Mapping (Webflow -> App)
+
+| Webflow Slug | App Column | Notes |
+|--------------|-----------|-------|
+| `client-logo` | `logo_url` | Image type - extract URL |
+| `noddi-logo` | `noddi_logo_url` | Image type - extract URL |
+| `client-information` | `description` | RichText - keep HTML for now |
+| `twitter-link` | `instagram_url` | Webflow uses legacy name |
+| `heading-text-2` | `heading_text_2` | Missing column - add |
+| `associated-services` | computed | Multi-ref populated from services table |
+
+---
+
+## Expected Results After Fix
+
+1. Partner logos will import correctly (URL extracted from Image objects)
+2. `heading_text_2` will be editable in Partner form
+3. Instagram URL will sync correctly via `twitter-link`
+4. Service Categories will show which services belong to them
+5. System Health will show correct types for Image fields
+6. All 7 collections will show "Ready" status
