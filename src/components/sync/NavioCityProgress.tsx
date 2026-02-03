@@ -1,4 +1,4 @@
-import { Check, Loader2, AlertCircle, MapPin, Building2, Map } from "lucide-react";
+import { Check, Loader2, AlertCircle, MapPin, Building2, Map, RefreshCw } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
@@ -20,7 +20,11 @@ export interface CityProgressData {
   currentDistrictsTotal?: number;
   currentDistrictsProcessed?: number;
   currentNeighborhoodsFound?: number;
+  currentDistrictName?: string;
   errorMessage?: string;
+  stage?: 'discovering_districts' | 'discovering_neighborhoods' | 'checkpointing' | 'completed_city';
+  retryAttempt?: number;
+  retryMax?: number;
 }
 
 interface NavioCityProgressProps {
@@ -37,6 +41,15 @@ export function NavioCityProgress({ progress }: NavioCityProgressProps) {
     : 0;
 
   const getPhaseInfo = () => {
+    // Handle retry state
+    if (progress.retryAttempt && progress.retryMax) {
+      return {
+        icon: <RefreshCw className="h-5 w-5 animate-spin text-amber-500" />,
+        label: `Reconnecting... (attempt ${progress.retryAttempt}/${progress.retryMax})`,
+        description: "Connection interrupted, retrying automatically"
+      };
+    }
+
     switch (progress.phase) {
       case "initializing":
         return {
@@ -45,12 +58,21 @@ export function NavioCityProgress({ progress }: NavioCityProgressProps) {
           description: "Fetching available cities and service areas"
         };
       case "processing":
+        // More detailed stage info
+        const stageLabel = progress.stage === 'discovering_districts' 
+          ? `Discovering districts in ${progress.currentCity}`
+          : progress.stage === 'discovering_neighborhoods'
+          ? `Finding neighborhoods${progress.currentDistrictName ? ` in ${progress.currentDistrictName}` : ''}`
+          : progress.currentCity 
+          ? `Processing ${progress.currentCity}`
+          : "Processing cities...";
+          
         return {
           icon: <MapPin className="h-5 w-5 text-primary" />,
-          label: progress.currentCity 
-            ? `Discovering neighborhoods in ${progress.currentCity}`
-            : "Processing cities...",
-          description: "AI is analyzing districts and finding neighborhoods"
+          label: stageLabel,
+          description: progress.currentDistrictsTotal 
+            ? `District ${(progress.currentDistrictsProcessed || 0) + 1} of ${progress.currentDistrictsTotal}`
+            : "AI is analyzing the geographic hierarchy"
         };
       case "finalizing":
         return {
@@ -81,7 +103,6 @@ export function NavioCityProgress({ progress }: NavioCityProgressProps) {
 
   const phaseInfo = getPhaseInfo();
 
-  // Find the current city being processed
   const currentCityData = progress.cities.find(c => c.name === progress.currentCity);
 
   return (
@@ -98,7 +119,7 @@ export function NavioCityProgress({ progress }: NavioCityProgressProps) {
       </div>
 
       {/* Current City Card - Only show when processing */}
-      {progress.phase === "processing" && progress.currentCity && (
+      {progress.phase === "processing" && progress.currentCity && !progress.retryAttempt && (
         <Card className="p-4 border-primary/30 bg-primary/5">
           <div className="flex items-center gap-2 mb-3">
             <Building2 className="h-4 w-4 text-primary" />
@@ -116,7 +137,9 @@ export function NavioCityProgress({ progress }: NavioCityProgressProps) {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">
-                  Processing districts...
+                  {progress.currentDistrictName 
+                    ? `Processing: ${progress.currentDistrictName}`
+                    : "Processing districts..."}
                 </span>
                 <span className="font-medium">
                   {progress.currentDistrictsProcessed || 0}/{progress.currentDistrictsTotal}
@@ -224,7 +247,12 @@ export function NavioCityProgress({ progress }: NavioCityProgressProps) {
       {progress.phase === "error" && progress.errorMessage && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-sm">
           <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-          <span className="text-destructive">{progress.errorMessage}</span>
+          <div>
+            <span className="text-destructive">{progress.errorMessage}</span>
+            <p className="text-xs text-muted-foreground mt-1">
+              Progress has been saved. You can resume the import.
+            </p>
+          </div>
         </div>
       )}
     </div>
