@@ -1069,17 +1069,23 @@ async function finalizeImport(
   return result;
 }
 
+// BATCH INSERT CONSTANTS
+const AREA_BATCH_SIZE = 500;
+
 // deno-lint-ignore no-explicit-any
 async function saveToStaging(
   supabase: any,
   batchId: string,
   classifiedAreas: ClassifiedArea[]
 ): Promise<{ cities: number; districts: number; areas: number }> {
+  // Phase 1: Build city/district/area maps in memory with temp IDs for linking
   const cityMap = new Map<string, {
+    tempId: string;
     name: string;
     countryCode: string;
     areaNames: Set<string>;
     districts: Map<string, { 
+      tempId: string;
       name: string; 
       areaNames: Set<string>; 
       areas: ClassifiedArea[];
@@ -1092,6 +1098,7 @@ async function saveToStaging(
     
     if (!cityMap.has(normalizedCityKey)) {
       cityMap.set(normalizedCityKey, {
+        tempId: crypto.randomUUID(),
         name: area.city,
         countryCode: area.country_code,
         areaNames: new Set(),
@@ -1111,6 +1118,7 @@ async function saveToStaging(
     
     if (!city.districts.has(normalizedDistrictKey)) {
       city.districts.set(normalizedDistrictKey, {
+        tempId: crypto.randomUUID(),
         name: area.district,
         areaNames: new Set(),
         areas: [],
@@ -1132,76 +1140,163 @@ async function saveToStaging(
     district.areas.push(area);
   }
 
-  let citiesCount = 0;
-  let districtsCount = 0;
-  let areasCount = 0;
+  // Phase 2: Prepare bulk insert records
+  interface CityRecord {
+    tempId: string;
+    batch_id: string;
+    name: string;
+    country_code: string;
+    area_names: string[];
+    status: string;
+  }
+
+  interface DistrictRecord {
+    tempId: string;
+    tempCityId: string;
+    batch_id: string;
+    name: string;
+    area_names: string[];
+    status: string;
+    source: string;
+  }
+
+  interface AreaRecord {
+    tempDistrictId: string;
+    batch_id: string;
+    navio_service_area_id: string;
+    name: string;
+    original_name: string;
+    status: string;
+    source: string;
+  }
+
+  const cityRecords: CityRecord[] = [];
+  const districtRecords: DistrictRecord[] = [];
+  const areaRecords: AreaRecord[] = [];
 
   for (const [, cityData] of cityMap) {
-    const { data: stagingCity, error: cityError } = await supabase
-      .from("navio_staging_cities")
-      .insert({
-        batch_id: batchId,
-        name: cityData.name,
-        country_code: cityData.countryCode,
-        area_names: Array.from(cityData.areaNames),
-        status: "pending",
-      })
-      .select("id")
-      .single();
-
-    if (cityError) {
-      console.error("Error creating staging city:", cityError);
-      continue;
-    }
-    citiesCount++;
+    cityRecords.push({
+      tempId: cityData.tempId,
+      batch_id: batchId,
+      name: cityData.name,
+      country_code: cityData.countryCode,
+      area_names: Array.from(cityData.areaNames),
+      status: "pending",
+    });
 
     for (const [, districtData] of cityData.districts) {
-      const { data: stagingDistrict, error: districtError } = await supabase
-        .from("navio_staging_districts")
-        .insert({
-          batch_id: batchId,
-          staging_city_id: stagingCity.id,
-          name: districtData.name,
-          area_names: Array.from(districtData.areaNames),
-          status: "pending",
-          source: districtData.source,
-        })
-        .select("id")
-        .single();
-
-      if (districtError) {
-        console.error("Error creating staging district:", districtError);
-        continue;
-      }
-      districtsCount++;
+      districtRecords.push({
+        tempId: districtData.tempId,
+        tempCityId: cityData.tempId,
+        batch_id: batchId,
+        name: districtData.name,
+        area_names: Array.from(districtData.areaNames),
+        status: "pending",
+        source: districtData.source,
+      });
 
       for (const area of districtData.areas) {
         const isCodePattern = /^[A-Z]{2}\s+[A-Z]{3}\s+\d+$/.test(area.area) || 
                              /^[A-Z]{3}\s+\d+$/.test(area.area);
         const areaStatus = area.source === 'navio' && isCodePattern ? "needs_mapping" : "pending";
         
-        const { error: areaError } = await supabase
-          .from("navio_staging_areas")
-          .insert({
-            batch_id: batchId,
-            staging_district_id: stagingDistrict.id,
-            navio_service_area_id: area.navio_id > 0 ? String(area.navio_id) : `discovered_${crypto.randomUUID()}`,
-            name: area.area,
-            original_name: area.original,
-            status: areaStatus,
-            source: area.source,
-          });
-
-        if (areaError) {
-          console.error("Error creating staging area:", areaError);
-          continue;
-        }
-        areasCount++;
+        areaRecords.push({
+          tempDistrictId: districtData.tempId,
+          batch_id: batchId,
+          navio_service_area_id: area.navio_id > 0 ? String(area.navio_id) : `discovered_${crypto.randomUUID()}`,
+          name: area.area,
+          original_name: area.original,
+          status: areaStatus,
+          source: area.source,
+        });
       }
     }
   }
 
-  return { cities: citiesCount, districts: districtsCount, areas: areasCount };
+  console.log(`Bulk insert: ${cityRecords.length} cities, ${districtRecords.length} districts, ${areaRecords.length} areas`);
+
+  // Phase 3: Bulk insert cities (single call)
+  const { data: insertedCities, error: cityError } = await supabase
+    .from("navio_staging_cities")
+    .insert(cityRecords.map(c => ({
+      batch_id: c.batch_id,
+      name: c.name,
+      country_code: c.country_code,
+      area_names: c.area_names,
+      status: c.status,
+    })))
+    .select("id, name");
+
+  if (cityError) {
+    console.error("Error bulk inserting cities:", cityError);
+    throw cityError;
+  }
+
+  // Create tempId -> realId mapping for cities (by matching name + order)
+  const cityIdMap = new Map<string, string>();
+  for (let i = 0; i < cityRecords.length; i++) {
+    cityIdMap.set(cityRecords[i].tempId, insertedCities[i].id);
+  }
+
+  console.log(`Inserted ${insertedCities.length} cities`);
+
+  // Phase 4: Bulk insert districts (single call)
+  const { data: insertedDistricts, error: districtError } = await supabase
+    .from("navio_staging_districts")
+    .insert(districtRecords.map(d => ({
+      batch_id: d.batch_id,
+      staging_city_id: cityIdMap.get(d.tempCityId),
+      name: d.name,
+      area_names: d.area_names,
+      status: d.status,
+      source: d.source,
+    })))
+    .select("id, name");
+
+  if (districtError) {
+    console.error("Error bulk inserting districts:", districtError);
+    throw districtError;
+  }
+
+  // Create tempId -> realId mapping for districts
+  const districtIdMap = new Map<string, string>();
+  for (let i = 0; i < districtRecords.length; i++) {
+    districtIdMap.set(districtRecords[i].tempId, insertedDistricts[i].id);
+  }
+
+  console.log(`Inserted ${insertedDistricts.length} districts`);
+
+  // Phase 5: Bulk insert areas in batches of AREA_BATCH_SIZE
+  let areasInserted = 0;
+  
+  for (let i = 0; i < areaRecords.length; i += AREA_BATCH_SIZE) {
+    const batch = areaRecords.slice(i, i + AREA_BATCH_SIZE);
+    
+    const { error: areaError } = await supabase
+      .from("navio_staging_areas")
+      .insert(batch.map(a => ({
+        batch_id: a.batch_id,
+        staging_district_id: districtIdMap.get(a.tempDistrictId),
+        navio_service_area_id: a.navio_service_area_id,
+        name: a.name,
+        original_name: a.original_name,
+        status: a.status,
+        source: a.source,
+      })));
+
+    if (areaError) {
+      console.error(`Error bulk inserting areas batch ${i / AREA_BATCH_SIZE + 1}:`, areaError);
+      // Continue with other batches even if one fails
+    } else {
+      areasInserted += batch.length;
+    }
+    
+    console.log(`Inserted areas batch ${Math.floor(i / AREA_BATCH_SIZE) + 1}/${Math.ceil(areaRecords.length / AREA_BATCH_SIZE)} (${areasInserted}/${areaRecords.length})`);
+  }
+
+  console.log(`Bulk insert complete: ${insertedCities.length} cities, ${insertedDistricts.length} districts, ${areasInserted} areas`);
+
+  return { cities: insertedCities.length, districts: insertedDistricts.length, areas: areasInserted };
 }
 
 // =============================================================================
