@@ -14,29 +14,62 @@ import {
   Wrench,
   Link2,
   Globe,
+  ExternalLink,
+  Download,
+  RefreshCw,
+  MapPinned,
   Eye,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { CollapsibleNavSection, type NavSection } from "./CollapsibleNavSection";
 
-const navigation = [
+type NavItem = 
+  | { type: "separator" }
+  | { type: "collapsible"; section: NavSection }
+  | { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
+
+const navigation: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { type: "separator" as const },
+  { type: "separator" },
   { name: "Cities", href: "/cities", icon: MapPin },
   { name: "Districts", href: "/districts", icon: Map },
   { name: "Areas", href: "/areas", icon: Layers },
-  { type: "separator" as const },
+  { type: "separator" },
   { name: "Service Categories", href: "/service-categories", icon: FolderTree },
   { name: "Services", href: "/services", icon: Wrench },
-  { type: "separator" as const },
+  { type: "separator" },
   { name: "Partners", href: "/partners", icon: Users },
   { name: "Partner Coverage", href: "/partner-service-locations", icon: Link2 },
-  { type: "separator" as const },
+  { type: "separator" },
   { name: "Service Locations", href: "/service-locations", icon: Globe },
-  { name: "Navio Preview", href: "/navio-preview", icon: Eye },
+  { type: "separator" },
+  {
+    type: "collapsible",
+    section: {
+      name: "Webflow",
+      icon: ExternalLink,
+      items: [
+        { name: "Import", href: "/webflow/import", icon: Download },
+        { name: "Sync", href: "/webflow/sync", icon: RefreshCw },
+      ],
+    },
+  },
+  {
+    type: "collapsible",
+    section: {
+      name: "Navio",
+      icon: MapPinned,
+      items: [
+        { name: "Operations", href: "/navio", icon: Settings },
+        { name: "Preview", href: "/navio-preview", icon: Eye },
+      ],
+    },
+  },
+  { type: "separator" },
   { name: "Sync History", href: "/sync-history", icon: History },
-  { type: "separator" as const },
+  { type: "separator" },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -56,6 +89,15 @@ export const Sidebar = React.forwardRef<HTMLDivElement, object>(
           {navigation.map((item, index) => {
             if ('type' in item && item.type === 'separator') {
               return <Separator key={`sep-${index}`} className="my-2" />;
+            }
+            
+            if ('type' in item && item.type === 'collapsible') {
+              return (
+                <CollapsibleNavSection 
+                  key={item.section.name} 
+                  section={item.section} 
+                />
+              );
             }
             
             const navItem = item as { name: string; href: string; icon: React.ComponentType<{ className?: string }> };
