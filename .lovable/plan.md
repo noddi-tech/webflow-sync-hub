@@ -1,232 +1,272 @@
 
 
-# Geo-Based Delivery Area System
+# Plan: Complete Geo-Based Delivery System - Testing and Map Visualization
 
-## Current State vs. Proposed Approach
-
-| Aspect | Current (AI Discovery) | Proposed (Geo-Based) |
-|--------|------------------------|----------------------|
-| Source of truth | AI-generated neighborhood names | Navio polygon coordinates |
-| "Do we deliver here?" | Guessing based on city grouping | Precise: point-in-polygon check |
-| Districts/Areas | AI discovers ~300 neighborhoods per city | Only areas with actual delivery polygons |
-| Data accuracy | Approximate, may include non-delivery areas | 100% accurate to Navio coverage |
-| Import complexity | Heavy AI processing | Simple polygon storage |
+This plan covers three remaining tasks to fully test and visualize the geo-based delivery system.
 
 ---
 
-## What Navio API Actually Provides
+## Current State Summary
 
-Each service area from `/v1/service-areas/for-landing-pages/` includes:
-
-```json
-{
-  "id": 123,
-  "name": "Norway Oslo Grünerløkka",
-  "display_name": "Grünerløkka",
-  "is_active": true,
-  "geofence_geojson": {
-    "type": "Polygon",
-    "coordinates": [[[10.75, 59.92], [10.76, 59.93], ...]]
-  },
-  "postal_code_cities": [
-    {"postal_code": "0550", "city": "Oslo"},
-    {"postal_code": "0551", "city": "Oslo"}
-  ]
-}
-```
-
-The `geofence_geojson` contains the exact delivery boundary polygon.
+| Component | Status |
+|-----------|--------|
+| Database columns (`geofence_json`, `geofence`, `geofence_center`) | Ready |
+| PostGIS extension and spatial indexes | Ready |
+| SQL trigger for JSONB-to-geometry sync | Ready |
+| `sync_geo` mode in edge function | Ready |
+| `check-delivery` endpoint | Ready |
+| **Actual data in database** | **Empty (0 areas with geofence)** |
+| **Map visualization** | **Not implemented** |
 
 ---
 
-## Proposed Architecture
+## Task 1: Run Geo Sync to Populate Data
 
-### Two Types of Areas
+**Approach:** Use the existing "Geo Sync" button on the Dashboard to trigger the `sync_geo` edge function mode.
 
-```text
-+------------------+     +------------------+
-|  DELIVERY AREAS  |     |  DISCOVERED AREAS |
-|  (from Navio)    |     |  (from AI)       |
-+------------------+     +------------------+
-| - Has polygon    |     | - No polygon     |
-| - is_delivery=t  |     | - is_delivery=f  |
-| - 100% accurate  |     | - SEO/content    |
-| - ~300 total     |     | - ~5000 total    |
-+------------------+     +------------------+
-         |                        |
-         +------------------------+
-                    |
-            areas table
-              (unified)
-```
+### Steps (User Actions)
+1. Navigate to the Dashboard (/)
+2. Click the "Geo Sync" button in the "Import from Navio" card
+3. Wait for the sync to complete (should be fast, 1-2 minutes)
+4. Toast notification will show results
 
-This keeps the rich SEO content from AI discovery while adding precise delivery coverage.
+### Expected Outcome
+The sync will:
+- Fetch all service areas from Navio API
+- Parse city names and group areas
+- Create/update cities, districts, and areas in the database
+- Store `geofence_json` (JSONB) for each area
+- The SQL trigger will automatically populate PostGIS `geofence` geometry columns
 
----
-
-## Technical Implementation
-
-### 1. Database Changes
-
-Add geometry support to store and query polygons:
-
+### Verification Query
+After sync completes, verify with:
 ```sql
--- Enable PostGIS extension (if not already)
-CREATE EXTENSION IF NOT EXISTS postgis;
-
--- Add geometry columns to areas table
-ALTER TABLE areas 
-ADD COLUMN geofence geometry(Polygon, 4326),
-ADD COLUMN geofence_center geometry(Point, 4326);
-
--- Add to navio_snapshot for delta tracking
-ALTER TABLE navio_snapshot
-ADD COLUMN geofence_hash text;  -- MD5 of geojson to detect changes
-
--- Create spatial index for fast point-in-polygon queries
-CREATE INDEX areas_geofence_idx ON areas USING GIST (geofence);
-```
-
-### 2. Modified Import Flow
-
-```text
-CURRENT FLOW:
-Navio API → Parse names → AI discover districts → AI discover neighborhoods → Save 5000+ areas
-
-NEW FLOW:
-Navio API → Store polygons directly → Mark is_delivery=true
-         → (Optional) AI enriches with SEO content for delivery areas only
-```
-
-### 3. Point-in-Polygon Query
-
-The frontend/API can now answer "do we deliver to this address?" precisely:
-
-```sql
--- Find delivery areas containing a coordinate
-SELECT a.*, d.name as district_name, c.name as city_name
-FROM areas a
-JOIN districts d ON a.district_id = d.id
-JOIN cities c ON d.city_id = c.id
-WHERE a.is_delivery = true
-  AND ST_Contains(a.geofence, ST_SetSRID(ST_MakePoint(10.75, 59.92), 4326));
-```
-
-### 4. New Edge Function Mode: `sync_polygons`
-
-A lightweight sync that only handles geometry:
-
-```typescript
-case "sync_polygons": {
-  // 1. Fetch all Navio areas with geofences
-  const navioAreas = await fetchNavioAreas(navioToken);
-  
-  // 2. For each area with a polygon:
-  for (const area of navioAreas) {
-    if (area.geofence_geojson) {
-      await supabase.from("areas")
-        .update({ 
-          geofence: area.geofence_geojson,
-          is_delivery: true,
-          navio_imported_at: new Date().toISOString()
-        })
-        .eq("navio_service_area_id", area.id.toString());
-    }
-  }
-  
-  return { updated: count };
-}
+SELECT COUNT(*) as total, 
+       COUNT(geofence_json) as with_json, 
+       COUNT(geofence) as with_geometry 
+FROM areas WHERE is_delivery = true;
 ```
 
 ---
 
-## Simplified Approach (Recommended First Step)
+## Task 2: Add Map Visualization to NavioPreview
 
-If full PostGIS setup is too complex, we can start simpler:
+**Approach:** Install Leaflet (lightweight, free, no API key required) and add an interactive map tab to the NavioPreview page that displays all delivery area polygons.
 
-### Store GeoJSON as JSONB
+### Implementation Details
 
-```sql
-ALTER TABLE areas ADD COLUMN geofence_json jsonb;
-ALTER TABLE navio_snapshot ADD COLUMN geofence_json jsonb;
+#### 2.1 Install Dependencies
+```bash
+npm install leaflet react-leaflet @types/leaflet
 ```
 
-Benefits:
-- No PostGIS dependency
-- Can still do basic bounding box checks in JavaScript
-- Full polygon data available for frontend maps
-- Can upgrade to PostGIS later for point-in-polygon queries
-
-### Display on Map
-
-The stored polygons can be rendered on a map UI to show exact delivery coverage:
+#### 2.2 Create Map Component
+Create `src/components/map/DeliveryAreaMap.tsx`:
 
 ```tsx
-// Leaflet/MapboxGL example
-const DeliveryMap = ({ areas }) => {
+import { MapContainer, TileLayer, GeoJSON, Popup } from "react-leaflet";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import "leaflet/dist/leaflet.css";
+
+interface DeliveryArea {
+  id: string;
+  name: string;
+  geofence_json: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
+  district_name: string;
+  city_name: string;
+}
+
+export function DeliveryAreaMap() {
+  const { data: areas, isLoading } = useQuery({
+    queryKey: ["delivery-areas-with-geofence"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("areas")
+        .select(`
+          id, name, geofence_json,
+          districts!inner(name),
+          cities!inner(name)
+        `)
+        .eq("is_delivery", true)
+        .not("geofence_json", "is", null);
+      
+      if (error) throw error;
+      return data.map(a => ({
+        id: a.id,
+        name: a.name,
+        geofence_json: a.geofence_json,
+        district_name: a.districts.name,
+        city_name: a.cities.name,
+      }));
+    },
+  });
+
+  if (isLoading) return <Skeleton className="h-[500px]" />;
+
+  // Center on Norway by default
+  const defaultCenter: [number, number] = [59.9, 10.75];
+
   return (
-    <Map>
-      {areas.filter(a => a.geofence_json).map(area => (
-        <GeoJSON 
-          key={area.id}
-          data={area.geofence_json}
-          style={{ color: '#22c55e', fillOpacity: 0.3 }}
-        />
+    <MapContainer 
+      center={defaultCenter} 
+      zoom={5} 
+      className="h-[500px] w-full rounded-lg"
+    >
+      <TileLayer
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; OpenStreetMap contributors'
+      />
+      {areas?.map(area => (
+        area.geofence_json && (
+          <GeoJSON 
+            key={area.id}
+            data={area.geofence_json}
+            style={{ color: '#22c55e', fillOpacity: 0.3, weight: 2 }}
+          >
+            <Popup>
+              <strong>{area.name}</strong><br />
+              {area.district_name}, {area.city_name}
+            </Popup>
+          </GeoJSON>
+        )
       ))}
-    </Map>
+    </MapContainer>
   );
-};
+}
 ```
+
+#### 2.3 Update NavioPreview Page
+Add a new "Map" tab to the existing Tabs component:
+
+```tsx
+// Add import
+import { DeliveryAreaMap } from "@/components/map/DeliveryAreaMap";
+
+// Inside Tabs component, add new TabsTrigger
+<TabsTrigger value="map">
+  <MapPin className="h-4 w-4 mr-2" />
+  Map View
+</TabsTrigger>
+
+// Add TabsContent
+<TabsContent value="map">
+  <Card>
+    <CardHeader>
+      <CardTitle>Delivery Area Map</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <DeliveryAreaMap />
+    </CardContent>
+  </Card>
+</TabsContent>
+```
+
+#### 2.4 Add Leaflet CSS
+Import in `src/index.css`:
+```css
+@import "leaflet/dist/leaflet.css";
+```
+
+### Files to Create/Modify
+| File | Action |
+|------|--------|
+| `src/components/map/DeliveryAreaMap.tsx` | Create new component |
+| `src/pages/NavioPreview.tsx` | Add Map tab |
+| `src/index.css` | Import Leaflet CSS |
 
 ---
 
-## Delta Sync with Polygons
+## Task 3: Test Delta Check with Populated Data
 
-The snapshot can detect polygon changes too:
+**Approach:** After running Geo Sync, use "Check for Changes" to verify delta detection works with geofence tracking.
 
+### Steps (User Actions)
+1. Complete Task 1 (Geo Sync) to populate `navio_snapshot` table
+2. Navigate to Dashboard
+3. Click "Check for Changes" button
+4. Review the Delta Summary card
+
+### Expected Behavior
+The delta check will:
+1. Fetch current Navio API data
+2. Compare against `navio_snapshot` table
+3. Compute hash for each `geofence_geojson`
+4. Identify:
+   - New areas (in API but not in snapshot)
+   - Removed areas (in snapshot but not in API)
+   - Changed areas (name or geofence hash differs)
+   - Unchanged areas
+
+### First Run After Initial Sync
+On the first run, the Delta Summary should show:
+- "All Up to Date" (since snapshot was just updated by Geo Sync)
+- OR show counts of new/changed if API data differs from what was synced
+
+### Testing Polygon Change Detection
+The `geofenceChanged` field in delta results tracks polygon modifications:
 ```typescript
-// In delta_check mode
-const changedAreas = navioAreas.filter(a => {
-  const existing = snapshotMap.get(a.id);
-  if (!existing) return false;
-  
-  // Check if name OR polygon changed
-  const nameChanged = existing.name !== a.name;
-  const polygonChanged = hashGeoJSON(a.geofence_geojson) !== existing.geofence_hash;
-  
-  return nameChanged || polygonChanged;
-});
+// In DeltaSummary.tsx, already displays:
+{summary.geofenceChanged > 0 && (
+  <Badge variant="outline" className="border-blue-500 text-blue-600">
+    <MapPin className="mr-1 h-3 w-3" />
+    {summary.geofenceChanged}
+  </Badge>
+  // shows "polygon updates"
+)}
 ```
 
 ---
 
-## Files to Modify
+## Execution Order
 
+```text
+1. Run Geo Sync (Dashboard)
+        |
+        v
+2. Verify data populated (automatic)
+        |
+        v
+3. Test Check for Changes
+        |
+        v
+4. Implement Map Visualization
+        |
+        v
+5. View polygons on NavioPreview Map tab
+```
+
+---
+
+## Technical Summary
+
+### Dependencies to Add
+- `leaflet` - Mapping library
+- `react-leaflet` - React bindings for Leaflet
+- `@types/leaflet` - TypeScript definitions
+
+### New Files
+| File | Description |
+|------|-------------|
+| `src/components/map/DeliveryAreaMap.tsx` | Interactive map showing delivery polygons |
+
+### Modified Files
 | File | Changes |
 |------|---------|
-| `supabase/migrations/xxx_add_geofence.sql` | Add geofence columns (JSONB or PostGIS) |
-| `supabase/functions/navio-import/index.ts` | Store geofence data during import |
-| `src/pages/NavioPreview.tsx` | Show map with delivery polygons |
-| `src/components/sync/DeltaSummary.tsx` | Show polygon changes in delta |
+| `src/pages/NavioPreview.tsx` | Add Map tab to tabs component |
+| `src/index.css` | Import Leaflet CSS |
+
+### No Edge Function Changes Required
+All backend functionality is already implemented and deployed.
 
 ---
 
-## Recommended Phased Approach
+## Success Criteria
 
-**Phase 1 (Quick win):** ✅ Store `geofence_json` as JSONB in areas/snapshot tables during import. Display on preview page.
-
-**Phase 2 (Enhanced):** ✅ Add PostGIS for spatial queries. Enable "check if address is in delivery zone" API via `check-delivery` edge function.
-
-**Phase 3 (Full geo):** ✅ Add `sync_geo` mode that replaces AI discovery with pure geo-based import. Directly stores Navio polygons as delivery areas without AI processing.
-
----
-
-## Expected Outcomes
-
-| Before | After |
-|--------|-------|
-| "Is this a delivery area?" → Check `is_delivery` flag (set by AI guess) | "Is this a delivery area?" → Point-in-polygon query against actual Navio boundaries |
-| ~5400 AI-discovered areas, unknown accuracy | ~300 precise delivery polygons + optional SEO areas |
-| 30 min import with AI | 1-2 min import (polygon storage only) |
-| No map visualization | Interactive delivery zone map |
+| Task | Verification |
+|------|--------------|
+| Geo Sync | `areas` table has rows with `geofence_json` populated |
+| Delta Check | Shows "All Up to Date" or accurate change counts |
+| Map View | Polygons render correctly on OpenStreetMap tiles |
+| Point-in-Polygon | `/check-delivery?lng=10.75&lat=59.92` returns matching areas |
 
