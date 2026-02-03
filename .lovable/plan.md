@@ -1,50 +1,130 @@
 
-# Fix Edge Function Timeout and Duplicate Cities
+# Fix Counter Bug & Improve Navio Import Progress UI
 
-## Problems Identified
+## Problems to Fix
 
-### 1. Edge Function Not Deployed
-The typo fix (`'tornoto': 'Toronto'`) was added to the code but the database still shows "Tornoto" as a separate city. This indicates the updated edge function wasn't deployed or wasn't used.
+### 1. Counter Bug (43/19 cities)
+The edge function's `process_city` response is missing the `needsMoreProcessing` field. Since it's `undefined`, the frontend's check `!result.data.needsMoreProcessing` is always `true`, incrementing the counter on **every** edge function call instead of only when a city fully completes.
 
-### 2. Old Batches Not Cleared  
-Database shows 2 batches exist (`c7a9a60c-...` AND `7613371e-...`), both with pending entries. The cleanup query isn't working because:
-- The Supabase client `.in()` method may not be correctly filtering
-- The edge function crashed before completing cleanup
+### 2. Unclear UI
+The current UI just shows "Processing cities..." with no detail about what's happening inside each city (discovering districts, finding neighborhoods, etc.)
 
-### 3. Edge Function Timeout During City Processing
-The logs show the function was processing München (31 districts) and shut down at district 23/31. This is hitting the ~60 second edge function timeout.
-
-Each district requires:
-- 2 AI calls (Gemini + OpenAI) for neighborhood discovery
-- Each AI call takes 2-5 seconds
-
-For München: 31 districts × 2 calls × ~3 seconds = ~186 seconds (well over the 60s limit)
+---
 
 ## Solution
 
-### 1. Process Districts in Smaller Batches
-Instead of processing ALL districts for a city in one function call, process them incrementally (5-10 at a time) to stay under the timeout.
+### Part 1: Fix the Counter Bug
 
-Modify `processSingleCity()`:
-- Add `max_districts_per_call` parameter (default: 5)
-- Track `districts_processed` in the queue row
-- If more districts remain, return `{ completed: false, needsMoreProcessing: true }`
-- Frontend keeps calling until city is fully processed
+**File: `supabase/functions/navio-import/index.ts`**
 
-### 2. Fix Delete Query Syntax
-Change from:
+Add the missing `needsMoreProcessing` to the `process_city` response:
+
 ```typescript
-await supabase.from("navio_import_queue").delete().in("status", ["pending", "processing"]);
+case "process_city": {
+  const result = await processNextCity(...);
+  
+  return new Response(
+    JSON.stringify({
+      success: true,
+      batch_id: batchId,
+      processedCity: result.city,
+      completed: result.completed,
+      progress: result.progress,
+      districtsDiscovered: result.districtsDiscovered,
+      neighborhoodsDiscovered: result.neighborhoodsDiscovered,
+      needsMoreProcessing: result.needsMoreProcessing,  // ADD THIS
+      nextAction: result.completed ? "finalize" : "process_city",
+    }),
+    ...
+  );
+}
 ```
 
-To use `.or()` for compatibility:
-```typescript
-await supabase.from("navio_import_queue").delete().or("status.eq.pending,status.eq.processing");
+---
+
+### Part 2: Enhanced Progress UI
+
+**File: `src/components/sync/NavioCityProgress.tsx`**
+
+Redesign to show detailed per-city progress:
+
+| Element | Description |
+|---------|-------------|
+| Phase banner | Shows current phase with icon (Connecting, Discovering Districts, Finding Neighborhoods, Saving) |
+| Current city card | Highlighted card showing the active city with live stats |
+| Per-city stats | Districts found, neighborhoods discovered for each completed city |
+| Animated indicators | Different animations for different phases |
+
+```text
++-----------------------------------------------+
+|  IMPORTING FROM NAVIO                          |
++-----------------------------------------------+
+|                                                |
+|  🔍 Discovering districts in München...        |
+|                                                |
+|  ┌─────────────────────────────────────────┐  |
+|  │ 🏙️ München (DE)                    ●     │  |
+|  │   Finding neighborhoods in Schwabing... │  |
+|  │   ████████░░░░░░░░░░░░  15/31 districts │  |
+|  │   → 45 neighborhoods found so far       │  |
+|  └─────────────────────────────────────────┘  |
+|                                                |
+|  ✓ Toronto (CA) — 12 districts, 38 areas      |
+|  ✓ Bergen (NO) — 8 districts, 24 areas        |
+|  ○ Oslo (NO) — pending                         |
+|  ○ Stockholm (SE) — pending                    |
+|                                                |
+|  ───────────────────────────────────────────  |
+|  Cities: 3/19  ████░░░░░░░░░░░  16%           |
++-----------------------------------------------+
 ```
 
-### 3. Deploy Edge Function and Clear Database
-- Clear the `navio_import_queue` table manually before redeploying
-- Ensure the edge function is deployed with all fixes
+**File: `src/components/sync/NavioCityProgress.tsx`**
+
+Update the `CityProgressData` interface to include detailed stats:
+
+```typescript
+export interface CityProgressData {
+  phase: "idle" | "initializing" | "processing" | "finalizing" | "complete" | "error";
+  currentCity: string | null;
+  citiesTotal: number;
+  citiesProcessed: number;
+  cities: Array<{ 
+    name: string; 
+    countryCode: string;
+    districtsFound?: number;
+    neighborhoodsFound?: number;
+    status?: "pending" | "processing" | "completed";
+  }>;
+  // New fields for detailed progress
+  currentDistrictsTotal?: number;
+  currentDistrictsProcessed?: number;
+  currentNeighborhoodsFound?: number;
+  errorMessage?: string;
+}
+```
+
+**File: `src/hooks/useNavioImport.ts`**
+
+Track detailed progress from edge function responses:
+
+```typescript
+// When processing
+if (result.data.needsMoreProcessing) {
+  // Still working on current city - show district progress
+  setCityProgress(prev => ({
+    ...prev,
+    currentDistrictsProcessed: result.data.progress?.districtsProcessed || 0,
+    currentDistrictsTotal: result.data.progress?.districtsTotal || 0,
+    currentNeighborhoodsFound: result.data.neighborhoodsDiscovered || 0,
+  }));
+} else if (result.data.processedCity) {
+  // City fully completed
+  processedCount++;
+  // Update the completed city with its final stats
+  // Move to next city
+}
+```
 
 ---
 
@@ -52,22 +132,16 @@ await supabase.from("navio_import_queue").delete().or("status.eq.pending,status.
 
 | File | Change |
 |------|--------|
-| `supabase/functions/navio-import/index.ts` | Fix delete query syntax; add district batching (5 at a time); track `districts_processed` in queue |
-
----
-
-## Database Changes
-
-| Table | Change |
-|-------|--------|
-| `navio_import_queue` | Add `districts_processed` column (integer, default 0) to track incremental progress |
-| `navio_import_queue` | Clear all existing entries before testing |
+| `supabase/functions/navio-import/index.ts` | Add `needsMoreProcessing` to `process_city` response |
+| `src/components/sync/NavioCityProgress.tsx` | Enhanced UI with per-city stats, district progress bar, phase explanations |
+| `src/hooks/useNavioImport.ts` | Track district/neighborhood progress from responses, update city stats |
 
 ---
 
 ## Expected Result
 
-1. Cities with many districts (like München with 31) will be processed across multiple function calls
-2. Each call processes 5-10 districts, staying well under the 60s timeout
-3. "Tornoto" will be normalized to "Toronto" and only one Toronto city appears
-4. Old pending/processing batches are properly cleared
+1. Counter correctly shows "3/19 cities" (never exceeds total)
+2. Active city shows: "Finding neighborhoods in Schwabing... 15/31 districts"
+3. Completed cities show summary: "✓ Toronto (CA) — 12 districts, 38 areas"
+4. User understands the system is discovering districts and their neighborhoods
+5. Progress feels informative rather than broken
