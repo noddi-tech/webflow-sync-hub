@@ -1,218 +1,159 @@
 
+## What’s failing (root cause)
+From the screenshots + current database state, the “Failed to send a request to the Edge Function” is not primarily a UI bug. It’s happening because **some `process_city` calls still occasionally run long enough to get cut off by the platform timeout** (or return a gateway error). When that happens, the browser often reports it as a **CORS error** (“No Access-Control-Allow-Origin”) because the **timeout/gateway response is not coming from our function code** and therefore doesn’t include our CORS headers.
 
-# Comprehensive Fix for Navio Import Issues
+Evidence in your database right now:
+- `navio_import_queue` shows **Trondheim stuck in `status=processing` with `districts_discovered=5` but `districts_processed=0`**.
+- That pattern strongly suggests: districts were discovered and saved, then the function started neighborhood discovery and got killed **before it could checkpoint `districts_processed`**.
+- Once the frontend hits a request failure, it aborts the loop and the batch stays half-done.
 
-## Issues Identified
+So the true root cause is:
+1) **Per-call execution time is still sometimes too close to the limit**, and  
+2) **We checkpoint progress too late** (only after finishing a whole batch), and  
+3) **Frontend has no resilient retry/resume**, so one transient failure kills the whole run.
 
-### Issue 1: Two Stockholm Entries (NO and SE)
-**Root Cause**: There's a Navio entry `"Stockholm Sweden Bredang"` where the parsing regex `^(\S+)\s+(.+)$` matches "Stockholm" as the city with no country detected, defaulting to Norway (NO). This creates a separate `Stockholm (NO)` entry alongside the legitimate `Stockholm (SE)` entries.
-
-**The problematic data:**
-```
-name: "Stockholm Sweden Bredang"
-parsed: { city: "Stockholm", countryCode: null (defaults to NO), area: "Sweden Bredang" }
-```
-
-The correct parse should have detected "Sweden" and set countryCode to "SE".
-
-### Issue 2: "Rådyrvegen" as a City (It's a Street Address)
-**Root Cause**: Navio has a test entry: `"Rådyrvegen 49, Porsgrunn (Hurtigruta TEST)"`. The parsing regex sees "Rådyrvegen" as the first word and treats it as a city name.
-
-**The data:**
-```
-name: "Rådyrvegen 49, Porsgrunn (Hurtigruta TEST)"
-parsed: { city: "Rådyrvegen", area: "49, Porsgrunn (Hurtigruta TEST)" }
-```
-
-This should be filtered out as test data or properly parsed with Porsgrunn as the city.
-
-### Issue 3: "Norway" as a City
-**Root Cause**: Entries like `"Norway Kolbotn"` and `"Norway Ski"` are being parsed incorrectly. The regex `^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)\s+(.+)$` requires THREE parts after the country name, but these only have TWO parts (country + area).
-
-**The data:**
-```
-name: "Norway Kolbotn"
-Expected: { countryCode: "NO", city: "Kolbotn", area: null } 
-Actual: Falls through to simple match, gets city: "Norway"
-```
-
-### Issue 4: Asker & Bærum as Separate Entries with 1 District Each
-**Root Cause**: This is actually correct behavior - Asker and Bærum are separate municipalities in Norway. However, the AI is discovering only 1 district for each because they are small municipalities without official "bydeler" (districts). The AI is returning the city name as the single district, which is correct per the instructions.
-
-**Status**: Working as designed. Both municipalities are correctly parsed as separate cities.
-
-### Issue 5: Edge Function Timeout ("Failed to send a request to the edge function")
-**Root Cause**: The "finalize" mode was called but the function failed. Looking at the database, there are TWO batches (19 cities each = 38 total entries). The cleanup query in `initializeImport()` is supposed to delete old batches but clearly isn't working properly.
-
-**The duplicate batch issue:**
-- Batch `1d40adbd-...`: Created 2026-02-02 20:56
-- Batch `56ab6c3c-...`: Created 2026-02-03 08:10
-
-Both batches have 19 cities each, meaning the cleanup `.or("status.eq.pending,status.eq.processing")` only deletes pending/processing entries, but NOT already "completed" entries from previous batches.
+This plan addresses all three so the same class of failure doesn’t keep coming back.
 
 ---
 
-## Solution
-
-### Fix 1: Enhanced Parsing Logic for Edge Cases
-
-Add pattern matching for:
-1. `"Country Area"` format (only 2 parts after country)
-2. `"Stockholm Sweden Bredang"` format (city + country + area)
-3. Filter out test data containing "TEST" or street addresses
-
-```typescript
-function parseNavioName(name: string): ParsedNavioName {
-  // NEW: Filter out test data
-  if (/test/i.test(name) || /^\d+,/.test(name.split(' ')[1] || '')) {
-    return { countryCode: null, city: null, district: null, area: name, isInternalCode: false };
-  }
-
-  // NEW: Handle "Country Area" format (e.g., "Norway Kolbotn")
-  const countryAreaOnlyMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)$/i);
-  if (countryAreaOnlyMatch) {
-    const countryMap = { 'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA', 'denmark': 'DK', 'finland': 'FI' };
-    const rawCity = countryAreaOnlyMatch[2];
-    return {
-      countryCode: countryMap[countryAreaOnlyMatch[1].toLowerCase()],
-      city: normalizeCityName(rawCity),
-      district: null,
-      area: rawCity, // The area IS the city in this case
-      isInternalCode: false,
-    };
-  }
-
-  // NEW: Handle "City Country Area" format (e.g., "Stockholm Sweden Bredang")
-  const cityCountryAreaMatch = name.match(/^(\S+)\s+(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(.+)$/i);
-  if (cityCountryAreaMatch) {
-    const countryMap = { 'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA', 'denmark': 'DK', 'finland': 'FI' };
-    return {
-      countryCode: countryMap[cityCountryAreaMatch[2].toLowerCase()],
-      city: normalizeCityName(cityCountryAreaMatch[1]),
-      district: null,
-      area: cityCountryAreaMatch[3],
-      isInternalCode: false,
-    };
-  }
-
-  // ... existing patterns continue ...
-}
-```
-
-### Fix 2: Add Known City Mapping for Norwegian Areas
-
-Add a mapping for Norwegian areas that are actually cities:
-
-```typescript
-const norwegianCityAreas: Record<string, string> = {
-  'kolbotn': 'Nordre Follo',
-  'ski': 'Nordre Follo',
-  // Add more as needed
-};
-```
-
-### Fix 3: Better Batch Cleanup
-
-Change the cleanup logic to delete ALL old batches, not just pending/processing:
-
-```typescript
-// In initializeImport():
-// Clear ALL entries from ALL previous batches (keeping only the current one)
-await supabase
-  .from("navio_import_queue")
-  .delete()
-  .neq("batch_id", batchId); // Delete everything except current batch
-
-// Also delete any existing entries for current batch (fresh start)
-await supabase
-  .from("navio_import_queue")
-  .delete()
-  .eq("batch_id", batchId);
-```
-
-### Fix 4: Add Street Address Detection
-
-Skip entries that look like street addresses:
-
-```typescript
-function isLikelyStreetAddress(name: string): boolean {
-  // Matches patterns like "Rådyrvegen 49" or "Street 123"
-  const streetPatterns = [
-    /vegen\s+\d+/i,  // Norwegian: "vegen 49"
-    /veien\s+\d+/i,  // Norwegian: "veien 49"
-    /gata\s+\d+/i,   // Swedish: "gatan 49"
-    /gatan\s+\d+/i,
-    /straße\s+\d+/i, // German
-    /street\s+\d+/i,
-    /road\s+\d+/i,
-    /ave\s+\d+/i,
-    /\d+[,\s]+\w+\s+\(/i, // "49, Porsgrunn ("
-  ];
-  return streetPatterns.some(pattern => pattern.test(name));
-}
-```
+## Goals
+1) Make it extremely unlikely a single `process_city` call ever times out.
+2) Make progress recoverable even if a call is killed mid-way.
+3) Make the UI resilient: automatic retries + user-visible “Resume” that continues the same batch instead of starting over.
+4) Improve “what is happening” messaging (discovering districts vs neighborhoods), using real backend status instead of guesses.
 
 ---
 
-## Files to Modify
+## Backend changes (navio-import function)
+### A) Harden CORS/preflight (prevents genuine CORS issues and improves reliability)
+**File:** `supabase/functions/navio-import/index.ts`
+- Extend `corsHeaders` with:
+  - `Access-Control-Allow-Methods: "POST, OPTIONS"`
+  - (optional but recommended) `Access-Control-Max-Age: "86400"`
+- Change OPTIONS handler to return `"ok"` body and include methods.
+- Ensure every response path (including early returns) includes the full CORS header set.
 
-| File | Changes |
-|------|---------|
-| `supabase/functions/navio-import/index.ts` | 1. Add `countryAreaOnlyMatch` pattern for "Norway Kolbotn" format<br>2. Add `cityCountryAreaMatch` pattern for "Stockholm Sweden Bredang" format<br>3. Add test data filter (skip entries with "TEST")<br>4. Add street address detection<br>5. Fix batch cleanup to delete ALL old batches, not just pending/processing |
+Why: even though we already include `Access-Control-Allow-Origin` in normal responses, preflight + some clients behave better with explicit methods, and it reduces “false CORS” confusion when debugging.
 
----
+### B) Add time-budgeted district processing (avoid timeouts deterministically)
+**File:** `supabase/functions/navio-import/index.ts`
+- Replace “always process next 5 districts” with **time-budget processing**:
+  - Set `const DEADLINE_MS = 45_000` (or similar safety budget).
+  - Process districts until:
+    - `districtIndex === totalDistricts`, or
+    - `Date.now() - startTime > DEADLINE_MS`, then stop and return `needsMoreProcessing: true`.
+- Keep `MAX_DISTRICTS_PER_CALL` as an upper bound, but the real guard is the deadline.
 
-## Technical Details
+Why: a fixed count (5) can still exceed the limit if external calls slow down. A time budget prevents this.
 
-### parseNavioName() Changes
+### C) Checkpoint after every district (so crashes don’t lose work)
+**File:** `supabase/functions/navio-import/index.ts`
+- Inside the district loop, after each district:
+  - Update `discovered_hierarchy` (with the neighborhoods for that district)
+  - Update `districts_processed` to `i + 1`
+  - Update `neighborhoods_discovered` to the current running total
+  - Update a new timestamp field `last_progress_at = now()`
+- This makes the workflow **idempotent** and resumable. If the runtime dies mid-call, the next call continues from the last saved district.
 
-The function will be updated with this priority order:
+### D) Speed up AI calls (reduce latency spikes that trigger timeouts)
+**File:** `supabase/functions/navio-import/index.ts`
+- Update `callAI()` so Gemini and OpenAI calls run **in parallel** (Promise.allSettled).
+- Add per-request timeouts (AbortController) so one slow provider doesn’t stall the whole function.
+- Add small, bounded retries for AI calls (e.g., 1 retry) with jitter for transient upstream issues.
 
-1. **Filter**: Skip test data and street addresses
-2. **Pattern 1**: `"Country City Area"` - e.g., "Norway Asker Center"
-3. **Pattern 2**: `"Country Area"` - e.g., "Norway Kolbotn" (NEW)
-4. **Pattern 3**: `"City Country Area"` - e.g., "Stockholm Sweden Bredang" (NEW)
-5. **Pattern 4**: Internal codes - e.g., "NO BRG 6"
-6. **Pattern 5**: Simple `"City Area"` - e.g., "Oslo Frogner"
+Why: current `callAI()` is sequential (Gemini then OpenAI), which increases wall time per district.
 
-### Batch Cleanup Changes
+### E) Return richer progress/status for UI (“what’s happening”)
+**File:** `supabase/functions/navio-import/index.ts`
+Add fields to `process_city` response, e.g.:
+- `stage`: `"discovering_districts" | "discovering_neighborhoods" | "checkpointing" | "completed_city"`
+- `districtProgress`: `{ processed: number; total: number; currentDistrict?: string }`
 
-```typescript
-// Before (buggy - only deletes pending/processing):
-await supabase
-  .from("navio_import_queue")
-  .delete()
-  .or("status.eq.pending,status.eq.processing");
-
-// After (deletes ALL old batches):
-await supabase
-  .from("navio_import_queue")
-  .delete()
-  .neq("batch_id", batchId);
-```
-
----
-
-## Expected Results After Fix
-
-| Issue | Before | After |
-|-------|--------|-------|
-| Two Stockholms | Stockholm (NO) + Stockholm (SE) | Only Stockholm (SE) |
-| Rådyrvegen | Shows as city | Filtered out (test data) |
-| Norway as city | Norway (NO) with 28 districts | Kolbotn and Ski parsed as cities in Nordre Follo |
-| Asker & Bærum | Separate with 1 district | Same (correct behavior) |
-| Edge function timeout | Fails on finalize with 38 entries | Works with 19 entries after cleanup |
+Why: right now the frontend tries to infer district progress from a queue-progress object that doesn’t contain district totals. This will make the UI accurate and explanatory.
 
 ---
 
-## Validation Strategy
+## Database change (small but important)
+### Add `last_progress_at` to `navio_import_queue`
+**Migration:** new SQL file in `supabase/migrations/`
+- `ALTER TABLE navio_import_queue ADD COLUMN last_progress_at timestamptz;`
+- Default: `now()` (or nullable but set whenever processing starts/updates)
 
-After deploying the fix:
-1. Clear the `navio_import_queue` table
-2. Run import and verify:
-   - No "Rådyrvegen" entry
-   - No "Norway" as a city
-   - Only one Stockholm (SE)
-   - No duplicate batch entries
-   - Import completes successfully
+Why:
+- Helps resume logic, debug, and optionally detect “stuck” processing rows.
+- Allows us to safely implement “if processing row is stale, keep processing or reset” policies later without guessing.
 
+---
+
+## Frontend changes (resilience + better UX)
+### A) Retry/backoff for all navio-import calls (prevents one blip from failing the batch)
+**File:** `src/hooks/useNavioImport.ts`
+- Wrap `supabase.functions.invoke("navio-import")` in an `invokeWithRetry()` helper:
+  - Retry 3–5 times on retryable errors:
+    - “Failed to send a request to the Edge Function”
+    - network fetch failures
+    - transient 5xx
+    - CORS-looking failures that happen when the platform returns a gateway timeout
+  - Exponential backoff with jitter: 1s → 2s → 4s → 8s
+- During retry, update progress state to show “Reconnecting / retrying (2/5)…”.
+
+Why: this is the single biggest improvement for user-perceived reliability.
+
+### B) Persist batch + allow Resume (fixes “stuck processing” without starting over)
+**Files:** `src/hooks/useNavioImport.ts`, `src/pages/Dashboard.tsx`, `src/components/sync/SyncProgressDialog.tsx`, `src/components/sync/NavioCityProgress.tsx`
+- Store the current `batchId` and initial `cities` list in `localStorage` as soon as initialize succeeds.
+- If the import fails:
+  - Keep the batchId
+  - Show a “Resume import” button (in the error state UI) that continues calling `process_city` for the same batchId (no re-initialize unless explicitly requested).
+- Add a “Start over” secondary action that generates a new batchId and runs initialize fresh.
+
+Why: today, when it fails, you lose the batch and leave rows in `processing`. Resume makes the workflow robust and avoids repeating work.
+
+### C) Fix district progress UI to use real backend fields
+**File:** `src/hooks/useNavioImport.ts`, `src/components/sync/NavioCityProgress.tsx`
+- Stop reading district progress from `progress` (queue progress).
+- Use the new backend `districtProgress` and `stage` to render:
+  - “Discovering districts…”
+  - “Finding neighborhoods…”
+  - “Saving progress…”
+  - “Retrying request (n/m)…”
+- Display current district name when available.
+
+---
+
+## “Stuck” batch cleanup policy (so it doesn’t build up again)
+We’ll keep your improved initialization cleanup (delete other batches), but we’ll make it intentional:
+- Only delete other batches when starting a brand-new import.
+- Resume should not delete anything; it should continue the same batch.
+
+Optionally (nice-to-have after reliability is restored):
+- Add a small UI action “Clear old batches” in Settings/Debug that deletes `navio_import_queue` rows older than X days.
+
+---
+
+## Implementation sequence
+1) Backend: CORS + time-budget + per-district checkpointing + parallel AI calls + richer response fields.
+2) DB migration: add `last_progress_at`.
+3) Frontend: retry/backoff wrapper.
+4) Frontend: persist batch + Resume/Start over UI.
+5) Frontend: update UI messaging using `stage` + `districtProgress`.
+6) Validation run (end-to-end):
+   - Run a full import.
+   - Confirm Trondheim (and other multi-district cities) increments `districts_processed` in DB while running.
+   - Confirm a forced refresh / temporary disconnect can be resumed without restarting.
+   - Confirm no more “CORS blocked” during normal flow; and if the platform times out, retries recover automatically.
+
+---
+
+## Validation checklist (what you should see after)
+- No city remains stuck at `status=processing` with `districts_processed=0` after it has begun district work.
+- The UI explains the current phase:
+  - “Discovering districts in X”
+  - “Finding neighborhoods in X → District Y (3/5)”
+  - “Saving progress…”
+- If a request fails transiently:
+  - UI shows “Retrying…”
+  - Import continues automatically
+- If it fails repeatedly:
+  - UI shows “Resume import” (keeps batchId)
+  - Resume continues from last checkpoint instead of repeating districts.
