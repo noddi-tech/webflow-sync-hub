@@ -91,7 +91,52 @@ export default function NavioPreview() {
     current: number;
     total: number;
     currentCityName?: string;
+    retryAttempt?: number;
+    retryMax?: number;
   } | null>(null);
+
+  // Retry helper for transient network errors
+  const isRetryableError = (error: unknown): boolean => {
+    if (!error) return false;
+    const msg = error instanceof Error ? error.message : String(error);
+    return (
+      msg.includes("Failed to fetch") ||
+      msg.includes("Failed to send") ||
+      msg.includes("network") ||
+      msg.includes("timeout") ||
+      msg.includes("504") ||
+      msg.includes("502") ||
+      msg.includes("503")
+    );
+  };
+
+  const invokeWithRetry = async <T,>(
+    fn: () => Promise<T>,
+    maxRetries: number = 5,
+    baseDelayMs: number = 1500,
+    onRetry?: (attempt: number, max: number) => void
+  ): Promise<T> => {
+    let lastError: unknown;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        
+        if (!isRetryableError(error) || attempt === maxRetries) {
+          throw error;
+        }
+        
+        const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 500;
+        console.log(`Retry ${attempt}/${maxRetries} after ${Math.round(delay)}ms...`);
+        onRetry?.(attempt, maxRetries);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+    
+    throw lastError;
+  };
 
   // Fetch all batches
   const { data: batches } = useQuery({
@@ -398,40 +443,65 @@ export default function NavioPreview() {
   const approvedCount = stagingData?.filter(c => c.status === "approved").length ?? 0;
   const currentBatchForCommit = selectedBatch !== "all" ? selectedBatch : batches?.[0]?.id;
 
-  // Incremental commit - one city at a time to avoid timeout
+  // Incremental commit - one city at a time with retry logic
   const commitIncrementally = useCallback(async (batchId: string) => {
-    const totalApproved = approvedCount;
     setIsCommitting(true);
-    setCommitProgress({ current: 0, total: totalApproved });
+    setCommitProgress({ current: 0, total: approvedCount });
     
     let completed = false;
     let citiesCommitted = 0;
+    let totalRemaining = approvedCount;
     
     while (!completed) {
       try {
-        const { data, error } = await supabase.functions.invoke("navio-import", {
-          body: { batch_id: batchId, mode: "commit_city" },
-        });
+        const response = await invokeWithRetry(
+          async () => {
+            const res = await supabase.functions.invoke("navio-import", {
+              body: { batch_id: batchId, mode: "commit_city" },
+            });
+            if (res.error) throw res.error;
+            if (res.data?.error) throw new Error(res.data.error);
+            return res;
+          },
+          5,
+          1500,
+          (attempt, max) => {
+            setCommitProgress(prev => prev ? {
+              ...prev,
+              retryAttempt: attempt,
+              retryMax: max,
+            } : null);
+          }
+        );
         
-        if (error) throw error;
-        if (data?.error) throw new Error(data.error);
+        const { data } = response;
         
+        // Clear retry state on success
         completed = data.completed;
         citiesCommitted++;
+        totalRemaining = data.remaining ?? (approvedCount - citiesCommitted);
         
         setCommitProgress({
           current: citiesCommitted,
-          total: totalApproved,
+          total: citiesCommitted + totalRemaining,
           currentCityName: data.committedCity,
         });
         
       } catch (error) {
         setCommitProgress(null);
         setIsCommitting(false);
+        
+        // Refresh data to show updated status (partial commit may have happened)
+        queryClient.invalidateQueries({ queryKey: ["navio-staging-data"] });
+        
         toast({
-          title: "Commit Failed",
-          description: error instanceof Error ? error.message : "Unknown error",
-          variant: "destructive",
+          title: citiesCommitted > 0 
+            ? `Commit paused after ${citiesCommitted} cities` 
+            : "Commit Failed",
+          description: citiesCommitted > 0
+            ? `Click 'Commit' again to continue with ${totalRemaining} remaining cities.`
+            : (error instanceof Error ? error.message : "Unknown error"),
+          variant: citiesCommitted > 0 ? "default" : "destructive",
         });
         return;
       }
@@ -447,7 +517,7 @@ export default function NavioPreview() {
       title: "Commit Complete",
       description: `Successfully committed ${citiesCommitted} cities to production database.`,
     });
-  }, [approvedCount, queryClient, toast]);
+  }, [approvedCount, queryClient, toast, invokeWithRetry]);
 
   return (
     <div className="p-8">
