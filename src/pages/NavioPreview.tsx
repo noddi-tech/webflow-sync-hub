@@ -34,7 +34,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Check, X, Trash2, RefreshCw, ChevronRight, ChevronDown, Globe, AlertTriangle } from "lucide-react";
+import { Check, X, Trash2, RefreshCw, ChevronRight, ChevronDown, Globe, AlertTriangle, MapPin } from "lucide-react";
+import { DeliveryAreaMap } from "@/components/map/DeliveryAreaMap";
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
 import {
   Tooltip,
@@ -509,6 +510,10 @@ export default function NavioPreview() {
         <TabsList className="mb-4">
           <TabsTrigger value="table">Table View</TabsTrigger>
           <TabsTrigger value="hierarchy">Hierarchy View</TabsTrigger>
+          <TabsTrigger value="map">
+            <MapPin className="h-4 w-4 mr-2" />
+            Map View
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="table">
@@ -680,6 +685,17 @@ export default function NavioPreview() {
                   ))}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="map">
+          <Card>
+            <CardHeader>
+              <CardTitle>Delivery Area Map</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <DeliveryAreaMap />
             </CardContent>
           </Card>
         </TabsContent>
