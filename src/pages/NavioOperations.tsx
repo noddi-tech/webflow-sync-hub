@@ -4,7 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Search, MapPinned, Brain, ArrowRight } from "lucide-react";
 import { useNavioImport } from "@/hooks/useNavioImport";
-import { DeltaSummaryCard } from "@/components/sync/DeltaSummary";
+import { NavioStatusCard } from "@/components/sync/NavioStatusCard";
+import { DeltaResultsPanel } from "@/components/sync/DeltaResultsPanel";
+import { DeltaCheckLoading } from "@/components/sync/DeltaCheckLoading";
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
 import { Link } from "react-router-dom";
 
@@ -42,16 +44,23 @@ export default function NavioOperations() {
         </p>
       </div>
 
-      <div className="grid gap-6 max-w-4xl">
-        {/* Delta Summary Card */}
-        {deltaResult && (
-          <DeltaSummaryCard
-            deltaResult={deltaResult}
+      <div className="grid gap-6 max-w-5xl">
+        {/* Status Card - Always visible */}
+        <NavioStatusCard />
+
+        {/* Loading state during delta check */}
+        {isCheckingDelta && <DeltaCheckLoading />}
+
+        {/* Delta Results Panel - Shows after check completes */}
+        {deltaResult && !isCheckingDelta && (
+          <DeltaResultsPanel
+            result={deltaResult}
             onStartImport={startDeltaImport}
             isImporting={isNavioImporting}
           />
         )}
 
+        {/* Action Cards */}
         <div className="grid gap-6 md:grid-cols-2">
           {/* Check for Changes */}
           <Card>
@@ -167,6 +176,7 @@ export default function NavioOperations() {
         cityProgress={cityProgress}
         onComplete={() => {
           queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
+          queryClient.invalidateQueries({ queryKey: ["navio-status"] });
         }}
       />
     </div>
