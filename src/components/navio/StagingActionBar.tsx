@@ -9,6 +9,8 @@ interface CommitProgress {
   current: number;
   total: number;
   currentCityName?: string;
+  retryAttempt?: number;
+  retryMax?: number;
 }
 
 interface StagingActionBarProps {
@@ -93,12 +95,14 @@ export function StagingActionBar({
           {approvedCount > 0 && (
             <div className="flex items-center gap-3">
               {isCommitting && commitProgress ? (
-                <div className="flex items-center gap-3 min-w-[200px]">
+                <div className="flex items-center gap-3 min-w-[240px]">
                   <RefreshCw className="h-4 w-4 animate-spin text-primary" />
                   <div className="flex-1">
                     <div className="flex justify-between text-xs mb-1">
-                      <span className="truncate max-w-[120px]">
-                        {commitProgress.currentCityName || "Committing..."}
+                      <span className="truncate max-w-[140px]">
+                        {commitProgress.retryAttempt 
+                          ? `Retrying (${commitProgress.retryAttempt}/${commitProgress.retryMax})...`
+                          : commitProgress.currentCityName || "Committing..."}
                       </span>
                       <span>{commitProgress.current}/{commitProgress.total}</span>
                     </div>
