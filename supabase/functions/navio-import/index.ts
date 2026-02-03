@@ -362,26 +362,102 @@ interface ParsedNavioName {
   district: string | null;
   area: string;
   isInternalCode: boolean;
+  isFiltered: boolean;
+}
+
+const countryCodeMap: Record<string, string> = {
+  'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA',
+  'denmark': 'DK', 'finland': 'FI'
+};
+
+/**
+ * Checks if a name looks like test data or a street address (should be filtered out)
+ */
+function isTestDataOrStreetAddress(name: string): boolean {
+  // Filter out test data
+  if (/test/i.test(name)) {
+    return true;
+  }
+  
+  // Street address patterns
+  const streetPatterns = [
+    /vegen\s+\d+/i,    // Norwegian: "Rådyrvegen 49"
+    /veien\s+\d+/i,    // Norwegian: "veien 49"
+    /gata\s+\d+/i,     // Swedish: "gatan 49"
+    /gatan\s+\d+/i,
+    /straße\s+\d+/i,   // German
+    /strasse\s+\d+/i,
+    /street\s+\d+/i,
+    /road\s+\d+/i,
+    /ave\s+\d+/i,
+    /\d+[,\s]+\w+\s+\(/i,  // "49, Porsgrunn ("
+  ];
+  
+  return streetPatterns.some(pattern => pattern.test(name));
 }
 
 function parseNavioName(name: string): ParsedNavioName {
+  // FILTER 1: Skip test data and street addresses
+  if (isTestDataOrStreetAddress(name)) {
+    console.log(`Filtering out test/address data: "${name}"`);
+    return { 
+      countryCode: null, 
+      city: null, 
+      district: null, 
+      area: name, 
+      isInternalCode: false,
+      isFiltered: true 
+    };
+  }
+
+  // PATTERN 1: "Country City Area" format (e.g., "Norway Asker Center")
   const countryAreaMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)\s+(.+)$/i);
   if (countryAreaMatch) {
-    const countryMap: Record<string, string> = {
-      'germany': 'DE', 'norway': 'NO', 'sweden': 'SE', 'canada': 'CA',
-      'denmark': 'DK', 'finland': 'FI'
-    };
     const rawCity = countryAreaMatch[2];
     const normalizedCity = normalizeCityName(rawCity);
     return {
-      countryCode: countryMap[countryAreaMatch[1].toLowerCase()],
+      countryCode: countryCodeMap[countryAreaMatch[1].toLowerCase()],
       city: normalizedCity,
       district: null,
       area: countryAreaMatch[3],
       isInternalCode: false,
+      isFiltered: false,
     };
   }
   
+  // PATTERN 2: "Country Area" format - only 2 parts (e.g., "Norway Kolbotn")
+  const countryAreaOnlyMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)$/i);
+  if (countryAreaOnlyMatch) {
+    const rawCity = countryAreaOnlyMatch[2];
+    const normalizedCity = normalizeCityName(rawCity);
+    console.log(`Parsed "Country Area" format: "${name}" -> city: ${normalizedCity}`);
+    return {
+      countryCode: countryCodeMap[countryAreaOnlyMatch[1].toLowerCase()],
+      city: normalizedCity,
+      district: null,
+      area: rawCity,  // The area IS the city in this case
+      isInternalCode: false,
+      isFiltered: false,
+    };
+  }
+  
+  // PATTERN 3: "City Country Area" format (e.g., "Stockholm Sweden Bredang")
+  const cityCountryAreaMatch = name.match(/^(\S+)\s+(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(.+)$/i);
+  if (cityCountryAreaMatch) {
+    const rawCity = cityCountryAreaMatch[1];
+    const normalizedCity = normalizeCityName(rawCity);
+    console.log(`Parsed "City Country Area" format: "${name}" -> city: ${normalizedCity}, country: ${cityCountryAreaMatch[2]}`);
+    return {
+      countryCode: countryCodeMap[cityCountryAreaMatch[2].toLowerCase()],
+      city: normalizedCity,
+      district: null,
+      area: cityCountryAreaMatch[3],
+      isInternalCode: false,
+      isFiltered: false,
+    };
+  }
+  
+  // PATTERN 4: Internal codes (e.g., "NO BRG 6")
   const codeMatch = name.match(/^([A-Z]{2})\s+([A-Z]{3})\s+(\d+)$/);
   if (codeMatch) {
     const cityCodeMap: Record<string, string> = {
@@ -402,9 +478,11 @@ function parseNavioName(name: string): ParsedNavioName {
       district: null,
       area: name,
       isInternalCode: true,
+      isFiltered: false,
     };
   }
   
+  // PATTERN 5: Simple "City Area" format (e.g., "Oslo Frogner")
   const simpleMatch = name.match(/^(\S+)\s+(.+)$/);
   if (simpleMatch && simpleMatch[1].length > 2) {
     const potentialCity = simpleMatch[1];
@@ -416,6 +494,7 @@ function parseNavioName(name: string): ParsedNavioName {
         district: null,
         area: simpleMatch[2],
         isInternalCode: false,
+        isFiltered: false,
       };
     }
   }
@@ -425,7 +504,8 @@ function parseNavioName(name: string): ParsedNavioName {
     city: null, 
     district: null,
     area: name, 
-    isInternalCode: false 
+    isInternalCode: false,
+    isFiltered: false 
   };
 }
 
@@ -492,10 +572,17 @@ async function initializeImport(
     };
   });
 
-  // Group areas by city
+  // Group areas by city (filtering out test data and street addresses)
   const cityMap = new Map<string, { name: string; countryCode: string; navioAreas: NavioArea[] }>();
+  let filteredCount = 0;
   
   for (const area of navioAreas) {
+    // Skip filtered entries (test data, street addresses)
+    if (area.parsed.isFiltered) {
+      filteredCount++;
+      continue;
+    }
+    
     if (area.parsed.city) {
       const normalizedCity = normalizeCityName(area.parsed.city);
       const countryCode = area.parsed.countryCode || 'NO'; // Default to NO
@@ -512,16 +599,21 @@ async function initializeImport(
     }
   }
 
-  console.log(`Found ${cityMap.size} unique cities in Navio data`);
+  console.log(`Found ${cityMap.size} unique cities in Navio data (filtered out ${filteredCount} test/address entries)`);
 
-  // Clear ALL old pending/processing entries from previous batches
-  // Using .or() syntax for better compatibility
-  await supabase
+  // CRITICAL FIX: Clear ALL entries from ALL previous batches, not just pending/processing
+  // This prevents duplicate batches from causing timeouts during finalization
+  console.log(`Clearing all previous batch entries...`);
+  const { error: deleteError } = await supabase
     .from("navio_import_queue")
     .delete()
-    .or("status.eq.pending,status.eq.processing");
+    .neq("batch_id", batchId);  // Delete everything except current batch
+  
+  if (deleteError) {
+    console.log("Delete previous batches error (may be empty):", deleteError.message);
+  }
 
-  // Also clear this specific batch if it exists
+  // Also clear this specific batch if it exists (fresh start)
   await supabase.from("navio_import_queue").delete().eq("batch_id", batchId);
 
   // Insert cities into queue
