@@ -316,6 +316,7 @@ export type Database = {
           districts_processed: number
           error_message: string | null
           id: string
+          last_progress_at: string | null
           navio_areas: Json
           neighborhoods_discovered: number | null
           started_at: string | null
@@ -332,6 +333,7 @@ export type Database = {
           districts_processed?: number
           error_message?: string | null
           id?: string
+          last_progress_at?: string | null
           navio_areas?: Json
           neighborhoods_discovered?: number | null
           started_at?: string | null
@@ -348,6 +350,7 @@ export type Database = {
           districts_processed?: number
           error_message?: string | null
           id?: string
+          last_progress_at?: string | null
           navio_areas?: Json
           neighborhoods_discovered?: number | null
           started_at?: string | null

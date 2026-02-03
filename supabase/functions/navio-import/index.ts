@@ -4,10 +4,17 @@ import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-
 // deno-lint-ignore no-explicit-any
 type SupabaseClientAny = SupabaseClient<any, any, any>;
 
+// Enhanced CORS headers with explicit methods
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
 };
+
+// Time budget for processing - leave buffer before 60s timeout
+const DEADLINE_MS = 45_000;
+const AI_CALL_TIMEOUT_MS = 20_000;
 
 interface NavioServiceArea {
   id: number;
@@ -69,60 +76,76 @@ const neighborhoodTerminology: Record<string, NeighborhoodTerminology> = {
 };
 
 // =============================================================================
-// AI CALLER FUNCTIONS - MULTI-MODEL SUPPORT (GEMINI + OPENAI)
+// AI CALLER FUNCTIONS - PARALLEL MULTI-MODEL SUPPORT (GEMINI + OPENAI)
 // =============================================================================
 
-async function callGemini(prompt: string, apiKey: string): Promise<string> {
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        { role: "system", content: "You are a geography expert specializing in administrative divisions and neighborhoods. Return only valid JSON arrays, no markdown formatting or explanation." },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
+async function callGeminiWithTimeout(prompt: string, apiKey: string, timeoutMs: number): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: "You are a geography expert specializing in administrative divisions and neighborhoods. Return only valid JSON arrays, no markdown formatting or explanation." },
+          { role: "user", content: prompt },
+        ],
+      }),
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("Gemini API error:", response.status, errorText);
-    throw new Error(`Gemini API error: ${response.status}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Gemini API error:", response.status, errorText);
+      throw new Error(`Gemini API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "[]";
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || "[]";
 }
 
-async function callOpenAI(prompt: string, apiKey: string): Promise<string> {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: "You are a geography expert specializing in administrative divisions and neighborhoods. Return only valid JSON arrays, no markdown formatting or explanation." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-    }),
-  });
+async function callOpenAIWithTimeout(prompt: string, apiKey: string, timeoutMs: number): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "You are a geography expert specializing in administrative divisions and neighborhoods. Return only valid JSON arrays, no markdown formatting or explanation." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+      }),
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error("OpenAI API error:", response.status, errorText);
-    throw new Error(`OpenAI API error: ${response.status}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("OpenAI API error:", response.status, errorText);
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "[]";
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || "[]";
 }
 
 function parseJsonArray(content: string): string[] {
@@ -152,32 +175,46 @@ function mergeAndDeduplicate(arr1: string[], arr2: string[]): string[] {
   return Array.from(normalized.values());
 }
 
+// PARALLEL AI CALLS - Run Gemini and OpenAI simultaneously for speed
 async function callAI(
   prompt: string,
   lovableKey: string,
   openAIKey?: string
 ): Promise<string[]> {
-  let geminiResults: string[] = [];
-  try {
-    const geminiResponse = await callGemini(prompt, lovableKey);
-    geminiResults = parseJsonArray(geminiResponse);
-    console.log(`Gemini returned ${geminiResults.length} results`);
-  } catch (e) {
-    console.error("Gemini call failed:", e);
-  }
-
+  const promises: Promise<{ source: string; results: string[] }>[] = [];
+  
+  // Launch Gemini call
+  promises.push(
+    callGeminiWithTimeout(prompt, lovableKey, AI_CALL_TIMEOUT_MS)
+      .then(response => ({ source: 'Gemini', results: parseJsonArray(response) }))
+      .catch(e => {
+        console.error("Gemini call failed:", e.message || e);
+        return { source: 'Gemini', results: [] };
+      })
+  );
+  
+  // Launch OpenAI call in parallel if key exists
   if (openAIKey) {
-    try {
-      const openAIResponse = await callOpenAI(prompt, openAIKey);
-      const openAIResults = parseJsonArray(openAIResponse);
-      console.log(`OpenAI returned ${openAIResults.length} results`);
-      return mergeAndDeduplicate(geminiResults, openAIResults);
-    } catch (e) {
-      console.error("OpenAI call failed, using Gemini results only:", e);
-    }
+    promises.push(
+      callOpenAIWithTimeout(prompt, openAIKey, AI_CALL_TIMEOUT_MS)
+        .then(response => ({ source: 'OpenAI', results: parseJsonArray(response) }))
+        .catch(e => {
+          console.error("OpenAI call failed:", e.message || e);
+          return { source: 'OpenAI', results: [] };
+        })
+    );
   }
-
-  return geminiResults;
+  
+  // Wait for all to settle
+  const results = await Promise.all(promises);
+  
+  let merged: string[] = [];
+  for (const result of results) {
+    console.log(`${result.source} returned ${result.results.length} results`);
+    merged = mergeAndDeduplicate(merged, result.results);
+  }
+  
+  return merged;
 }
 
 // =============================================================================
@@ -287,7 +324,6 @@ const citySpellingNormalizations: Record<string, string> = {
   'cologne': 'Köln', 'koeln': 'Köln',
   'dusseldorf': 'Düsseldorf', 'duesseldorf': 'Düsseldorf',
   'nuremberg': 'Nürnberg', 'nuernberg': 'Nürnberg',
-  // Navio typos
   'tornoto': 'Toronto',
 };
 
@@ -374,30 +410,27 @@ const countryCodeMap: Record<string, string> = {
  * Checks if a name looks like test data or a street address (should be filtered out)
  */
 function isTestDataOrStreetAddress(name: string): boolean {
-  // Filter out test data
   if (/test/i.test(name)) {
     return true;
   }
   
-  // Street address patterns
   const streetPatterns = [
-    /vegen\s+\d+/i,    // Norwegian: "Rådyrvegen 49"
-    /veien\s+\d+/i,    // Norwegian: "veien 49"
-    /gata\s+\d+/i,     // Swedish: "gatan 49"
+    /vegen\s+\d+/i,
+    /veien\s+\d+/i,
+    /gata\s+\d+/i,
     /gatan\s+\d+/i,
-    /straße\s+\d+/i,   // German
+    /straße\s+\d+/i,
     /strasse\s+\d+/i,
     /street\s+\d+/i,
     /road\s+\d+/i,
     /ave\s+\d+/i,
-    /\d+[,\s]+\w+\s+\(/i,  // "49, Porsgrunn ("
+    /\d+[,\s]+\w+\s+\(/i,
   ];
   
   return streetPatterns.some(pattern => pattern.test(name));
 }
 
 function parseNavioName(name: string): ParsedNavioName {
-  // FILTER 1: Skip test data and street addresses
   if (isTestDataOrStreetAddress(name)) {
     console.log(`Filtering out test/address data: "${name}"`);
     return { 
@@ -410,7 +443,7 @@ function parseNavioName(name: string): ParsedNavioName {
     };
   }
 
-  // PATTERN 1: "Country City Area" format (e.g., "Norway Asker Center")
+  // PATTERN 1: "Country City Area" format
   const countryAreaMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)\s+(.+)$/i);
   if (countryAreaMatch) {
     const rawCity = countryAreaMatch[2];
@@ -425,7 +458,7 @@ function parseNavioName(name: string): ParsedNavioName {
     };
   }
   
-  // PATTERN 2: "Country Area" format - only 2 parts (e.g., "Norway Kolbotn")
+  // PATTERN 2: "Country Area" format - only 2 parts
   const countryAreaOnlyMatch = name.match(/^(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(\S+)$/i);
   if (countryAreaOnlyMatch) {
     const rawCity = countryAreaOnlyMatch[2];
@@ -435,13 +468,13 @@ function parseNavioName(name: string): ParsedNavioName {
       countryCode: countryCodeMap[countryAreaOnlyMatch[1].toLowerCase()],
       city: normalizedCity,
       district: null,
-      area: rawCity,  // The area IS the city in this case
+      area: rawCity,
       isInternalCode: false,
       isFiltered: false,
     };
   }
   
-  // PATTERN 3: "City Country Area" format (e.g., "Stockholm Sweden Bredang")
+  // PATTERN 3: "City Country Area" format
   const cityCountryAreaMatch = name.match(/^(\S+)\s+(Germany|Norway|Sweden|Canada|Denmark|Finland)\s+(.+)$/i);
   if (cityCountryAreaMatch) {
     const rawCity = cityCountryAreaMatch[1];
@@ -457,7 +490,7 @@ function parseNavioName(name: string): ParsedNavioName {
     };
   }
   
-  // PATTERN 4: Internal codes (e.g., "NO BRG 6")
+  // PATTERN 4: Internal codes
   const codeMatch = name.match(/^([A-Z]{2})\s+([A-Z]{3})\s+(\d+)$/);
   if (codeMatch) {
     const cityCodeMap: Record<string, string> = {
@@ -482,7 +515,7 @@ function parseNavioName(name: string): ParsedNavioName {
     };
   }
   
-  // PATTERN 5: Simple "City Area" format (e.g., "Oslo Frogner")
+  // PATTERN 5: Simple "City Area" format
   const simpleMatch = name.match(/^(\S+)\s+(.+)$/);
   if (simpleMatch && simpleMatch[1].length > 2) {
     const potentialCity = simpleMatch[1];
@@ -528,7 +561,6 @@ async function initializeImport(
 ): Promise<{ totalCities: number; cities: Array<{ name: string; countryCode: string }> }> {
   console.log("=== INITIALIZE MODE: Fetching Navio data ===");
   
-  // Fetch from Navio API
   const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
   navioUrl.searchParams.set("page_size", "1000");
   navioUrl.searchParams.set("page_index", "0");
@@ -560,7 +592,6 @@ async function initializeImport(
 
   console.log(`Fetched ${serviceAreas.length} service areas from Navio`);
 
-  // Parse and extract unique cities
   const navioAreas: NavioArea[] = serviceAreas.map(sa => {
     const rawName = sa.name || sa.display_name || `Area ${sa.id}`;
     const parsed = parseNavioName(rawName);
@@ -572,12 +603,10 @@ async function initializeImport(
     };
   });
 
-  // Group areas by city (filtering out test data and street addresses)
   const cityMap = new Map<string, { name: string; countryCode: string; navioAreas: NavioArea[] }>();
   let filteredCount = 0;
   
   for (const area of navioAreas) {
-    // Skip filtered entries (test data, street addresses)
     if (area.parsed.isFiltered) {
       filteredCount++;
       continue;
@@ -585,7 +614,7 @@ async function initializeImport(
     
     if (area.parsed.city) {
       const normalizedCity = normalizeCityName(area.parsed.city);
-      const countryCode = area.parsed.countryCode || 'NO'; // Default to NO
+      const countryCode = area.parsed.countryCode || 'NO';
       const key = `${countryCode}_${normalizeForDedup(normalizedCity)}`;
       
       if (!cityMap.has(key)) {
@@ -601,22 +630,19 @@ async function initializeImport(
 
   console.log(`Found ${cityMap.size} unique cities in Navio data (filtered out ${filteredCount} test/address entries)`);
 
-  // CRITICAL FIX: Clear ALL entries from ALL previous batches, not just pending/processing
-  // This prevents duplicate batches from causing timeouts during finalization
+  // CRITICAL: Clear ALL previous batch entries
   console.log(`Clearing all previous batch entries...`);
   const { error: deleteError } = await supabase
     .from("navio_import_queue")
     .delete()
-    .neq("batch_id", batchId);  // Delete everything except current batch
+    .neq("batch_id", batchId);
   
   if (deleteError) {
     console.log("Delete previous batches error (may be empty):", deleteError.message);
   }
 
-  // Also clear this specific batch if it exists (fresh start)
   await supabase.from("navio_import_queue").delete().eq("batch_id", batchId);
 
-  // Insert cities into queue
   const queueEntries = Array.from(cityMap.entries()).map(([, data]) => ({
     batch_id: batchId,
     city_name: data.name,
@@ -628,6 +654,7 @@ async function initializeImport(
       isInternalCode: a.parsed.isInternalCode,
     })),
     status: "pending",
+    last_progress_at: new Date().toISOString(),
   }));
 
   if (queueEntries.length > 0) {
@@ -644,7 +671,7 @@ async function initializeImport(
 }
 
 // =============================================================================
-// INCREMENTAL IMPORT: PROCESS CITY MODE
+// INCREMENTAL IMPORT: PROCESS CITY MODE WITH TIME BUDGETING
 // =============================================================================
 
 interface QueueProgress {
@@ -674,23 +701,29 @@ async function getQueueProgress(supabase: any, batchId: string): Promise<QueuePr
   return { current: completed, total, completed, pending, processing, error };
 }
 
-const MAX_DISTRICTS_PER_CALL = 5;
+// Response type with detailed stage info for UI
+interface ProcessCityResponse {
+  city: string | null;
+  completed: boolean;
+  progress: QueueProgress;
+  districtsDiscovered: number;
+  neighborhoodsDiscovered: number;
+  needsMoreProcessing?: boolean;
+  stage?: 'discovering_districts' | 'discovering_neighborhoods' | 'checkpointing' | 'completed_city';
+  districtProgress?: { processed: number; total: number; currentDistrict?: string };
+}
 
 // deno-lint-ignore no-explicit-any
 async function processNextCity(
   supabase: any,
   batchId: string,
   lovableKey: string,
-  openAIKey?: string
-): Promise<{ 
-  city: string | null; 
-  completed: boolean; 
-  progress: QueueProgress;
-  districtsDiscovered: number;
-  neighborhoodsDiscovered: number;
-  needsMoreProcessing?: boolean;
-}> {
-  // First, check if there's a city still being processed (partial completion)
+  openAIKey?: string,
+  startTime?: number
+): Promise<ProcessCityResponse> {
+  const callStartTime = startTime || Date.now();
+  
+  // Check if there's a city still being processed
   const { data: processingCity } = await supabase
     .from("navio_import_queue")
     .select("*")
@@ -700,11 +733,9 @@ async function processNextCity(
     .limit(1)
     .maybeSingle();
 
-  // If we have a city mid-processing, continue with it
   const cityToProcess = processingCity;
 
   if (!cityToProcess) {
-    // Get next pending city
     const { data: nextCity, error: fetchError } = await supabase
       .from("navio_import_queue")
       .select("*")
@@ -720,32 +751,37 @@ async function processNextCity(
     }
 
     if (!nextCity) {
-      // No more cities to process
       const progress = await getQueueProgress(supabase, batchId);
-      return { city: null, completed: true, progress, districtsDiscovered: 0, neighborhoodsDiscovered: 0 };
+      return { 
+        city: null, 
+        completed: true, 
+        progress, 
+        districtsDiscovered: 0, 
+        neighborhoodsDiscovered: 0,
+        stage: 'completed_city'
+      };
     }
 
-    // Mark as processing if this is a fresh city
     await supabase
       .from("navio_import_queue")
       .update({ 
         status: "processing", 
         started_at: new Date().toISOString(),
-        districts_processed: 0 
+        districts_processed: 0,
+        last_progress_at: new Date().toISOString(),
       })
       .eq("id", nextCity.id);
 
     await logSync(supabase, "navio", "import", "in_progress", null,
       `Processing ${nextCity.city_name}...`, batchId);
 
-    return await processCityDistricts(supabase, nextCity, batchId, lovableKey, openAIKey);
+    return await processCityDistricts(supabase, nextCity, batchId, lovableKey, openAIKey, callStartTime);
   }
 
-  // Continue processing an existing city
-  return await processCityDistricts(supabase, cityToProcess, batchId, lovableKey, openAIKey);
+  return await processCityDistricts(supabase, cityToProcess, batchId, lovableKey, openAIKey, callStartTime);
 }
 
-// Process districts in batches to avoid timeout
+// TIME-BUDGETED district processing with PER-DISTRICT checkpointing
 // deno-lint-ignore no-explicit-any
 async function processCityDistricts(
   supabase: any,
@@ -753,23 +789,18 @@ async function processCityDistricts(
   city: any,
   batchId: string,
   lovableKey: string,
-  openAIKey?: string
-): Promise<{ 
-  city: string | null; 
-  completed: boolean; 
-  progress: QueueProgress;
-  districtsDiscovered: number;
-  neighborhoodsDiscovered: number;
-  needsMoreProcessing?: boolean;
-}> {
+  openAIKey?: string,
+  startTime?: number
+): Promise<ProcessCityResponse> {
+  const callStartTime = startTime || Date.now();
   console.log(`\n=== PROCESSING: ${city.city_name} (${city.country_code}) ===`);
 
   try {
-    // Get existing hierarchy or initialize
     let hierarchy: Record<string, { name: string; neighborhoods: string[]; source: string }> = 
       city.discovered_hierarchy || {};
     let allDistricts: string[] = Object.values(hierarchy).map(d => d.name);
-    const districtsProcessed = city.districts_processed || 0;
+    let districtsProcessed = city.districts_processed || 0;
+    let neighborhoodCount = city.neighborhoods_discovered || 0;
 
     // If no districts discovered yet, discover them first
     if (allDistricts.length === 0) {
@@ -781,7 +812,6 @@ async function processCityDistricts(
         openAIKey
       );
 
-      // Initialize hierarchy structure
       for (const districtName of allDistricts) {
         hierarchy[normalizeForDedup(districtName)] = {
           name: districtName,
@@ -790,32 +820,48 @@ async function processCityDistricts(
         };
       }
 
-      // Save districts immediately so we don't re-discover on resume
+      // CHECKPOINT: Save districts immediately
       await supabase
         .from("navio_import_queue")
         .update({ 
           districts_discovered: allDistricts.length,
-          discovered_hierarchy: hierarchy
+          discovered_hierarchy: hierarchy,
+          last_progress_at: new Date().toISOString(),
         })
         .eq("id", city.id);
+        
+      console.log(`Saved ${allDistricts.length} discovered districts to checkpoint`);
     }
 
     const totalDistricts = allDistricts.length;
-    const startIndex = districtsProcessed;
-    const endIndex = Math.min(startIndex + MAX_DISTRICTS_PER_CALL, totalDistricts);
 
-    console.log(`Processing districts ${startIndex + 1} to ${endIndex} of ${totalDistricts}`);
+    // TIME-BUDGETED processing: process districts until deadline or completion
+    for (let i = districtsProcessed; i < totalDistricts; i++) {
+      // CHECK TIME BUDGET before starting next district
+      const elapsed = Date.now() - callStartTime;
+      if (elapsed > DEADLINE_MS) {
+        console.log(`Time budget exhausted (${elapsed}ms). Stopping at district ${i}/${totalDistricts}`);
+        
+        // Return with current progress - need another call
+        const progress = await getQueueProgress(supabase, batchId);
+        return { 
+          city: city.city_name, 
+          completed: false, 
+          progress,
+          districtsDiscovered: totalDistricts,
+          neighborhoodsDiscovered: neighborhoodCount,
+          needsMoreProcessing: true,
+          stage: 'discovering_neighborhoods',
+          districtProgress: { processed: i, total: totalDistricts, currentDistrict: allDistricts[i] }
+        };
+      }
 
-    let neighborhoodCount = city.neighborhoods_discovered || 0;
-
-    // Process the next batch of districts
-    for (let i = startIndex; i < endIndex; i++) {
       const districtName = allDistricts[i];
       console.log(`  District ${i + 1}/${totalDistricts}: ${districtName}`);
       
-      // Small delay between districts to avoid rate limiting
-      if (i > startIndex) {
-        await new Promise(r => setTimeout(r, 200));
+      // Small delay between districts
+      if (i > districtsProcessed) {
+        await new Promise(r => setTimeout(r, 100));
       }
 
       const neighborhoods = await discoverNeighborhoodsForDistrict(
@@ -826,41 +872,27 @@ async function processCityDistricts(
         openAIKey
       );
 
-      // Update hierarchy with discovered neighborhoods
+      // Update hierarchy
       const districtKey = normalizeForDedup(districtName);
       if (hierarchy[districtKey]) {
         hierarchy[districtKey].neighborhoods = neighborhoods;
       }
 
       neighborhoodCount += neighborhoods.length;
-    }
+      districtsProcessed = i + 1;
 
-    // Check if more districts remain
-    const moreDistrictsRemain = endIndex < totalDistricts;
-
-    if (moreDistrictsRemain) {
-      // Save progress and return - need more calls to complete this city
+      // CHECKPOINT: Save after EVERY district
       await supabase
         .from("navio_import_queue")
         .update({ 
-          districts_processed: endIndex,
+          districts_processed: districtsProcessed,
           neighborhoods_discovered: neighborhoodCount,
-          discovered_hierarchy: hierarchy
+          discovered_hierarchy: hierarchy,
+          last_progress_at: new Date().toISOString(),
         })
         .eq("id", city.id);
-
-      console.log(`Partial progress: ${endIndex}/${totalDistricts} districts, ${neighborhoodCount} neighborhoods. Need more processing.`);
-
-      const progress = await getQueueProgress(supabase, batchId);
       
-      return { 
-        city: city.city_name, 
-        completed: false, 
-        progress,
-        districtsDiscovered: endIndex,
-        neighborhoodsDiscovered: neighborhoodCount,
-        needsMoreProcessing: true
-      };
+      console.log(`  Checkpointed: ${districtsProcessed}/${totalDistricts} districts, ${neighborhoodCount} neighborhoods`);
     }
 
     // City fully completed
@@ -872,7 +904,8 @@ async function processCityDistricts(
         districts_processed: totalDistricts,
         districts_discovered: totalDistricts,
         neighborhoods_discovered: neighborhoodCount,
-        discovered_hierarchy: hierarchy
+        discovered_hierarchy: hierarchy,
+        last_progress_at: new Date().toISOString(),
       })
       .eq("id", city.id);
 
@@ -890,7 +923,9 @@ async function processCityDistricts(
       progress,
       districtsDiscovered: totalDistricts,
       neighborhoodsDiscovered: neighborhoodCount,
-      needsMoreProcessing: false
+      needsMoreProcessing: false,
+      stage: 'completed_city',
+      districtProgress: { processed: totalDistricts, total: totalDistricts }
     };
   } catch (error) {
     console.error(`Error processing ${city.city_name}:`, error);
@@ -899,11 +934,11 @@ async function processCityDistricts(
       .from("navio_import_queue")
       .update({ 
         status: "error", 
-        error_message: error instanceof Error ? error.message : "Unknown error"
+        error_message: error instanceof Error ? error.message : "Unknown error",
+        last_progress_at: new Date().toISOString(),
       })
       .eq("id", city.id);
 
-    // Continue with next city instead of throwing
     const progress = await getQueueProgress(supabase, batchId);
     return { 
       city: city.city_name, 
@@ -911,7 +946,8 @@ async function processCityDistricts(
       progress,
       districtsDiscovered: 0,
       neighborhoodsDiscovered: 0,
-      needsMoreProcessing: false
+      needsMoreProcessing: false,
+      stage: 'discovering_neighborhoods'
     };
   }
 }
@@ -937,7 +973,6 @@ async function finalizeImport(
 ): Promise<{ cities: number; districts: number; areas: number }> {
   console.log("=== FINALIZE MODE: Saving to staging ===");
 
-  // Get all completed cities from queue
   const { data: completedCities, error: fetchError } = await supabase
     .from("navio_import_queue")
     .select("*")
@@ -956,19 +991,16 @@ async function finalizeImport(
 
   console.log(`Finalizing ${completedCities.length} cities`);
 
-  // Build classified areas from queue data
   const classifiedAreas: ClassifiedArea[] = [];
 
   for (const city of completedCities) {
     const hierarchy = city.discovered_hierarchy || {};
     const navioAreas = city.navio_areas || [];
 
-    // First, add Navio-provided areas, mapped to discovered districts
     for (const navioArea of navioAreas) {
       const areaName = navioArea.area || navioArea.name;
       
-      // Try to find which discovered district contains this area
-      let matchedDistrict: string = city.city_name; // Default fallback
+      let matchedDistrict: string = city.city_name;
       
       for (const districtData of Object.values(hierarchy) as Array<{ name: string; neighborhoods: string[] }>) {
         const normalizedAreaName = areaName.toLowerCase();
@@ -983,7 +1015,6 @@ async function finalizeImport(
         }
       }
       
-      // If still using default, try to use first discovered district
       if (matchedDistrict === city.city_name) {
         const firstDistrict = Object.values(hierarchy)[0] as { name: string } | undefined;
         if (firstDistrict?.name) {
@@ -1002,7 +1033,6 @@ async function finalizeImport(
       });
     }
     
-    // Then, add ALL discovered neighborhoods not in Navio data
     const navioAreaNames = new Set(
       navioAreas.map((a: { area?: string; name: string }) => normalizeForDedup(a.area || a.name))
     );
@@ -1030,7 +1060,6 @@ async function finalizeImport(
   console.log(`  - From Navio: ${classifiedAreas.filter(a => a.source === 'navio').length}`);
   console.log(`  - AI Discovered: ${classifiedAreas.filter(a => a.source === 'discovered').length}`);
 
-  // Save to staging tables
   const result = await saveToStaging(supabase, batchId, classifiedAreas);
 
   await logSync(supabase, "navio", "import", "complete", null,
@@ -1046,7 +1075,6 @@ async function saveToStaging(
   batchId: string,
   classifiedAreas: ClassifiedArea[]
 ): Promise<{ cities: number; districts: number; areas: number }> {
-  // Group by city and district
   const cityMap = new Map<string, {
     name: string;
     countryCode: string;
@@ -1108,7 +1136,6 @@ async function saveToStaging(
   let districtsCount = 0;
   let areasCount = 0;
 
-  // Insert cities, districts, and areas
   for (const [, cityData] of cityMap) {
     const { data: stagingCity, error: cityError } = await supabase
       .from("navio_staging_cities")
@@ -1178,7 +1205,7 @@ async function saveToStaging(
 }
 
 // =============================================================================
-// COMMIT TO PRODUCTION (unchanged from before)
+// COMMIT TO PRODUCTION
 // =============================================================================
 
 // deno-lint-ignore no-explicit-any
@@ -1369,9 +1396,12 @@ async function commitToProduction(
 type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "preview" | "direct";
 
 serve(async (req) => {
+  // Enhanced CORS preflight handling
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
+
+  const startTime = Date.now();
 
   try {
     const NAVIO_API_TOKEN = Deno.env.get("NAVIO_API_TOKEN");
@@ -1421,7 +1451,7 @@ serve(async (req) => {
       }
 
       case "process_city": {
-        const result = await processNextCity(supabase, batchId, LOVABLE_API_KEY, OPENAI_API_KEY);
+        const result = await processNextCity(supabase, batchId, LOVABLE_API_KEY, OPENAI_API_KEY, startTime);
 
         return new Response(
           JSON.stringify({
@@ -1433,6 +1463,8 @@ serve(async (req) => {
             districtsDiscovered: result.districtsDiscovered,
             neighborhoodsDiscovered: result.neighborhoodsDiscovered,
             needsMoreProcessing: result.needsMoreProcessing,
+            stage: result.stage,
+            districtProgress: result.districtProgress,
             nextAction: result.completed ? "finalize" : "process_city",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1481,14 +1513,12 @@ serve(async (req) => {
         );
       }
 
-      // Legacy modes for backwards compatibility
+      // Legacy modes
       case "preview":
       case "direct": {
-        // For legacy modes, run the incremental flow automatically
         await logSync(supabase, "navio", "import", "in_progress", null,
           `Starting incremental import (legacy ${mode} mode)...`, batchId, 0, 0);
 
-        // Initialize
         const initResult = await initializeImport(supabase, batchId, NAVIO_API_TOKEN);
         
         if (initResult.totalCities === 0) {
@@ -1500,46 +1530,32 @@ serve(async (req) => {
           );
         }
 
-        // Process all cities
         let completed = false;
         while (!completed) {
-          const result = await processNextCity(supabase, batchId, LOVABLE_API_KEY, OPENAI_API_KEY);
+          const result = await processNextCity(supabase, batchId, LOVABLE_API_KEY, OPENAI_API_KEY, startTime);
           completed = result.completed;
+          
+          // Check time budget for legacy mode too
+          if (Date.now() - startTime > DEADLINE_MS) {
+            return new Response(
+              JSON.stringify({ 
+                success: false, 
+                error: "Legacy mode timeout - use incremental mode instead",
+                batch_id: batchId 
+              }),
+              { status: 408, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
         }
 
-        // Finalize
         const finalResult = await finalizeImport(supabase, batchId);
 
-        if (mode === "direct") {
-          // Auto-approve and commit
-          await supabase
-            .from("navio_staging_cities")
-            .update({ status: "approved" })
-            .eq("batch_id", batchId);
-          
-          const commitResult = await commitToProduction(supabase, batchId);
-          
-          await logSync(supabase, "navio", "import", "complete", null,
-            `Direct import complete: ${commitResult.cities} cities, ${commitResult.districts} districts, ${commitResult.areas_created} areas`, 
-            batchId);
-
-          return new Response(
-            JSON.stringify({ 
-              success: true, 
-              batch_id: batchId,
-              status: "complete",
-              imported: commitResult,
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
         return new Response(
-          JSON.stringify({ 
-            success: true, 
+          JSON.stringify({
+            success: true,
             batch_id: batchId,
-            status: "complete",
             staged: finalResult,
+            nextAction: "preview",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -1554,7 +1570,10 @@ serve(async (req) => {
   } catch (error) {
     console.error("Navio import error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : "Unknown error",
+        details: error instanceof Error ? error.stack : undefined
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

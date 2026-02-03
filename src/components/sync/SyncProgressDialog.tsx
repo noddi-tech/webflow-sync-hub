@@ -4,9 +4,11 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Check, Loader2, AlertCircle } from "lucide-react";
+import { Check, Loader2, AlertCircle, RefreshCw, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import { NavioCityProgress, type CityProgressData } from "./NavioCityProgress";
@@ -27,6 +29,11 @@ interface SyncProgressDialogProps {
   onComplete?: () => void;
   source?: "webflow" | "navio";
   cityProgress?: CityProgressData;
+  // Resume functionality for Navio imports
+  canResume?: boolean;
+  onResume?: () => void;
+  onStartFresh?: () => void;
+  onCancel?: () => void;
 }
 
 export function SyncProgressDialog({
@@ -38,10 +45,17 @@ export function SyncProgressDialog({
   onComplete,
   source = "webflow",
   cityProgress,
+  canResume,
+  onResume,
+  onStartFresh,
+  onCancel,
 }: SyncProgressDialogProps) {
   const sourceLabel = source === "navio" ? "Navio" : "Webflow";
   const [progress, setProgress] = useState<Record<string, EntityProgress>>({});
   const [isComplete, setIsComplete] = useState(false);
+  
+  const showErrorActions = source === "navio" && cityProgress?.phase === "error";
+  const isProcessing = source === "navio" && cityProgress?.phase === "processing";
 
   useEffect(() => {
     // Initialize progress for all entities
@@ -244,6 +258,33 @@ export function SyncProgressDialog({
             </>
           )}
         </div>
+
+        {/* Action buttons for Navio error/cancel states */}
+        {showErrorActions && (
+          <DialogFooter className="flex gap-2 sm:gap-2">
+            {canResume && onResume && (
+              <Button onClick={onResume} className="flex-1">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Resume Import
+              </Button>
+            )}
+            {onStartFresh && (
+              <Button variant="outline" onClick={onStartFresh} className="flex-1">
+                Start Fresh
+              </Button>
+            )}
+          </DialogFooter>
+        )}
+
+        {/* Cancel button while processing */}
+        {isProcessing && onCancel && (
+          <DialogFooter>
+            <Button variant="outline" onClick={onCancel} size="sm">
+              <XCircle className="h-4 w-4 mr-2" />
+              Cancel
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
