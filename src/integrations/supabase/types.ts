@@ -19,6 +19,7 @@ export type Database = {
           city_id: string | null
           created_at: string
           district_id: string
+          geofence_json: Json | null
           id: string
           intro: string | null
           intro_en: string | null
@@ -49,6 +50,7 @@ export type Database = {
           city_id?: string | null
           created_at?: string
           district_id: string
+          geofence_json?: Json | null
           id?: string
           intro?: string | null
           intro_en?: string | null
@@ -79,6 +81,7 @@ export type Database = {
           city_id?: string | null
           created_at?: string
           district_id?: string
+          geofence_json?: Json | null
           id?: string
           intro?: string | null
           intro_en?: string | null
@@ -363,6 +366,8 @@ export type Database = {
           city_name: string | null
           country_code: string | null
           display_name: string | null
+          geofence_hash: string | null
+          geofence_json: Json | null
           id: string
           is_active: boolean | null
           last_seen_at: string | null
@@ -374,6 +379,8 @@ export type Database = {
           city_name?: string | null
           country_code?: string | null
           display_name?: string | null
+          geofence_hash?: string | null
+          geofence_json?: Json | null
           id?: string
           is_active?: boolean | null
           last_seen_at?: string | null
@@ -385,6 +392,8 @@ export type Database = {
           city_name?: string | null
           country_code?: string | null
           display_name?: string | null
+          geofence_hash?: string | null
+          geofence_json?: Json | null
           id?: string
           is_active?: boolean | null
           last_seen_at?: string | null

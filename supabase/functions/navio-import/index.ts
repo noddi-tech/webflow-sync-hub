@@ -22,9 +22,29 @@ interface NavioServiceArea {
   display_name?: string;
   is_active?: boolean;
   postal_code_cities?: Array<{ postal_code: string; city: string }>;
-  geofence_geojson?: object;
+  geofence_geojson?: GeoJSONPolygon | null;
   service_department_names?: string[];
   [key: string]: unknown;
+}
+
+// GeoJSON Polygon type for geofence data
+interface GeoJSONPolygon {
+  type: "Polygon" | "MultiPolygon";
+  coordinates: number[][][] | number[][][][];
+}
+
+// Helper to create MD5-like hash for geofence comparison
+function hashGeofence(geofence: GeoJSONPolygon | null | undefined): string | null {
+  if (!geofence) return null;
+  // Simple hash based on stringified coordinates - sufficient for change detection
+  const str = JSON.stringify(geofence.coordinates);
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return hash.toString(16);
 }
 
 // =============================================================================
@@ -551,6 +571,7 @@ interface NavioArea {
   name: string;
   parsed: ParsedNavioName;
   postal_code_cities: Array<{ postal_code: string; city: string }>;
+  geofence_geojson: GeoJSONPolygon | null;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -600,6 +621,7 @@ async function initializeImport(
       name: rawName,
       parsed,
       postal_code_cities: sa.postal_code_cities || [],
+      geofence_geojson: sa.geofence_geojson || null,
     };
   });
 
@@ -652,6 +674,7 @@ async function initializeImport(
       name: a.name,
       area: a.parsed.area,
       isInternalCode: a.parsed.isInternalCode,
+      geofence_geojson: a.geofence_geojson,
     })),
     status: "pending",
     last_progress_at: new Date().toISOString(),
@@ -1308,6 +1331,22 @@ async function commitToProduction(
   supabase: any,
   batchId: string
 ): Promise<{ cities: number; districts: number; areas_created: number; areas_updated: number }> {
+  // Fetch geofence data from queue to use during commit
+  const { data: queueData } = await supabase
+    .from("navio_import_queue")
+    .select("navio_areas")
+    .eq("batch_id", batchId);
+  
+  // Build a map of navio_service_area_id -> geofence_geojson
+  const geofenceMap = new Map<string, GeoJSONPolygon | null>();
+  for (const entry of queueData || []) {
+    const areas = entry.navio_areas as Array<{ id: number; geofence_geojson?: GeoJSONPolygon | null }>;
+    for (const area of areas || []) {
+      geofenceMap.set(String(area.id), area.geofence_geojson || null);
+    }
+  }
+  console.log(`Loaded ${geofenceMap.size} geofences for commit`);
+
   const { data: stagingCities, error: citiesError } = await supabase
     .from("navio_staging_cities")
     .select(`
@@ -1438,11 +1477,14 @@ async function commitToProduction(
           .maybeSingle();
 
         if (existingArea) {
+          // Update existing area with geofence if available
+          const geofence = geofenceMap.get(stagingArea.navio_service_area_id);
           await supabase
             .from("areas")
             .update({
               navio_service_area_id: stagingArea.navio_service_area_id,
               navio_imported_at: new Date().toISOString(),
+              geofence_json: geofence || null,
             })
             .eq("id", existingArea.id);
           areasUpdated++;
@@ -1452,6 +1494,8 @@ async function commitToProduction(
             .update({ committed_area_id: existingArea.id, status: "committed" })
             .eq("id", stagingArea.id);
         } else {
+          // Create new area with geofence if available
+          const geofence = geofenceMap.get(stagingArea.navio_service_area_id);
           const { data: newArea, error: areaError } = await supabase
             .from("areas")
             .insert({
@@ -1462,6 +1506,7 @@ async function commitToProduction(
               is_delivery: true,
               navio_service_area_id: stagingArea.navio_service_area_id,
               navio_imported_at: new Date().toISOString(),
+              geofence_json: geofence || null,
             })
             .select("id")
             .single();
@@ -1490,11 +1535,11 @@ async function commitToProduction(
 
 interface DeltaResult {
   hasChanges: boolean;
-  summary: { new: number; removed: number; changed: number; unchanged: number };
+  summary: { new: number; removed: number; changed: number; geofenceChanged: number; unchanged: number };
   affectedCities: string[];
-  newAreas: Array<{ id: number; name: string; city_name: string }>;
+  newAreas: Array<{ id: number; name: string; city_name: string; hasGeofence: boolean }>;
   removedAreas: Array<{ navio_service_area_id: number; name: string; city_name: string }>;
-  changedAreas: Array<{ id: number; name: string; oldName: string; city_name: string }>;
+  changedAreas: Array<{ id: number; name: string; oldName: string; city_name: string; geofenceChanged: boolean }>;
   isFirstImport: boolean;
 }
 
@@ -1554,6 +1599,7 @@ async function deltaCheck(
           id: sa.id,
           name: sa.name || "",
           city_name: parsed.city || "Unknown",
+          hasGeofence: !!sa.geofence_geojson,
         };
       });
     
@@ -1561,7 +1607,7 @@ async function deltaCheck(
     
     return {
       hasChanges: true,
-      summary: { new: serviceAreas.length, removed: 0, changed: 0, unchanged: 0 },
+      summary: { new: serviceAreas.length, removed: 0, changed: 0, geofenceChanged: 0, unchanged: 0 },
       affectedCities: uniqueCities,
       newAreas: newAreasWithCity,
       removedAreas: [],
@@ -1572,7 +1618,7 @@ async function deltaCheck(
 
   // 3. Compare
   const snapshotMap = new Map(
-    snapshot.map((s: { navio_service_area_id: number; name: string; city_name: string }) => 
+    snapshot.map((s: { navio_service_area_id: number; name: string; city_name: string; geofence_hash: string | null }) => 
       [s.navio_service_area_id, s]
     )
   );
@@ -1580,25 +1626,35 @@ async function deltaCheck(
   const newAreas: DeltaResult["newAreas"] = [];
   const changedAreas: DeltaResult["changedAreas"] = [];
   const unchangedCount: number[] = [];
+  let geofenceChangedCount = 0;
 
   for (const area of serviceAreas) {
     if (isTestDataOrStreetAddress(area.name || "")) continue;
     
-    const existing = snapshotMap.get(area.id) as { name: string; city_name: string } | undefined;
+    const existing = snapshotMap.get(area.id) as { name: string; city_name: string; geofence_hash: string | null } | undefined;
     const parsed = parseNavioName(area.name || "");
     const cityName = parsed.city || "Unknown";
+    const currentGeofenceHash = hashGeofence(area.geofence_geojson);
+    const hasGeofence = !!area.geofence_geojson;
     
     if (!existing) {
-      newAreas.push({ id: area.id, name: area.name || "", city_name: cityName });
-    } else if (existing.name !== area.name) {
-      changedAreas.push({ 
-        id: area.id, 
-        name: area.name || "", 
-        oldName: existing.name,
-        city_name: cityName 
-      });
+      newAreas.push({ id: area.id, name: area.name || "", city_name: cityName, hasGeofence });
     } else {
-      unchangedCount.push(area.id);
+      const nameChanged = existing.name !== area.name;
+      const geofenceChanged = existing.geofence_hash !== currentGeofenceHash;
+      
+      if (nameChanged || geofenceChanged) {
+        changedAreas.push({ 
+          id: area.id, 
+          name: area.name || "", 
+          oldName: existing.name,
+          city_name: cityName,
+          geofenceChanged,
+        });
+        if (geofenceChanged) geofenceChangedCount++;
+      } else {
+        unchangedCount.push(area.id);
+      }
     }
   }
 
@@ -1632,6 +1688,7 @@ async function deltaCheck(
       new: newAreas.length,
       removed: removedAreas.length,
       changed: changedAreas.length,
+      geofenceChanged: geofenceChangedCount,
       unchanged: unchangedCount.length,
     },
     affectedCities: Array.from(affectedCitySet),
@@ -1682,7 +1739,7 @@ async function updateSnapshot(
     serviceAreas = navioData;
   }
 
-  // Build snapshot records
+  // Build snapshot records with geofence data
   const snapshotRecords = serviceAreas
     .filter(sa => !isTestDataOrStreetAddress(sa.name || ""))
     .map(sa => {
@@ -1695,6 +1752,8 @@ async function updateSnapshot(
         country_code: parsed.countryCode || "NO",
         is_active: true,
         last_seen_at: new Date().toISOString(),
+        geofence_json: sa.geofence_geojson || null,
+        geofence_hash: hashGeofence(sa.geofence_geojson),
       };
     });
 
