@@ -1,159 +1,195 @@
 
-## What’s failing (root cause)
-From the screenshots + current database state, the “Failed to send a request to the Edge Function” is not primarily a UI bug. It’s happening because **some `process_city` calls still occasionally run long enough to get cut off by the platform timeout** (or return a gateway error). When that happens, the browser often reports it as a **CORS error** (“No Access-Control-Allow-Origin”) because the **timeout/gateway response is not coming from our function code** and therefore doesn’t include our CORS headers.
 
-Evidence in your database right now:
-- `navio_import_queue` shows **Trondheim stuck in `status=processing` with `districts_discovered=5` but `districts_processed=0`**.
-- That pattern strongly suggests: districts were discovered and saved, then the function started neighborhood discovery and got killed **before it could checkpoint `districts_processed`**.
-- Once the frontend hits a request failure, it aborts the loop and the batch stays half-done.
+# Fix: Finalization Timeout Due to Sequential Database Writes
 
-So the true root cause is:
-1) **Per-call execution time is still sometimes too close to the limit**, and  
-2) **We checkpoint progress too late** (only after finishing a whole batch), and  
-3) **Frontend has no resilient retry/resume**, so one transient failure kills the whole run.
+## Root Cause Analysis
 
-This plan addresses all three so the same class of failure doesn’t keep coming back.
+The import found 18 cities but only 6 made it to staging because the **finalization timed out**. Here's what happened:
 
----
+| Time | Event |
+|------|-------|
+| 11:44:52 | Finalization started |
+| 11:44:53 | Drammen saved to staging |
+| 11:45:33 | Tønsberg saved (40 second gap!) |
+| 11:45:49 | Stockholm saved |
+| ~11:45:52 | **Function killed by 60s timeout** |
 
-## Goals
-1) Make it extremely unlikely a single `process_city` call ever times out.
-2) Make progress recoverable even if a call is killed mid-way.
-3) Make the UI resilient: automatic retries + user-visible “Resume” that continues the same batch instead of starting over.
-4) Improve “what is happening” messaging (discovering districts vs neighborhoods), using real backend status instead of guesses.
+**The Problem**: The `saveToStaging` function performs **individual sequential inserts** for every city, district, and area. With 5000+ areas to save, this takes far too long:
 
----
+```typescript
+// Current code - SLOW (5000+ sequential operations)
+for (const area of districtData.areas) {
+  await supabase.from("navio_staging_areas").insert({...});  // 1 call per area
+}
+```
 
-## Backend changes (navio-import function)
-### A) Harden CORS/preflight (prevents genuine CORS issues and improves reliability)
-**File:** `supabase/functions/navio-import/index.ts`
-- Extend `corsHeaders` with:
-  - `Access-Control-Allow-Methods: "POST, OPTIONS"`
-  - (optional but recommended) `Access-Control-Max-Age: "86400"`
-- Change OPTIONS handler to return `"ok"` body and include methods.
-- Ensure every response path (including early returns) includes the full CORS header set.
-
-Why: even though we already include `Access-Control-Allow-Origin` in normal responses, preflight + some clients behave better with explicit methods, and it reduces “false CORS” confusion when debugging.
-
-### B) Add time-budgeted district processing (avoid timeouts deterministically)
-**File:** `supabase/functions/navio-import/index.ts`
-- Replace “always process next 5 districts” with **time-budget processing**:
-  - Set `const DEADLINE_MS = 45_000` (or similar safety budget).
-  - Process districts until:
-    - `districtIndex === totalDistricts`, or
-    - `Date.now() - startTime > DEADLINE_MS`, then stop and return `needsMoreProcessing: true`.
-- Keep `MAX_DISTRICTS_PER_CALL` as an upper bound, but the real guard is the deadline.
-
-Why: a fixed count (5) can still exceed the limit if external calls slow down. A time budget prevents this.
-
-### C) Checkpoint after every district (so crashes don’t lose work)
-**File:** `supabase/functions/navio-import/index.ts`
-- Inside the district loop, after each district:
-  - Update `discovered_hierarchy` (with the neighborhoods for that district)
-  - Update `districts_processed` to `i + 1`
-  - Update `neighborhoods_discovered` to the current running total
-  - Update a new timestamp field `last_progress_at = now()`
-- This makes the workflow **idempotent** and resumable. If the runtime dies mid-call, the next call continues from the last saved district.
-
-### D) Speed up AI calls (reduce latency spikes that trigger timeouts)
-**File:** `supabase/functions/navio-import/index.ts`
-- Update `callAI()` so Gemini and OpenAI calls run **in parallel** (Promise.allSettled).
-- Add per-request timeouts (AbortController) so one slow provider doesn’t stall the whole function.
-- Add small, bounded retries for AI calls (e.g., 1 retry) with jitter for transient upstream issues.
-
-Why: current `callAI()` is sequential (Gemini then OpenAI), which increases wall time per district.
-
-### E) Return richer progress/status for UI (“what’s happening”)
-**File:** `supabase/functions/navio-import/index.ts`
-Add fields to `process_city` response, e.g.:
-- `stage`: `"discovering_districts" | "discovering_neighborhoods" | "checkpointing" | "completed_city"`
-- `districtProgress`: `{ processed: number; total: number; currentDistrict?: string }`
-
-Why: right now the frontend tries to infer district progress from a queue-progress object that doesn’t contain district totals. This will make the UI accurate and explanatory.
+With ~5400 areas total, that's ~5400 individual database calls, each taking ~5-10ms. That alone is 27-54 seconds, leaving no room for cities and districts.
 
 ---
 
-## Database change (small but important)
-### Add `last_progress_at` to `navio_import_queue`
-**Migration:** new SQL file in `supabase/migrations/`
-- `ALTER TABLE navio_import_queue ADD COLUMN last_progress_at timestamptz;`
-- Default: `now()` (or nullable but set whenever processing starts/updates)
+## Solution: Batch Inserts
 
-Why:
-- Helps resume logic, debug, and optionally detect “stuck” processing rows.
-- Allows us to safely implement “if processing row is stale, keep processing or reset” policies later without guessing.
+Replace sequential inserts with **batch inserts** that handle hundreds of records in a single database call.
 
----
+### Technical Changes
 
-## Frontend changes (resilience + better UX)
-### A) Retry/backoff for all navio-import calls (prevents one blip from failing the batch)
-**File:** `src/hooks/useNavioImport.ts`
-- Wrap `supabase.functions.invoke("navio-import")` in an `invokeWithRetry()` helper:
-  - Retry 3–5 times on retryable errors:
-    - “Failed to send a request to the Edge Function”
-    - network fetch failures
-    - transient 5xx
-    - CORS-looking failures that happen when the platform returns a gateway timeout
-  - Exponential backoff with jitter: 1s → 2s → 4s → 8s
-- During retry, update progress state to show “Reconnecting / retrying (2/5)…”.
+**File: `supabase/functions/navio-import/index.ts`**
 
-Why: this is the single biggest improvement for user-perceived reliability.
+1. **Batch area inserts** - Insert up to 500 areas at once instead of one at a time:
 
-### B) Persist batch + allow Resume (fixes “stuck processing” without starting over)
-**Files:** `src/hooks/useNavioImport.ts`, `src/pages/Dashboard.tsx`, `src/components/sync/SyncProgressDialog.tsx`, `src/components/sync/NavioCityProgress.tsx`
-- Store the current `batchId` and initial `cities` list in `localStorage` as soon as initialize succeeds.
-- If the import fails:
-  - Keep the batchId
-  - Show a “Resume import” button (in the error state UI) that continues calling `process_city` for the same batchId (no re-initialize unless explicitly requested).
-- Add a “Start over” secondary action that generates a new batchId and runs initialize fresh.
+```typescript
+// NEW: Batch insert areas (500 at a time)
+const BATCH_SIZE = 500;
+const allAreas = [...];  // Collect all areas first
 
-Why: today, when it fails, you lose the batch and leave rows in `processing`. Resume makes the workflow robust and avoids repeating work.
+for (let i = 0; i < allAreas.length; i += BATCH_SIZE) {
+  const batch = allAreas.slice(i, i + BATCH_SIZE);
+  await supabase.from("navio_staging_areas").insert(batch);
+}
+```
 
-### C) Fix district progress UI to use real backend fields
-**File:** `src/hooks/useNavioImport.ts`, `src/components/sync/NavioCityProgress.tsx`
-- Stop reading district progress from `progress` (queue progress).
-- Use the new backend `districtProgress` and `stage` to render:
-  - “Discovering districts…”
-  - “Finding neighborhoods…”
-  - “Saving progress…”
-  - “Retrying request (n/m)…”
-- Display current district name when available.
+2. **Batch district inserts** - Insert all districts for a city in one call:
+
+```typescript
+// NEW: Insert all districts at once, then bulk-insert their areas
+const allDistricts = [...cityData.districts.values()];
+const { data: insertedDistricts } = await supabase
+  .from("navio_staging_districts")
+  .insert(allDistricts.map(...))
+  .select("id, name");
+```
+
+3. **Alternative: Incremental finalization** - If batching is still too slow, add a `finalize_city` mode that saves one city at a time (following the same pattern as `process_city`):
+
+```typescript
+case "finalize_city": {
+  // Save one city to staging per call
+  // Return needsMoreFinalization: true until all cities are saved
+}
+```
 
 ---
 
-## “Stuck” batch cleanup policy (so it doesn’t build up again)
-We’ll keep your improved initialization cleanup (delete other batches), but we’ll make it intentional:
-- Only delete other batches when starting a brand-new import.
-- Resume should not delete anything; it should continue the same batch.
+## Implementation Details
 
-Optionally (nice-to-have after reliability is restored):
-- Add a small UI action “Clear old batches” in Settings/Debug that deletes `navio_import_queue` rows older than X days.
+### Option A: Bulk Insert (Recommended - Simpler)
+
+Transform the nested loops into a two-phase approach:
+
+**Phase 1: Build all records in memory**
+```typescript
+const cityRecords: CityRecord[] = [];
+const districtRecords: DistrictRecord[] = [];  
+const areaRecords: AreaRecord[] = [];
+
+for (const [, cityData] of cityMap) {
+  const tempCityId = crypto.randomUUID();  // Temporary ID for linking
+  cityRecords.push({ temp_id: tempCityId, ... });
+  
+  for (const [, districtData] of cityData.districts) {
+    const tempDistrictId = crypto.randomUUID();
+    districtRecords.push({ temp_city_id: tempCityId, temp_id: tempDistrictId, ... });
+    
+    for (const area of districtData.areas) {
+      areaRecords.push({ temp_district_id: tempDistrictId, ... });
+    }
+  }
+}
+```
+
+**Phase 2: Bulk insert with ID mapping**
+```typescript
+// Insert all cities in one call
+const { data: cities } = await supabase
+  .from("navio_staging_cities")
+  .insert(cityRecords.map(r => ({ ...r, temp_id: undefined })))
+  .select("id, name");
+
+// Create temp_id -> real_id map
+const cityIdMap = new Map(cities.map((c, i) => [cityRecords[i].temp_id, c.id]));
+
+// Insert all districts with real city IDs
+const { data: districts } = await supabase
+  .from("navio_staging_districts")
+  .insert(districtRecords.map(r => ({
+    ...r,
+    staging_city_id: cityIdMap.get(r.temp_city_id),
+    temp_city_id: undefined,
+    temp_id: undefined
+  })))
+  .select("id, name");
+
+// Insert all areas with real district IDs (in batches of 500)
+const districtIdMap = new Map(districts.map((d, i) => [districtRecords[i].temp_id, d.id]));
+for (let i = 0; i < areaRecords.length; i += 500) {
+  await supabase.from("navio_staging_areas").insert(
+    areaRecords.slice(i, i + 500).map(r => ({
+      ...r,
+      staging_district_id: districtIdMap.get(r.temp_district_id),
+      temp_district_id: undefined
+    }))
+  );
+}
+```
+
+### Option B: Incremental Finalization (Backup if A still times out)
+
+Add a new mode that finalizes one city per call:
+
+```typescript
+case "finalize_city": {
+  const { data: nextCity } = await supabase
+    .from("navio_import_queue")
+    .select("*")
+    .eq("batch_id", batchId)
+    .eq("status", "completed")
+    .not("finalized_at", "is.not", null)  // Not yet finalized
+    .limit(1)
+    .single();
+  
+  if (!nextCity) {
+    return { completed: true };
+  }
+  
+  await saveOneCityToStaging(supabase, batchId, nextCity);
+  
+  // Mark as finalized
+  await supabase.from("navio_import_queue")
+    .update({ finalized_at: new Date().toISOString() })
+    .eq("id", nextCity.id);
+  
+  return { 
+    needsMoreFinalization: true,
+    finalized: nextCity.city_name,
+    progress: { ... }
+  };
+}
+```
 
 ---
 
-## Implementation sequence
-1) Backend: CORS + time-budget + per-district checkpointing + parallel AI calls + richer response fields.
-2) DB migration: add `last_progress_at`.
-3) Frontend: retry/backoff wrapper.
-4) Frontend: persist batch + Resume/Start over UI.
-5) Frontend: update UI messaging using `stage` + `districtProgress`.
-6) Validation run (end-to-end):
-   - Run a full import.
-   - Confirm Trondheim (and other multi-district cities) increments `districts_processed` in DB while running.
-   - Confirm a forced refresh / temporary disconnect can be resumed without restarting.
-   - Confirm no more “CORS blocked” during normal flow; and if the platform times out, retries recover automatically.
+## Performance Comparison
+
+| Approach | DB Calls | Estimated Time |
+|----------|----------|----------------|
+| **Current (sequential)** | ~5500 | 50-60s (timeout) |
+| **Option A (bulk)** | ~15-20 | 3-5s |
+| **Option B (incremental)** | ~300/city | ~1s/city (18 calls total) |
 
 ---
 
-## Validation checklist (what you should see after)
-- No city remains stuck at `status=processing` with `districts_processed=0` after it has begun district work.
-- The UI explains the current phase:
-  - “Discovering districts in X”
-  - “Finding neighborhoods in X → District Y (3/5)”
-  - “Saving progress…”
-- If a request fails transiently:
-  - UI shows “Retrying…”
-  - Import continues automatically
-- If it fails repeatedly:
-  - UI shows “Resume import” (keeps batchId)
-  - Resume continues from last checkpoint instead of repeating districts.
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `supabase/functions/navio-import/index.ts` | Replace `saveToStaging()` sequential inserts with bulk insert pattern |
+
+---
+
+## Expected Result
+
+After this fix:
+- Finalization completes in 5-10 seconds instead of timing out
+- All 18 cities are saved to staging
+- Preview shows complete data (18 cities, 42 districts, 5000+ areas)
+
