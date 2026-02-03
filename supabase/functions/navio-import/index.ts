@@ -1485,10 +1485,254 @@ async function commitToProduction(
 }
 
 // =============================================================================
+// DELTA CHECK - Compare Navio API against snapshot
+// =============================================================================
+
+interface DeltaResult {
+  hasChanges: boolean;
+  summary: { new: number; removed: number; changed: number; unchanged: number };
+  affectedCities: string[];
+  newAreas: Array<{ id: number; name: string; city_name: string }>;
+  removedAreas: Array<{ navio_service_area_id: number; name: string; city_name: string }>;
+  changedAreas: Array<{ id: number; name: string; oldName: string; city_name: string }>;
+  isFirstImport: boolean;
+}
+
+async function deltaCheck(
+  supabase: SupabaseClientAny,
+  navioToken: string
+): Promise<DeltaResult> {
+  console.log("=== DELTA CHECK: Comparing Navio data against snapshot ===");
+
+  // 1. Fetch current Navio data
+  const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
+  navioUrl.searchParams.set("page_size", "1000");
+  navioUrl.searchParams.set("page_index", "0");
+
+  const navioResponse = await fetch(navioUrl.toString(), {
+    headers: {
+      Authorization: `Token ${navioToken}`,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+  });
+
+  if (!navioResponse.ok) {
+    throw new Error(`Navio API error: ${navioResponse.status}`);
+  }
+
+  const navioData = await navioResponse.json();
+  let serviceAreas: NavioServiceArea[] = [];
+  if (navioData.results && Array.isArray(navioData.results)) {
+    serviceAreas = navioData.results;
+  } else if (Array.isArray(navioData)) {
+    serviceAreas = navioData;
+  }
+
+  console.log(`Fetched ${serviceAreas.length} service areas from Navio`);
+
+  // 2. Fetch last snapshot
+  const { data: snapshot, error: snapshotError } = await supabase
+    .from("navio_snapshot")
+    .select("*");
+
+  if (snapshotError) {
+    console.error("Error fetching snapshot:", snapshotError);
+    throw snapshotError;
+  }
+
+  const isFirstImport = !snapshot || snapshot.length === 0;
+  
+  if (isFirstImport) {
+    console.log("No snapshot found - this is a first import");
+    // Parse city names for the new areas
+    const newAreasWithCity = serviceAreas
+      .filter(sa => !isTestDataOrStreetAddress(sa.name || ""))
+      .map(sa => {
+        const parsed = parseNavioName(sa.name || "");
+        return {
+          id: sa.id,
+          name: sa.name || "",
+          city_name: parsed.city || "Unknown",
+        };
+      });
+    
+    const uniqueCities = [...new Set(newAreasWithCity.map(a => a.city_name))];
+    
+    return {
+      hasChanges: true,
+      summary: { new: serviceAreas.length, removed: 0, changed: 0, unchanged: 0 },
+      affectedCities: uniqueCities,
+      newAreas: newAreasWithCity,
+      removedAreas: [],
+      changedAreas: [],
+      isFirstImport: true,
+    };
+  }
+
+  // 3. Compare
+  const snapshotMap = new Map(
+    snapshot.map((s: { navio_service_area_id: number; name: string; city_name: string }) => 
+      [s.navio_service_area_id, s]
+    )
+  );
+
+  const newAreas: DeltaResult["newAreas"] = [];
+  const changedAreas: DeltaResult["changedAreas"] = [];
+  const unchangedCount: number[] = [];
+
+  for (const area of serviceAreas) {
+    if (isTestDataOrStreetAddress(area.name || "")) continue;
+    
+    const existing = snapshotMap.get(area.id) as { name: string; city_name: string } | undefined;
+    const parsed = parseNavioName(area.name || "");
+    const cityName = parsed.city || "Unknown";
+    
+    if (!existing) {
+      newAreas.push({ id: area.id, name: area.name || "", city_name: cityName });
+    } else if (existing.name !== area.name) {
+      changedAreas.push({ 
+        id: area.id, 
+        name: area.name || "", 
+        oldName: existing.name,
+        city_name: cityName 
+      });
+    } else {
+      unchangedCount.push(area.id);
+    }
+  }
+
+  // Find removed areas (in snapshot but not in Navio)
+  const navioIds = new Set(serviceAreas.map(a => a.id));
+  const removedAreas: DeltaResult["removedAreas"] = [];
+  
+  for (const [id, snapshotEntry] of snapshotMap) {
+    if (!navioIds.has(id)) {
+      const entry = snapshotEntry as { name: string; city_name: string };
+      removedAreas.push({
+        navio_service_area_id: id,
+        name: entry.name,
+        city_name: entry.city_name || "Unknown",
+      });
+    }
+  }
+
+  // Get affected cities
+  const affectedCitySet = new Set<string>();
+  for (const area of [...newAreas, ...changedAreas]) {
+    affectedCitySet.add(area.city_name);
+  }
+  for (const area of removedAreas) {
+    affectedCitySet.add(area.city_name);
+  }
+
+  const result: DeltaResult = {
+    hasChanges: newAreas.length > 0 || removedAreas.length > 0 || changedAreas.length > 0,
+    summary: {
+      new: newAreas.length,
+      removed: removedAreas.length,
+      changed: changedAreas.length,
+      unchanged: unchangedCount.length,
+    },
+    affectedCities: Array.from(affectedCitySet),
+    newAreas,
+    removedAreas,
+    changedAreas,
+    isFirstImport: false,
+  };
+
+  console.log(`Delta check complete: ${result.summary.new} new, ${result.summary.removed} removed, ${result.summary.changed} changed, ${result.summary.unchanged} unchanged`);
+  console.log(`Affected cities: ${result.affectedCities.join(", ")}`);
+
+  return result;
+}
+
+// =============================================================================
+// UPDATE SNAPSHOT - Call after successful commit
+// =============================================================================
+
+async function updateSnapshot(
+  supabase: SupabaseClientAny,
+  navioToken: string
+): Promise<{ updated: number; deactivated: number }> {
+  console.log("=== UPDATING SNAPSHOT ===");
+
+  // Fetch current Navio data
+  const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
+  navioUrl.searchParams.set("page_size", "1000");
+  navioUrl.searchParams.set("page_index", "0");
+
+  const navioResponse = await fetch(navioUrl.toString(), {
+    headers: {
+      Authorization: `Token ${navioToken}`,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+  });
+
+  if (!navioResponse.ok) {
+    throw new Error(`Navio API error: ${navioResponse.status}`);
+  }
+
+  const navioData = await navioResponse.json();
+  let serviceAreas: NavioServiceArea[] = [];
+  if (navioData.results && Array.isArray(navioData.results)) {
+    serviceAreas = navioData.results;
+  } else if (Array.isArray(navioData)) {
+    serviceAreas = navioData;
+  }
+
+  // Build snapshot records
+  const snapshotRecords = serviceAreas
+    .filter(sa => !isTestDataOrStreetAddress(sa.name || ""))
+    .map(sa => {
+      const parsed = parseNavioName(sa.name || "");
+      return {
+        navio_service_area_id: sa.id,
+        name: sa.name || "",
+        display_name: sa.display_name || null,
+        city_name: parsed.city || "Unknown",
+        country_code: parsed.countryCode || "NO",
+        is_active: true,
+        last_seen_at: new Date().toISOString(),
+      };
+    });
+
+  // Upsert all current areas
+  const { error: upsertError } = await supabase
+    .from("navio_snapshot")
+    .upsert(snapshotRecords, { onConflict: "navio_service_area_id" });
+
+  if (upsertError) {
+    console.error("Error upserting snapshot:", upsertError);
+    throw upsertError;
+  }
+
+  // Mark removed areas as inactive
+  const currentIds = serviceAreas.map(a => a.id);
+  const { data: deactivated, error: deactivateError } = await supabase
+    .from("navio_snapshot")
+    .update({ is_active: false, last_seen_at: new Date().toISOString() })
+    .not("navio_service_area_id", "in", `(${currentIds.join(",")})`)
+    .select("id");
+
+  if (deactivateError) {
+    console.error("Error deactivating old snapshot entries:", deactivateError);
+  }
+
+  console.log(`Snapshot updated: ${snapshotRecords.length} active, ${deactivated?.length || 0} deactivated`);
+
+  return {
+    updated: snapshotRecords.length,
+    deactivated: deactivated?.length || 0,
+  };
+}
+
+// =============================================================================
 // MAIN HTTP HANDLER
 // =============================================================================
 
-type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "preview" | "direct";
+type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "preview" | "direct" | "delta_check";
 
 serve(async (req) => {
   // Enhanced CORS preflight handling
@@ -1583,13 +1827,29 @@ serve(async (req) => {
         );
       }
 
+      case "delta_check": {
+        const result = await deltaCheck(supabase, NAVIO_API_TOKEN);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            ...result,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       case "commit": {
         await logSync(supabase, "navio", "import", "in_progress", null, 
           "Committing approved data to production...", batchId, 0, 0);
         
         const result = await commitToProduction(supabase, batchId);
         
-        const summary = `Commit complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated`;
+        // Update snapshot after successful commit
+        console.log("Updating Navio snapshot after commit...");
+        const snapshotResult = await updateSnapshot(supabase, NAVIO_API_TOKEN);
+        
+        const summary = `Commit complete: ${result.cities} cities, ${result.districts} districts, ${result.areas_created} areas created, ${result.areas_updated} areas updated. Snapshot updated: ${snapshotResult.updated} active, ${snapshotResult.deactivated} deactivated.`;
         await logSync(supabase, "navio", "import", "complete", null, summary, batchId);
 
         await supabase.from("settings").upsert({
@@ -1602,6 +1862,7 @@ serve(async (req) => {
             success: true, 
             batch_id: batchId,
             result,
+            snapshot: snapshotResult,
             message: summary,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }

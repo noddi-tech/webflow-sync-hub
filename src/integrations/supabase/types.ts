@@ -358,6 +358,42 @@ export type Database = {
         }
         Relationships: []
       }
+      navio_snapshot: {
+        Row: {
+          city_name: string | null
+          country_code: string | null
+          display_name: string | null
+          id: string
+          is_active: boolean | null
+          last_seen_at: string | null
+          name: string
+          navio_service_area_id: number
+          snapshot_at: string | null
+        }
+        Insert: {
+          city_name?: string | null
+          country_code?: string | null
+          display_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_seen_at?: string | null
+          name: string
+          navio_service_area_id: number
+          snapshot_at?: string | null
+        }
+        Update: {
+          city_name?: string | null
+          country_code?: string | null
+          display_name?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_seen_at?: string | null
+          name?: string
+          navio_service_area_id?: number
+          snapshot_at?: string | null
+        }
+        Relationships: []
+      }
       navio_staging_areas: {
         Row: {
           batch_id: string
