@@ -213,11 +213,11 @@ const changedAreas = navioAreas.filter(a => {
 
 ## Recommended Phased Approach
 
-**Phase 1 (Quick win):** Store `geofence_json` as JSONB in areas/snapshot tables during import. Display on preview page.
+**Phase 1 (Quick win):** ✅ Store `geofence_json` as JSONB in areas/snapshot tables during import. Display on preview page.
 
-**Phase 2 (Enhanced):** Add PostGIS for spatial queries. Enable "check if address is in delivery zone" API.
+**Phase 2 (Enhanced):** ✅ Add PostGIS for spatial queries. Enable "check if address is in delivery zone" API via `check-delivery` edge function.
 
-**Phase 3 (Full geo):** Replace AI discovery with pure geo-based hierarchy. Use polygon containment to auto-classify areas into districts.
+**Phase 3 (Full geo):** ✅ Add `sync_geo` mode that replaces AI discovery with pure geo-based import. Directly stores Navio polygons as delivery areas without AI processing.
 
 ---
 
