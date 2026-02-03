@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import type { CityProgressData } from "@/components/sync/NavioCityProgress";
+import type { CityProgressData, CityData } from "@/components/sync/NavioCityProgress";
 
 export function useNavioImport() {
   const { toast } = useToast();
@@ -52,12 +52,22 @@ export function useNavioImport() {
         return { success: true, staged: { cities: 0, districts: 0, areas: 0 } };
       }
 
+      // Initialize cities with pending status
+      const initialCities: CityData[] = cities.map((c: { name: string; countryCode: string }) => ({
+        name: c.name,
+        countryCode: c.countryCode,
+        status: "pending" as const,
+      }));
+
       setCityProgress({
         phase: "processing",
         currentCity: cities[0]?.name || null,
         citiesTotal: totalCities,
         citiesProcessed: 0,
-        cities: cities,
+        cities: initialCities,
+        currentDistrictsTotal: 0,
+        currentDistrictsProcessed: 0,
+        currentNeighborhoodsFound: 0,
       });
 
       // Phase 2: Process cities one by one (with incremental district batching)
@@ -72,8 +82,24 @@ export function useNavioImport() {
         if (result.error) throw result.error;
         if (result.data?.error) throw new Error(result.data.error);
 
-        // Check if a city just fully completed (not just partial progress)
-        if (result.data.processedCity && !result.data.needsMoreProcessing) {
+        const { 
+          processedCity, 
+          needsMoreProcessing, 
+          progress, 
+          districtsDiscovered, 
+          neighborhoodsDiscovered 
+        } = result.data;
+
+        if (needsMoreProcessing) {
+          // Still working on current city - update district progress
+          setCityProgress(prev => ({
+            ...prev,
+            currentDistrictsProcessed: progress?.districtsProcessed || 0,
+            currentDistrictsTotal: progress?.districtsTotal || 0,
+            currentNeighborhoodsFound: neighborhoodsDiscovered || 0,
+          }));
+        } else if (processedCity) {
+          // City fully completed
           processedCount++;
           
           // Find next city to process
@@ -84,12 +110,24 @@ export function useNavioImport() {
             ...prev,
             currentCity: nextCity,
             citiesProcessed: processedCount,
+            // Update the completed city with its final stats
+            cities: prev.cities.map((c, idx) => 
+              idx === processedCount - 1 
+                ? { 
+                    ...c, 
+                    status: "completed" as const,
+                    districtsFound: districtsDiscovered || 0,
+                    neighborhoodsFound: neighborhoodsDiscovered || 0,
+                  }
+                : c
+            ),
+            // Reset district progress for next city
+            currentDistrictsProcessed: 0,
+            currentDistrictsTotal: 0,
+            currentNeighborhoodsFound: 0,
           }));
         }
 
-        // If we're still processing the same city (needsMoreProcessing), 
-        // just continue the loop without updating progress
-        
         completed = result.data.completed;
       }
 
