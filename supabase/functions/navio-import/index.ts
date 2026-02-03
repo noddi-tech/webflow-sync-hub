@@ -1494,13 +1494,17 @@ async function commitToProduction(
             .update({ committed_area_id: existingArea.id, status: "committed" })
             .eq("id", stagingArea.id);
         } else {
+          // Generate unique slug by appending district slug to avoid duplicates
+          const districtSlug = slugify(stagingDistrict.name);
+          const baseSlug = slugify(stagingArea.name);
+          const uniqueSlug = `${baseSlug}-${districtSlug}`;
           // Create new area with geofence if available
           const geofence = geofenceMap.get(stagingArea.navio_service_area_id);
           const { data: newArea, error: areaError } = await supabase
             .from("areas")
             .insert({
               name: stagingArea.name,
-              slug: slugify(stagingArea.name),
+              slug: uniqueSlug,
               district_id: districtId,
               city_id: cityId,
               is_delivery: true,
@@ -2003,7 +2007,7 @@ async function syncGeoAreas(
 // MAIN HTTP HANDLER
 // =============================================================================
 
-type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "preview" | "direct" | "delta_check" | "sync_geo";
+type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "commit_city" | "preview" | "direct" | "delta_check" | "sync_geo";
 
 serve(async (req) => {
   // Enhanced CORS preflight handling
@@ -2160,6 +2164,245 @@ serve(async (req) => {
             result,
             snapshot: snapshotResult,
             message: summary,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      case "commit_city": {
+        // Incremental commit - process one city at a time to avoid timeout
+        
+        // Fetch geofence data from queue to use during commit
+        const { data: queueData } = await supabase
+          .from("navio_import_queue")
+          .select("navio_areas")
+          .eq("batch_id", batchId);
+        
+        const geofenceMap = new Map<string, GeoJSONPolygon | null>();
+        for (const entry of queueData || []) {
+          const areas = entry.navio_areas as Array<{ id: number; geofence_geojson?: GeoJSONPolygon | null }>;
+          for (const area of areas || []) {
+            geofenceMap.set(String(area.id), area.geofence_geojson || null);
+          }
+        }
+        
+        // Find next approved city to commit
+        const { data: nextCity, error: nextCityError } = await supabase
+          .from("navio_staging_cities")
+          .select("id, name, country_code, committed_city_id")
+          .eq("batch_id", batchId)
+          .eq("status", "approved")
+          .order("name")
+          .limit(1)
+          .maybeSingle();
+
+        if (nextCityError) {
+          throw nextCityError;
+        }
+
+        if (!nextCity) {
+          // All done - update snapshot
+          console.log("All cities committed, updating snapshot...");
+          const snapshotResult = await updateSnapshot(supabase, NAVIO_API_TOKEN);
+          
+          await supabase.from("settings").upsert({
+            key: "navio_last_import",
+            value: new Date().toISOString(),
+          }, { onConflict: "key" });
+          
+          return new Response(
+            JSON.stringify({ 
+              success: true, 
+              completed: true, 
+              remaining: 0,
+              batch_id: batchId,
+              snapshot: snapshotResult,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Commit just this one city
+        let cityId = nextCity.committed_city_id;
+        let citiesCreated = 0;
+        let districtsCreated = 0;
+        let areasCreated = 0;
+        let areasUpdated = 0;
+
+        if (!cityId) {
+          const { data: existingCity } = await supabase
+            .from("cities")
+            .select("id")
+            .eq("name", nextCity.name)
+            .maybeSingle();
+
+          if (existingCity) {
+            cityId = existingCity.id;
+          } else {
+            const { data: newCity, error: cityError } = await supabase
+              .from("cities")
+              .insert({
+                name: nextCity.name,
+                slug: slugify(nextCity.name),
+                country_code: nextCity.country_code,
+                is_delivery: true,
+                navio_city_key: nextCity.name.toLowerCase().replace(/\s+/g, "_"),
+              })
+              .select("id")
+              .single();
+
+            if (cityError) {
+              throw cityError;
+            }
+            cityId = newCity.id;
+            citiesCreated++;
+          }
+        }
+
+        // Process districts for this city
+        const { data: stagingDistricts } = await supabase
+          .from("navio_staging_districts")
+          .select("*")
+          .eq("staging_city_id", nextCity.id)
+          .in("status", ["approved", "pending"]);
+
+        for (const stagingDistrict of stagingDistricts || []) {
+          let districtId = stagingDistrict.committed_district_id;
+          
+          if (!districtId) {
+            const { data: existingDistrict } = await supabase
+              .from("districts")
+              .select("id")
+              .eq("city_id", cityId)
+              .eq("name", stagingDistrict.name)
+              .maybeSingle();
+
+            if (existingDistrict) {
+              districtId = existingDistrict.id;
+            } else {
+              const { data: newDistrict, error: districtError } = await supabase
+                .from("districts")
+                .insert({
+                  name: stagingDistrict.name,
+                  slug: slugify(stagingDistrict.name),
+                  city_id: cityId,
+                  is_delivery: true,
+                  navio_district_key: stagingDistrict.name.toLowerCase().replace(/\s+/g, "_"),
+                })
+                .select("id")
+                .single();
+
+              if (districtError) {
+                console.error("Error creating district:", districtError);
+                continue;
+              }
+              districtId = newDistrict.id;
+              districtsCreated++;
+            }
+
+            await supabase
+              .from("navio_staging_districts")
+              .update({ committed_district_id: districtId, status: "committed" })
+              .eq("id", stagingDistrict.id);
+          }
+
+          // Process areas for this district
+          const { data: stagingAreas } = await supabase
+            .from("navio_staging_areas")
+            .select("*")
+            .eq("staging_district_id", stagingDistrict.id)
+            .in("status", ["approved", "pending"]);
+
+          for (const stagingArea of stagingAreas || []) {
+            const { data: existingArea } = await supabase
+              .from("areas")
+              .select("id")
+              .eq("district_id", districtId)
+              .eq("name", stagingArea.name)
+              .maybeSingle();
+
+            if (existingArea) {
+              const geofence = geofenceMap.get(stagingArea.navio_service_area_id);
+              await supabase
+                .from("areas")
+                .update({
+                  navio_service_area_id: stagingArea.navio_service_area_id,
+                  navio_imported_at: new Date().toISOString(),
+                  geofence_json: geofence || null,
+                })
+                .eq("id", existingArea.id);
+              areasUpdated++;
+
+              await supabase
+                .from("navio_staging_areas")
+                .update({ committed_area_id: existingArea.id, status: "committed" })
+                .eq("id", stagingArea.id);
+            } else {
+              // Generate unique slug
+              const districtSlug = slugify(stagingDistrict.name);
+              const baseSlug = slugify(stagingArea.name);
+              const uniqueSlug = `${baseSlug}-${districtSlug}`;
+              
+              const geofence = geofenceMap.get(stagingArea.navio_service_area_id);
+              const { data: newArea, error: areaError } = await supabase
+                .from("areas")
+                .insert({
+                  name: stagingArea.name,
+                  slug: uniqueSlug,
+                  district_id: districtId,
+                  city_id: cityId,
+                  is_delivery: true,
+                  navio_service_area_id: stagingArea.navio_service_area_id,
+                  navio_imported_at: new Date().toISOString(),
+                  geofence_json: geofence || null,
+                })
+                .select("id")
+                .single();
+
+              if (areaError) {
+                console.error("Error creating area:", areaError);
+                continue;
+              }
+              areasCreated++;
+
+              await supabase
+                .from("navio_staging_areas")
+                .update({ committed_area_id: newArea.id, status: "committed" })
+                .eq("id", stagingArea.id);
+            }
+          }
+        }
+
+        // Mark city as committed
+        await supabase
+          .from("navio_staging_cities")
+          .update({ committed_city_id: cityId, status: "committed" })
+          .eq("id", nextCity.id);
+
+        // Count remaining
+        const { count: remainingCount } = await supabase
+          .from("navio_staging_cities")
+          .select("id", { count: "exact", head: true })
+          .eq("batch_id", batchId)
+          .eq("status", "approved");
+
+        await logSync(supabase, "navio", "import", "in_progress", cityId,
+          `Committed city: ${nextCity.name} (${districtsCreated} districts, ${areasCreated} areas created)`, 
+          batchId);
+
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            completed: (remainingCount || 0) === 0,
+            remaining: remainingCount || 0,
+            committedCity: nextCity.name,
+            batch_id: batchId,
+            result: {
+              cities: citiesCreated,
+              districts: districtsCreated,
+              areas_created: areasCreated,
+              areas_updated: areasUpdated,
+            },
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

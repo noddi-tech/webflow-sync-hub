@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,9 +34,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Check, X, Trash2, RefreshCw, ChevronRight, ChevronDown, Globe, AlertTriangle, MapPin } from "lucide-react";
-import { DeliveryAreaMap } from "@/components/map/DeliveryAreaMap";
-import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
+import { Check, X, Trash2, ChevronRight, ChevronDown, Globe, AlertTriangle, MapPin, Navigation } from "lucide-react";
+import { StagingAreaMap } from "@/components/map/StagingAreaMap";
+import { DeliveryChecker } from "@/components/delivery/DeliveryChecker";
+import { StagingActionBar } from "@/components/navio/StagingActionBar";
 import {
   Tooltip,
   TooltipContent,
@@ -84,8 +85,13 @@ export default function NavioPreview() {
   const [selectedCities, setSelectedCities] = useState<Set<string>>(new Set());
   const [expandedCities, setExpandedCities] = useState<Set<string>>(new Set());
   const [expandedDistricts, setExpandedDistricts] = useState<Set<string>>(new Set());
-  const [progressOpen, setProgressOpen] = useState(false);
-  const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+  
+  // Incremental commit state
+  const [commitProgress, setCommitProgress] = useState<{
+    current: number;
+    total: number;
+    currentCityName?: string;
+  } | null>(null);
 
   // Fetch all batches
   const { data: batches } = useQuery({
@@ -256,41 +262,8 @@ export default function NavioPreview() {
     },
   });
 
-  // Commit mutation
-  const commitMutation = useMutation({
-    mutationFn: async (batchId: string) => {
-      const { data, error } = await supabase.functions.invoke("navio-import", {
-        body: { batch_id: batchId, mode: "commit" },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
-    },
-    onMutate: (batchId: string) => {
-      setCurrentBatchId(batchId);
-      setProgressOpen(true);
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["navio-staging-data"] });
-      queryClient.invalidateQueries({ queryKey: ["navio-staging-batches"] });
-      queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
-      toast({
-        title: "Commit Complete",
-        description: data.message,
-      });
-    },
-    onError: (error: Error) => {
-      setProgressOpen(false);
-      toast({
-        title: "Commit Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-    onSettled: () => {
-      setTimeout(() => setProgressOpen(false), 1500);
-    },
-  });
+  // Incremental commit state setter
+  const [isCommitting, setIsCommitting] = useState(false);
 
   // Clear batch mutation
   const clearBatchMutation = useMutation({
@@ -425,6 +398,57 @@ export default function NavioPreview() {
   const approvedCount = stagingData?.filter(c => c.status === "approved").length ?? 0;
   const currentBatchForCommit = selectedBatch !== "all" ? selectedBatch : batches?.[0]?.id;
 
+  // Incremental commit - one city at a time to avoid timeout
+  const commitIncrementally = useCallback(async (batchId: string) => {
+    const totalApproved = approvedCount;
+    setIsCommitting(true);
+    setCommitProgress({ current: 0, total: totalApproved });
+    
+    let completed = false;
+    let citiesCommitted = 0;
+    
+    while (!completed) {
+      try {
+        const { data, error } = await supabase.functions.invoke("navio-import", {
+          body: { batch_id: batchId, mode: "commit_city" },
+        });
+        
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        
+        completed = data.completed;
+        citiesCommitted++;
+        
+        setCommitProgress({
+          current: citiesCommitted,
+          total: totalApproved,
+          currentCityName: data.committedCity,
+        });
+        
+      } catch (error) {
+        setCommitProgress(null);
+        setIsCommitting(false);
+        toast({
+          title: "Commit Failed",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    
+    setCommitProgress(null);
+    setIsCommitting(false);
+    queryClient.invalidateQueries({ queryKey: ["navio-staging-data"] });
+    queryClient.invalidateQueries({ queryKey: ["navio-staging-batches"] });
+    queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
+    
+    toast({
+      title: "Commit Complete",
+      description: `Successfully committed ${citiesCommitted} cities to production database.`,
+    });
+  }, [approvedCount, queryClient, toast]);
+
   return (
     <div className="p-8">
       <div className="mb-8">
@@ -513,6 +537,10 @@ export default function NavioPreview() {
           <TabsTrigger value="map">
             <MapPin className="h-4 w-4 mr-2" />
             Map View
+          </TabsTrigger>
+          <TabsTrigger value="delivery">
+            <Navigation className="h-4 w-4 mr-2" />
+            Delivery Check
           </TabsTrigger>
         </TabsList>
 
@@ -692,42 +720,33 @@ export default function NavioPreview() {
         <TabsContent value="map">
           <Card>
             <CardHeader>
-              <CardTitle>Delivery Area Map</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="h-5 w-5" />
+                Staging Geofences
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <DeliveryAreaMap />
+              <StagingAreaMap batchId={selectedBatch} />
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="delivery">
+          <DeliveryChecker />
+        </TabsContent>
       </Tabs>
 
-      {/* Commit Button */}
-      {approvedCount > 0 && currentBatchForCommit && (
-        <div className="fixed bottom-6 right-6">
-          <Button
-            size="lg"
-            onClick={() => commitMutation.mutate(currentBatchForCommit)}
-            disabled={commitMutation.isPending}
-          >
-            {commitMutation.isPending ? (
-              <RefreshCw className="h-5 w-5 mr-2 animate-spin" />
-            ) : (
-              <Check className="h-5 w-5 mr-2" />
-            )}
-            Commit {approvedCount} Approved Cities to Database
-          </Button>
-        </div>
-      )}
-
-      <SyncProgressDialog
-        open={progressOpen}
-        onOpenChange={setProgressOpen}
-        batchId={currentBatchId}
-        operation="import"
-        entities={["navio"]}
-        onComplete={() => {
-          queryClient.invalidateQueries({ queryKey: ["entity-counts"] });
-        }}
+      {/* Floating Action Bar */}
+      <StagingActionBar
+        selectedCount={selectedCities.size}
+        approvedCount={approvedCount}
+        onApprove={() => approveMutation.mutate(Array.from(selectedCities))}
+        onReject={() => rejectMutation.mutate(Array.from(selectedCities))}
+        onCommit={() => currentBatchForCommit && commitIncrementally(currentBatchForCommit)}
+        isApproving={approveMutation.isPending}
+        isRejecting={rejectMutation.isPending}
+        isCommitting={isCommitting}
+        commitProgress={commitProgress}
       />
     </div>
   );
