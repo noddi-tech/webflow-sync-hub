@@ -1,272 +1,227 @@
 
 
-# Plan: Complete Geo-Based Delivery System - Testing and Map Visualization
+# Plan: Reorganize Navigation with Import & Preview Menu
 
-This plan covers three remaining tasks to fully test and visualize the geo-based delivery system.
-
----
-
-## Current State Summary
-
-| Component | Status |
-|-----------|--------|
-| Database columns (`geofence_json`, `geofence`, `geofence_center`) | Ready |
-| PostGIS extension and spatial indexes | Ready |
-| SQL trigger for JSONB-to-geometry sync | Ready |
-| `sync_geo` mode in edge function | Ready |
-| `check-delivery` endpoint | Ready |
-| **Actual data in database** | **Empty (0 areas with geofence)** |
-| **Map visualization** | **Not implemented** |
+This plan restructures the sidebar navigation to consolidate all import, sync, and preview functionality into dedicated collapsible menus.
 
 ---
 
-## Task 1: Run Geo Sync to Populate Data
+## Current State
 
-**Approach:** Use the existing "Geo Sync" button on the Dashboard to trigger the `sync_geo` edge function mode.
+**Dashboard** (currently cluttered with 3 cards):
+- Import from Webflow
+- Sync to Webflow  
+- Import from Navio (with Check for Changes, Geo Sync, AI Import)
 
-### Steps (User Actions)
-1. Navigate to the Dashboard (/)
-2. Click the "Geo Sync" button in the "Import from Navio" card
-3. Wait for the sync to complete (should be fast, 1-2 minutes)
-4. Toast notification will show results
+**Sidebar** (flat list):
+- Navio Preview buried between Service Locations and Sync History
+- No logical grouping of import/preview operations
 
-### Expected Outcome
-The sync will:
-- Fetch all service areas from Navio API
-- Parse city names and group areas
-- Create/update cities, districts, and areas in the database
-- Store `geofence_json` (JSONB) for each area
-- The SQL trigger will automatically populate PostGIS `geofence` geometry columns
+---
 
-### Verification Query
-After sync completes, verify with:
-```sql
-SELECT COUNT(*) as total, 
-       COUNT(geofence_json) as with_json, 
-       COUNT(geofence) as with_geometry 
-FROM areas WHERE is_delivery = true;
+## Proposed Structure
+
+```text
+Sidebar Navigation:
+--------------------
+Dashboard
+----
+Cities
+Districts  
+Areas
+----
+Service Categories
+Services
+----
+Partners
+Partner Coverage
+----
+Service Locations
+----
+[v] Webflow                  <- Collapsible menu (new)
+    Import from Webflow
+    Sync to Webflow
+----
+[v] Navio                    <- Collapsible menu (new)
+    Check for Changes
+    Geo Sync
+    AI Import
+    Preview & Commit
+----
+Sync History
+----
+Settings
 ```
 
 ---
 
-## Task 2: Add Map Visualization to NavioPreview
+## Implementation Details
 
-**Approach:** Install Leaflet (lightweight, free, no API key required) and add an interactive map tab to the NavioPreview page that displays all delivery area polygons.
+### 1. Create CollapsibleNavSection Component
 
-### Implementation Details
+A reusable component for collapsible navigation sections with submenu items.
 
-#### 2.1 Install Dependencies
-```bash
-npm install leaflet react-leaflet @types/leaflet
-```
+**File:** `src/components/layout/CollapsibleNavSection.tsx`
 
-#### 2.2 Create Map Component
-Create `src/components/map/DeliveryAreaMap.tsx`:
+Features:
+- Collapsible header with chevron indicator
+- Submenu items with proper indentation
+- Active state highlighting for both header and items
+- Persisted open/closed state in localStorage
+
+### 2. Update Sidebar Navigation Structure
+
+Modify `src/components/layout/Sidebar.tsx` to:
+- Add "Webflow" collapsible section with Import/Sync pages
+- Add "Navio" collapsible section with operations and preview
+- Remove clutter from Dashboard
+
+### 3. Create Dedicated Pages for Each Operation
+
+**New Pages:**
+| Page | Route | Purpose |
+|------|-------|---------|
+| `WebflowImport.tsx` | `/webflow/import` | Import from Webflow with entity picker |
+| `WebflowSync.tsx` | `/webflow/sync` | Sync to Webflow with entity picker |
+| `NavioOperations.tsx` | `/navio` | Combined Check/Geo Sync/AI Import page |
+
+**Rename Existing:**
+- `NavioPreview.tsx` stays at `/navio-preview` or moves to `/navio/preview`
+
+### 4. Simplify Dashboard
+
+Remove the import/sync cards and replace with:
+- Quick status summary (last sync times)
+- Direct links to each operation
+- Health panel remains
+
+---
+
+## Files to Create
+
+| File | Description |
+|------|-------------|
+| `src/components/layout/CollapsibleNavSection.tsx` | Reusable collapsible nav component |
+| `src/pages/WebflowImport.tsx` | Dedicated Webflow import page |
+| `src/pages/WebflowSync.tsx` | Dedicated Webflow sync page |
+| `src/pages/NavioOperations.tsx` | Combined Navio operations page |
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/components/layout/Sidebar.tsx` | Add collapsible sections |
+| `src/pages/Dashboard.tsx` | Remove import/sync cards, add summary |
+| `src/App.tsx` | Add new routes |
+
+---
+
+## Technical Details
+
+### CollapsibleNavSection Component
 
 ```tsx
-import { MapContainer, TileLayer, GeoJSON, Popup } from "react-leaflet";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import "leaflet/dist/leaflet.css";
-
-interface DeliveryArea {
-  id: string;
+interface NavSection {
   name: string;
-  geofence_json: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
-  district_name: string;
-  city_name: string;
+  icon: LucideIcon;
+  items: Array<{
+    name: string;
+    href: string;
+    icon: LucideIcon;
+  }>;
 }
 
-export function DeliveryAreaMap() {
-  const { data: areas, isLoading } = useQuery({
-    queryKey: ["delivery-areas-with-geofence"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("areas")
-        .select(`
-          id, name, geofence_json,
-          districts!inner(name),
-          cities!inner(name)
-        `)
-        .eq("is_delivery", true)
-        .not("geofence_json", "is", null);
-      
-      if (error) throw error;
-      return data.map(a => ({
-        id: a.id,
-        name: a.name,
-        geofence_json: a.geofence_json,
-        district_name: a.districts.name,
-        city_name: a.cities.name,
-      }));
-    },
+function CollapsibleNavSection({ section }: { section: NavSection }) {
+  const [isOpen, setIsOpen] = useState(() => {
+    // Persist state in localStorage
+    return localStorage.getItem(`nav-${section.name}`) !== 'false';
   });
-
-  if (isLoading) return <Skeleton className="h-[500px]" />;
-
-  // Center on Norway by default
-  const defaultCenter: [number, number] = [59.9, 10.75];
+  
+  const location = useLocation();
+  const hasActiveChild = section.items.some(
+    item => location.pathname.startsWith(item.href)
+  );
 
   return (
-    <MapContainer 
-      center={defaultCenter} 
-      zoom={5} 
-      className="h-[500px] w-full rounded-lg"
-    >
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; OpenStreetMap contributors'
-      />
-      {areas?.map(area => (
-        area.geofence_json && (
-          <GeoJSON 
-            key={area.id}
-            data={area.geofence_json}
-            style={{ color: '#22c55e', fillOpacity: 0.3, weight: 2 }}
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <CollapsibleTrigger className={cn(
+        "flex items-center gap-3 w-full px-3 py-2 rounded-lg",
+        hasActiveChild && "bg-accent"
+      )}>
+        <section.icon className="h-5 w-5" />
+        <span>{section.name}</span>
+        <ChevronDown className={cn("ml-auto", isOpen && "rotate-180")} />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        {section.items.map(item => (
+          <Link
+            to={item.href}
+            className={cn(
+              "flex items-center gap-3 pl-10 py-2",
+              location.pathname === item.href && "bg-primary text-primary-foreground"
+            )}
           >
-            <Popup>
-              <strong>{area.name}</strong><br />
-              {area.district_name}, {area.city_name}
-            </Popup>
-          </GeoJSON>
-        )
-      ))}
-    </MapContainer>
+            <item.icon className="h-4 w-4" />
+            {item.name}
+          </Link>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 ```
 
-#### 2.3 Update NavioPreview Page
-Add a new "Map" tab to the existing Tabs component:
+### Updated Navigation Structure
 
 ```tsx
-// Add import
-import { DeliveryAreaMap } from "@/components/map/DeliveryAreaMap";
-
-// Inside Tabs component, add new TabsTrigger
-<TabsTrigger value="map">
-  <MapPin className="h-4 w-4 mr-2" />
-  Map View
-</TabsTrigger>
-
-// Add TabsContent
-<TabsContent value="map">
-  <Card>
-    <CardHeader>
-      <CardTitle>Delivery Area Map</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <DeliveryAreaMap />
-    </CardContent>
-  </Card>
-</TabsContent>
-```
-
-#### 2.4 Add Leaflet CSS
-Import in `src/index.css`:
-```css
-@import "leaflet/dist/leaflet.css";
-```
-
-### Files to Create/Modify
-| File | Action |
-|------|--------|
-| `src/components/map/DeliveryAreaMap.tsx` | Create new component |
-| `src/pages/NavioPreview.tsx` | Add Map tab |
-| `src/index.css` | Import Leaflet CSS |
-
----
-
-## Task 3: Test Delta Check with Populated Data
-
-**Approach:** After running Geo Sync, use "Check for Changes" to verify delta detection works with geofence tracking.
-
-### Steps (User Actions)
-1. Complete Task 1 (Geo Sync) to populate `navio_snapshot` table
-2. Navigate to Dashboard
-3. Click "Check for Changes" button
-4. Review the Delta Summary card
-
-### Expected Behavior
-The delta check will:
-1. Fetch current Navio API data
-2. Compare against `navio_snapshot` table
-3. Compute hash for each `geofence_geojson`
-4. Identify:
-   - New areas (in API but not in snapshot)
-   - Removed areas (in snapshot but not in API)
-   - Changed areas (name or geofence hash differs)
-   - Unchanged areas
-
-### First Run After Initial Sync
-On the first run, the Delta Summary should show:
-- "All Up to Date" (since snapshot was just updated by Geo Sync)
-- OR show counts of new/changed if API data differs from what was synced
-
-### Testing Polygon Change Detection
-The `geofenceChanged` field in delta results tracks polygon modifications:
-```typescript
-// In DeltaSummary.tsx, already displays:
-{summary.geofenceChanged > 0 && (
-  <Badge variant="outline" className="border-blue-500 text-blue-600">
-    <MapPin className="mr-1 h-3 w-3" />
-    {summary.geofenceChanged}
-  </Badge>
-  // shows "polygon updates"
-)}
+const navigation = [
+  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { type: "separator" },
+  { name: "Cities", href: "/cities", icon: MapPin },
+  { name: "Districts", href: "/districts", icon: Map },
+  { name: "Areas", href: "/areas", icon: Layers },
+  { type: "separator" },
+  { name: "Service Categories", href: "/service-categories", icon: FolderTree },
+  { name: "Services", href: "/services", icon: Wrench },
+  { type: "separator" },
+  { name: "Partners", href: "/partners", icon: Users },
+  { name: "Partner Coverage", href: "/partner-service-locations", icon: Link2 },
+  { type: "separator" },
+  { name: "Service Locations", href: "/service-locations", icon: Globe },
+  { type: "separator" },
+  { 
+    type: "collapsible",
+    name: "Webflow",
+    icon: ExternalLink,
+    items: [
+      { name: "Import", href: "/webflow/import", icon: Download },
+      { name: "Sync", href: "/webflow/sync", icon: RefreshCw },
+    ]
+  },
+  { 
+    type: "collapsible",
+    name: "Navio",
+    icon: MapPinned,
+    items: [
+      { name: "Operations", href: "/navio", icon: Settings },
+      { name: "Preview", href: "/navio-preview", icon: Eye },
+    ]
+  },
+  { type: "separator" },
+  { name: "Sync History", href: "/sync-history", icon: History },
+  { type: "separator" },
+  { name: "Settings", href: "/settings", icon: Settings },
+];
 ```
 
 ---
 
-## Execution Order
+## Summary
 
-```text
-1. Run Geo Sync (Dashboard)
-        |
-        v
-2. Verify data populated (automatic)
-        |
-        v
-3. Test Check for Changes
-        |
-        v
-4. Implement Map Visualization
-        |
-        v
-5. View polygons on NavioPreview Map tab
-```
-
----
-
-## Technical Summary
-
-### Dependencies to Add
-- `leaflet` - Mapping library
-- `react-leaflet` - React bindings for Leaflet
-- `@types/leaflet` - TypeScript definitions
-
-### New Files
-| File | Description |
-|------|-------------|
-| `src/components/map/DeliveryAreaMap.tsx` | Interactive map showing delivery polygons |
-
-### Modified Files
-| File | Changes |
-|------|---------|
-| `src/pages/NavioPreview.tsx` | Add Map tab to tabs component |
-| `src/index.css` | Import Leaflet CSS |
-
-### No Edge Function Changes Required
-All backend functionality is already implemented and deployed.
-
----
-
-## Success Criteria
-
-| Task | Verification |
-|------|--------------|
-| Geo Sync | `areas` table has rows with `geofence_json` populated |
-| Delta Check | Shows "All Up to Date" or accurate change counts |
-| Map View | Polygons render correctly on OpenStreetMap tiles |
-| Point-in-Polygon | `/check-delivery?lng=10.75&lat=59.92` returns matching areas |
+This refactor will:
+1. Declutter the Dashboard
+2. Group related operations (Webflow import/sync, Navio operations/preview)
+3. Make navigation more intuitive with collapsible sections
+4. Create dedicated pages for each operation with better UX
+5. Maintain all existing functionality
 
