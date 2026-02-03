@@ -1340,6 +1340,7 @@ serve(async (req) => {
             progress: result.progress,
             districtsDiscovered: result.districtsDiscovered,
             neighborhoodsDiscovered: result.neighborhoodsDiscovered,
+            needsMoreProcessing: result.needsMoreProcessing,
             nextAction: result.completed ? "finalize" : "process_city",
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
