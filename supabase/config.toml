@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.navio-import]
 verify_jwt = false
+
+[functions.check-delivery]
+verify_jwt = false
