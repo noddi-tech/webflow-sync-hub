@@ -2,12 +2,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertTriangle, Plus, Minus, RefreshCw } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Plus, Minus, RefreshCw, MapPin } from "lucide-react";
 
 export interface DeltaSummary {
   new: number;
   removed: number;
   changed: number;
+  geofenceChanged: number;
   unchanged: number;
 }
 
@@ -15,9 +16,9 @@ export interface DeltaCheckResult {
   hasChanges: boolean;
   summary: DeltaSummary;
   affectedCities: string[];
-  newAreas: Array<{ id: number; name: string; city_name?: string }>;
+  newAreas: Array<{ id: number; name: string; city_name?: string; hasGeofence?: boolean }>;
   removedAreas: Array<{ navio_service_area_id: number; name: string; city_name?: string }>;
-  changedAreas: Array<{ id: number; name: string; oldName?: string; city_name?: string }>;
+  changedAreas: Array<{ id: number; name: string; oldName?: string; city_name?: string; geofenceChanged?: boolean }>;
   isFirstImport?: boolean;
 }
 
@@ -104,6 +105,15 @@ export function DeltaSummaryCard({ deltaResult, onStartImport, isImporting }: De
             <Badge variant="secondary">{summary.changed}</Badge>
             <span className="text-muted-foreground">changed</span>
           </div>
+          {summary.geofenceChanged > 0 && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="border-blue-500 text-blue-600">
+                <MapPin className="mr-1 h-3 w-3" />
+                {summary.geofenceChanged}
+              </Badge>
+              <span className="text-muted-foreground">polygon updates</span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Badge variant="outline">{summary.unchanged}</Badge>
             <span className="text-muted-foreground">unchanged</span>
