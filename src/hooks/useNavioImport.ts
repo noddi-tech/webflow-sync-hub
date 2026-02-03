@@ -1,9 +1,10 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import type { CityProgressData, CityData } from "@/components/sync/NavioCityProgress";
+import type { DeltaCheckResult } from "@/components/sync/DeltaSummary";
 
 const STORAGE_KEY = "navio_import_batch";
 const MAX_RETRIES = 5;
@@ -381,6 +382,35 @@ export function useNavioImport() {
     navioIncrementalImport.mutate({ batchId: newBatchId, resume: false });
   }, [clearSavedBatch, resetProgress, navioIncrementalImport]);
 
+  // Delta check mutation
+  const deltaCheckMutation = useMutation({
+    mutationFn: async () => {
+      const response = await supabase.functions.invoke("navio-import", {
+        body: { mode: "delta_check" },
+      });
+      
+      if (response.error) throw response.error;
+      if (response.data?.error) throw new Error(response.data.error);
+      
+      return response.data as DeltaCheckResult;
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Delta Check Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Start import with delta awareness
+  const startDeltaImport = useCallback(() => {
+    clearSavedBatch();
+    resetProgress();
+    const newBatchId = crypto.randomUUID();
+    navioIncrementalImport.mutate({ batchId: newBatchId, resume: false });
+  }, [clearSavedBatch, resetProgress, navioIncrementalImport]);
+
   return {
     cityProgress,
     resetProgress,
@@ -393,5 +423,11 @@ export function useNavioImport() {
     startFreshImport,
     clearSavedBatch,
     canResume: !!savedBatch && cityProgress.phase !== "processing",
+    // Delta functionality
+    deltaCheckMutation,
+    deltaResult: deltaCheckMutation.data,
+    isCheckingDelta: deltaCheckMutation.isPending,
+    checkDelta: deltaCheckMutation.mutate,
+    startDeltaImport,
   };
 }

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Download, Brain, Eye } from "lucide-react";
+import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Brain, Eye, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -17,6 +17,7 @@ import {
 import { SyncProgressDialog } from "@/components/sync/SyncProgressDialog";
 import { SystemHealthPanel } from "@/components/health/SystemHealthPanel";
 import { useNavioImport } from "@/hooks/useNavioImport";
+import { DeltaSummaryCard } from "@/components/sync/DeltaSummary";
 
 type EntityType = "all" | "service_categories" | "services" | "cities" | "districts" | "areas" | "partners" | "service_locations";
 
@@ -42,7 +43,15 @@ export default function Dashboard() {
   const [currentSource, setCurrentSource] = useState<"webflow" | "navio">("webflow");
 
   // Use the new incremental Navio import hook
-  const { cityProgress, navioIncrementalImport, isImporting: isNavioImporting } = useNavioImport();
+  const { 
+    cityProgress, 
+    navioIncrementalImport, 
+    isImporting: isNavioImporting,
+    deltaResult,
+    isCheckingDelta,
+    checkDelta,
+    startDeltaImport,
+  } = useNavioImport();
 
   // Open progress dialog when Navio import starts
   useEffect(() => {
@@ -209,7 +218,7 @@ export default function Dashboard() {
 
   const isConfigured = settings?.hasCollectionIds ?? false;
   const configuredEntities = settings?.configuredEntities ?? {};
-  const isSyncing = importMutation.isPending || syncMutation.isPending || isNavioImporting;
+  const isSyncing = importMutation.isPending || syncMutation.isPending || isNavioImporting || isCheckingDelta;
 
   const isEntityConfigured = (entity: EntityType) => {
     if (entity === "all") return isConfigured;
@@ -352,22 +361,48 @@ export default function Dashboard() {
               Import from Navio
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">
+          <CardContent className="space-y-4">
+            <p className="text-muted-foreground text-sm">
               Fetch delivery areas from Navio and use AI to organize them into Cities, Districts, and Areas.
             </p>
+            
+            {/* Delta Summary Card */}
+            {deltaResult && (
+              <DeltaSummaryCard 
+                deltaResult={deltaResult} 
+                onStartImport={startDeltaImport}
+                isImporting={isNavioImporting}
+              />
+            )}
+            
+            {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
               <Button 
-                onClick={() => navioIncrementalImport.mutate({ batchId: crypto.randomUUID() })}
-                disabled={isSyncing}
+                variant="outline"
+                onClick={() => checkDelta()}
+                disabled={isSyncing || isCheckingDelta}
               >
-                {isNavioImporting ? (
+                {isCheckingDelta ? (
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
-                  <Eye className="mr-2 h-4 w-4" />
+                  <Search className="mr-2 h-4 w-4" />
                 )}
-                Fetch & Preview
+                Check for Changes
               </Button>
+              
+              {!deltaResult && (
+                <Button 
+                  onClick={() => navioIncrementalImport.mutate({ batchId: crypto.randomUUID() })}
+                  disabled={isSyncing}
+                >
+                  {isNavioImporting ? (
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Eye className="mr-2 h-4 w-4" />
+                  )}
+                  Full Import
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
