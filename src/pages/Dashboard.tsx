@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Brain, Eye, Search } from "lucide-react";
+import { MapPin, Map, Layers, Users, RefreshCw, Upload, ChevronDown, FolderTree, Wrench, Link2, Globe, Brain, Eye, Search, MapPinned } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -51,6 +51,8 @@ export default function Dashboard() {
     isCheckingDelta,
     checkDelta,
     startDeltaImport,
+    isGeoSyncing,
+    startGeoSync,
   } = useNavioImport();
 
   // Open progress dialog when Navio import starts
@@ -218,7 +220,7 @@ export default function Dashboard() {
 
   const isConfigured = settings?.hasCollectionIds ?? false;
   const configuredEntities = settings?.configuredEntities ?? {};
-  const isSyncing = importMutation.isPending || syncMutation.isPending || isNavioImporting || isCheckingDelta;
+  const isSyncing = importMutation.isPending || syncMutation.isPending || isNavioImporting || isCheckingDelta || isGeoSyncing;
 
   const isEntityConfigured = (entity: EntityType) => {
     if (entity === "all") return isConfigured;
@@ -390,6 +392,19 @@ export default function Dashboard() {
                 Check for Changes
               </Button>
               
+              <Button 
+                variant="secondary"
+                onClick={() => startGeoSync()}
+                disabled={isSyncing}
+              >
+                {isGeoSyncing ? (
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <MapPinned className="mr-2 h-4 w-4" />
+                )}
+                Geo Sync
+              </Button>
+              
               {!deltaResult && (
                 <Button 
                   onClick={() => navioIncrementalImport.mutate({ batchId: crypto.randomUUID() })}
@@ -398,12 +413,16 @@ export default function Dashboard() {
                   {isNavioImporting ? (
                     <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
-                    <Eye className="mr-2 h-4 w-4" />
+                    <Brain className="mr-2 h-4 w-4" />
                   )}
-                  Full Import
+                  AI Import
                 </Button>
               )}
             </div>
+            
+            <p className="text-xs text-muted-foreground">
+              <strong>Geo Sync:</strong> Fast polygon-only sync (no AI). <strong>AI Import:</strong> Full discovery with neighborhood classification.
+            </p>
           </CardContent>
         </Card>
       </div>

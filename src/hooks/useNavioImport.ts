@@ -411,6 +411,33 @@ export function useNavioImport() {
     navioIncrementalImport.mutate({ batchId: newBatchId, resume: false });
   }, [clearSavedBatch, resetProgress, navioIncrementalImport]);
 
+  // Geo-only sync mutation (no AI, just polygons)
+  const geoSyncMutation = useMutation({
+    mutationFn: async () => {
+      const response = await supabase.functions.invoke("navio-import", {
+        body: { mode: "sync_geo", batch_id: crypto.randomUUID() },
+      });
+      
+      if (response.error) throw response.error;
+      if (response.data?.error) throw new Error(response.data.error);
+      
+      return response.data;
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Geo Sync Complete",
+        description: data.message || `Synced ${data.result?.polygons_synced || 0} delivery polygons.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Geo Sync Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   return {
     cityProgress,
     resetProgress,
@@ -429,5 +456,9 @@ export function useNavioImport() {
     isCheckingDelta: deltaCheckMutation.isPending,
     checkDelta: deltaCheckMutation.mutate,
     startDeltaImport,
+    // Geo-only sync
+    geoSyncMutation,
+    isGeoSyncing: geoSyncMutation.isPending,
+    startGeoSync: geoSyncMutation.mutate,
   };
 }

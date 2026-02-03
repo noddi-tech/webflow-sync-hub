@@ -1788,10 +1788,222 @@ async function updateSnapshot(
 }
 
 // =============================================================================
+// SYNC GEO - Fast polygon-only sync (no AI discovery)
+// =============================================================================
+
+interface GeoSyncResult {
+  cities_created: number;
+  cities_updated: number;
+  districts_created: number;
+  districts_updated: number;
+  areas_created: number;
+  areas_updated: number;
+  polygons_synced: number;
+}
+
+async function syncGeoAreas(
+  supabase: SupabaseClientAny,
+  navioToken: string
+): Promise<GeoSyncResult> {
+  console.log("=== SYNC GEO MODE: Fast polygon-only import ===");
+
+  // 1. Fetch all Navio service areas
+  const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
+  navioUrl.searchParams.set("page_size", "1000");
+  navioUrl.searchParams.set("page_index", "0");
+
+  const navioResponse = await fetch(navioUrl.toString(), {
+    headers: {
+      Authorization: `Token ${navioToken}`,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+  });
+
+  if (!navioResponse.ok) {
+    throw new Error(`Navio API error: ${navioResponse.status}`);
+  }
+
+  const navioData = await navioResponse.json();
+  let serviceAreas: NavioServiceArea[] = [];
+  if (navioData.results && Array.isArray(navioData.results)) {
+    serviceAreas = navioData.results;
+  } else if (Array.isArray(navioData)) {
+    serviceAreas = navioData;
+  }
+
+  console.log(`Fetched ${serviceAreas.length} service areas from Navio`);
+
+  // 2. Group by city (from name parsing)
+  const cityMap = new Map<string, {
+    name: string;
+    countryCode: string;
+    areas: Array<{
+      navioId: number;
+      name: string;
+      displayName: string;
+      geofence: GeoJSONPolygon | null;
+    }>;
+  }>();
+
+  let filteredCount = 0;
+  for (const area of serviceAreas) {
+    const rawName = area.name || area.display_name || "";
+    if (isTestDataOrStreetAddress(rawName)) {
+      filteredCount++;
+      continue;
+    }
+
+    const parsed = parseNavioName(rawName);
+    if (!parsed.city) continue;
+
+    const cityKey = `${parsed.countryCode || 'NO'}_${normalizeForDedup(parsed.city)}`;
+    
+    if (!cityMap.has(cityKey)) {
+      cityMap.set(cityKey, {
+        name: normalizeCityName(parsed.city),
+        countryCode: parsed.countryCode || 'NO',
+        areas: [],
+      });
+    }
+
+    cityMap.get(cityKey)!.areas.push({
+      navioId: area.id,
+      name: parsed.area,
+      displayName: area.display_name || parsed.area,
+      geofence: area.geofence_geojson || null,
+    });
+  }
+
+  console.log(`Grouped into ${cityMap.size} cities (filtered ${filteredCount} test entries)`);
+
+  // 3. Upsert cities, districts (one per city for now), and areas
+  const result: GeoSyncResult = {
+    cities_created: 0,
+    cities_updated: 0,
+    districts_created: 0,
+    districts_updated: 0,
+    areas_created: 0,
+    areas_updated: 0,
+    polygons_synced: 0,
+  };
+
+  for (const [, cityData] of cityMap) {
+    // Upsert city
+    const { data: existingCity } = await supabase
+      .from("cities")
+      .select("id")
+      .eq("name", cityData.name)
+      .maybeSingle();
+
+    let cityId: string;
+    if (existingCity) {
+      cityId = existingCity.id;
+      await supabase.from("cities").update({
+        is_delivery: true,
+        country_code: cityData.countryCode,
+        navio_city_key: cityData.name.toLowerCase().replace(/\s+/g, "_"),
+      }).eq("id", cityId);
+      result.cities_updated++;
+    } else {
+      const { data: newCity } = await supabase
+        .from("cities")
+        .insert({
+          name: cityData.name,
+          slug: slugify(cityData.name),
+          country_code: cityData.countryCode,
+          is_delivery: true,
+          navio_city_key: cityData.name.toLowerCase().replace(/\s+/g, "_"),
+        })
+        .select("id")
+        .single();
+      cityId = newCity!.id;
+      result.cities_created++;
+    }
+
+    // Upsert default district (city-named district for simplicity)
+    const { data: existingDistrict } = await supabase
+      .from("districts")
+      .select("id")
+      .eq("city_id", cityId)
+      .eq("name", cityData.name)
+      .maybeSingle();
+
+    let districtId: string;
+    if (existingDistrict) {
+      districtId = existingDistrict.id;
+      await supabase.from("districts").update({
+        is_delivery: true,
+        navio_district_key: `${cityData.name.toLowerCase().replace(/\s+/g, "_")}_default`,
+      }).eq("id", districtId);
+      result.districts_updated++;
+    } else {
+      const { data: newDistrict } = await supabase
+        .from("districts")
+        .insert({
+          name: cityData.name,
+          slug: slugify(cityData.name),
+          city_id: cityId,
+          is_delivery: true,
+          navio_district_key: `${cityData.name.toLowerCase().replace(/\s+/g, "_")}_default`,
+        })
+        .select("id")
+        .single();
+      districtId = newDistrict!.id;
+      result.districts_created++;
+    }
+
+    // Upsert areas with geofences
+    for (const areaData of cityData.areas) {
+      const { data: existingArea } = await supabase
+        .from("areas")
+        .select("id")
+        .eq("navio_service_area_id", String(areaData.navioId))
+        .maybeSingle();
+
+      if (existingArea) {
+        await supabase.from("areas").update({
+          name: areaData.displayName || areaData.name,
+          is_delivery: true,
+          geofence_json: areaData.geofence,
+          navio_imported_at: new Date().toISOString(),
+          district_id: districtId,
+          city_id: cityId,
+        }).eq("id", existingArea.id);
+        result.areas_updated++;
+      } else {
+        await supabase.from("areas").insert({
+          name: areaData.displayName || areaData.name,
+          slug: slugify(areaData.displayName || areaData.name),
+          district_id: districtId,
+          city_id: cityId,
+          is_delivery: true,
+          navio_service_area_id: String(areaData.navioId),
+          navio_imported_at: new Date().toISOString(),
+          geofence_json: areaData.geofence,
+        });
+        result.areas_created++;
+      }
+
+      if (areaData.geofence) {
+        result.polygons_synced++;
+      }
+    }
+  }
+
+  // 4. Update snapshot
+  await updateSnapshot(supabase, navioToken);
+
+  console.log(`Geo sync complete: ${result.cities_created} cities created, ${result.areas_created} areas created, ${result.polygons_synced} polygons synced`);
+
+  return result;
+}
+
+// =============================================================================
 // MAIN HTTP HANDLER
 // =============================================================================
 
-type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "preview" | "direct" | "delta_check";
+type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "preview" | "direct" | "delta_check" | "sync_geo";
 
 serve(async (req) => {
   // Enhanced CORS preflight handling
@@ -1893,6 +2105,31 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             ...result,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      case "sync_geo": {
+        await logSync(supabase, "navio", "import", "in_progress", null,
+          "Starting geo-only sync (no AI)...", batchId, 0, 0);
+        
+        const result = await syncGeoAreas(supabase, NAVIO_API_TOKEN);
+        
+        const summary = `Geo sync complete: ${result.cities_created} cities created, ${result.cities_updated} updated, ${result.areas_created} areas created, ${result.areas_updated} updated, ${result.polygons_synced} polygons synced`;
+        await logSync(supabase, "navio", "import", "complete", null, summary, batchId);
+
+        await supabase.from("settings").upsert({
+          key: "navio_last_geo_sync",
+          value: new Date().toISOString(),
+        }, { onConflict: "key" });
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            batch_id: batchId,
+            result,
+            message: summary,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
