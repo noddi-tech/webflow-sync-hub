@@ -1,276 +1,232 @@
 
 
-# Incremental Delta Sync for Navio Import
+# Geo-Based Delivery Area System
 
-## Current Problem
+## Current State vs. Proposed Approach
 
-Every import currently:
-1. Fetches ALL ~300+ service areas from Navio API
-2. Groups them into ~18 cities
-3. Runs AI discovery for ALL cities (discovering districts)
-4. Runs AI discovery for ALL districts (discovering neighborhoods)
-5. Saves everything to staging (~7,000+ records)
+| Aspect | Current (AI Discovery) | Proposed (Geo-Based) |
+|--------|------------------------|----------------------|
+| Source of truth | AI-generated neighborhood names | Navio polygon coordinates |
+| "Do we deliver here?" | Guessing based on city grouping | Precise: point-in-polygon check |
+| Districts/Areas | AI discovers ~300 neighborhoods per city | Only areas with actual delivery polygons |
+| Data accuracy | Approximate, may include non-delivery areas | 100% accurate to Navio coverage |
+| Import complexity | Heavy AI processing | Simple polygon storage |
 
-This takes 20-40 minutes and is prone to timeouts, even though most data hasn't changed between imports.
+---
 
-## Proposed Solution: Delta Sync
+## What Navio API Actually Provides
 
-Compare Navio API data against production to identify only what's new, changed, or removed.
+Each service area from `/v1/service-areas/for-landing-pages/` includes:
 
-```text
-+-------------------+       +-------------------+       +-------------------+
-|   Navio API       |       |   Production DB   |       |      Delta        |
-|   (300+ areas)    | <---> |   (areas table)   |  -->  | - 5 new areas     |
-|                   |       | navio_service_id  |       | - 2 removed areas |
-+-------------------+       +-------------------+       | - 0 changed areas |
-                                                        +-------------------+
+```json
+{
+  "id": 123,
+  "name": "Norway Oslo Grünerløkka",
+  "display_name": "Grünerløkka",
+  "is_active": true,
+  "geofence_geojson": {
+    "type": "Polygon",
+    "coordinates": [[[10.75, 59.92], [10.76, 59.93], ...]]
+  },
+  "postal_code_cities": [
+    {"postal_code": "0550", "city": "Oslo"},
+    {"postal_code": "0551", "city": "Oslo"}
+  ]
+}
 ```
 
-### New Import Flow
+The `geofence_geojson` contains the exact delivery boundary polygon.
 
-| Phase | Before (Heavy) | After (Delta) |
-|-------|----------------|---------------|
-| Fetch | All areas | All areas (fast) |
-| Compare | None | Compare IDs with production |
-| AI Discovery | All 18 cities | Only cities with new areas |
-| Staging | 7,000+ records | Only delta records |
+---
 
-### Performance Impact
+## Proposed Architecture
 
-| Scenario | Before | After |
-|----------|--------|-------|
-| First import | 30 min | 30 min (same) |
-| No changes | 30 min | **10 seconds** |
-| 5 new areas in 1 city | 30 min | **2 minutes** |
-| New city added | 30 min | **5 minutes** |
+### Two Types of Areas
+
+```text
++------------------+     +------------------+
+|  DELIVERY AREAS  |     |  DISCOVERED AREAS |
+|  (from Navio)    |     |  (from AI)       |
++------------------+     +------------------+
+| - Has polygon    |     | - No polygon     |
+| - is_delivery=t  |     | - is_delivery=f  |
+| - 100% accurate  |     | - SEO/content    |
+| - ~300 total     |     | - ~5000 total    |
++------------------+     +------------------+
+         |                        |
+         +------------------------+
+                    |
+            areas table
+              (unified)
+```
+
+This keeps the rich SEO content from AI discovery while adding precise delivery coverage.
 
 ---
 
 ## Technical Implementation
 
-### 1. New Database Table: `navio_snapshot`
+### 1. Database Changes
 
-Stores the last known state of Navio data for comparison:
+Add geometry support to store and query polygons:
 
 ```sql
-CREATE TABLE navio_snapshot (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  navio_service_area_id integer UNIQUE NOT NULL,
-  name text NOT NULL,
-  display_name text,
-  is_active boolean DEFAULT true,
-  city_name text,
-  country_code text,
-  snapshot_at timestamptz DEFAULT now(),
-  last_seen_at timestamptz DEFAULT now()
-);
+-- Enable PostGIS extension (if not already)
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Add geometry columns to areas table
+ALTER TABLE areas 
+ADD COLUMN geofence geometry(Polygon, 4326),
+ADD COLUMN geofence_center geometry(Point, 4326);
+
+-- Add to navio_snapshot for delta tracking
+ALTER TABLE navio_snapshot
+ADD COLUMN geofence_hash text;  -- MD5 of geojson to detect changes
+
+-- Create spatial index for fast point-in-polygon queries
+CREATE INDEX areas_geofence_idx ON areas USING GIST (geofence);
 ```
 
-### 2. New Edge Function Mode: `delta_check`
+### 2. Modified Import Flow
 
-Before running full import, check what's changed:
+```text
+CURRENT FLOW:
+Navio API → Parse names → AI discover districts → AI discover neighborhoods → Save 5000+ areas
+
+NEW FLOW:
+Navio API → Store polygons directly → Mark is_delivery=true
+         → (Optional) AI enriches with SEO content for delivery areas only
+```
+
+### 3. Point-in-Polygon Query
+
+The frontend/API can now answer "do we deliver to this address?" precisely:
+
+```sql
+-- Find delivery areas containing a coordinate
+SELECT a.*, d.name as district_name, c.name as city_name
+FROM areas a
+JOIN districts d ON a.district_id = d.id
+JOIN cities c ON d.city_id = c.id
+WHERE a.is_delivery = true
+  AND ST_Contains(a.geofence, ST_SetSRID(ST_MakePoint(10.75, 59.92), 4326));
+```
+
+### 4. New Edge Function Mode: `sync_polygons`
+
+A lightweight sync that only handles geometry:
 
 ```typescript
-case "delta_check": {
-  // 1. Fetch current Navio data
+case "sync_polygons": {
+  // 1. Fetch all Navio areas with geofences
   const navioAreas = await fetchNavioAreas(navioToken);
   
-  // 2. Fetch last snapshot
-  const { data: snapshot } = await supabase
-    .from("navio_snapshot")
-    .select("*");
-  
-  // 3. Compare
-  const snapshotMap = new Map(snapshot.map(s => [s.navio_service_area_id, s]));
-  
-  const newAreas = navioAreas.filter(a => !snapshotMap.has(a.id));
-  const removedAreas = snapshot.filter(s => !navioAreas.find(a => a.id === s.navio_service_area_id));
-  const changedAreas = navioAreas.filter(a => {
-    const existing = snapshotMap.get(a.id);
-    return existing && existing.name !== a.name;
-  });
-  
-  return {
-    hasChanges: newAreas.length > 0 || removedAreas.length > 0,
-    summary: {
-      new: newAreas.length,
-      removed: removedAreas.length,
-      changed: changedAreas.length,
-      unchanged: navioAreas.length - newAreas.length - changedAreas.length
-    },
-    affectedCities: getAffectedCities(newAreas, changedAreas, removedAreas),
-    newAreas,
-    removedAreas,
-    changedAreas
-  };
-}
-```
-
-### 3. Modified Initialize Mode
-
-Only queue cities that have changes:
-
-```typescript
-case "initialize": {
-  // If delta mode, only process affected cities
-  const delta = await checkDelta(navioAreas, existingSnapshot);
-  
-  if (delta.newAreas.length === 0 && delta.changedAreas.length === 0) {
-    return { 
-      noChanges: true, 
-      message: "No new delivery areas found",
-      removedAreas: delta.removedAreas 
-    };
+  // 2. For each area with a polygon:
+  for (const area of navioAreas) {
+    if (area.geofence_geojson) {
+      await supabase.from("areas")
+        .update({ 
+          geofence: area.geofence_geojson,
+          is_delivery: true,
+          navio_imported_at: new Date().toISOString()
+        })
+        .eq("navio_service_area_id", area.id.toString());
+    }
   }
   
-  // Only queue cities with new/changed areas
-  const affectedCities = getUniqueCities([...delta.newAreas, ...delta.changedAreas]);
-  // Queue only these cities for processing
-}
-```
-
-### 4. Skip AI Discovery for Unchanged Cities
-
-For cities that already have committed data in production:
-
-```typescript
-async function processCityDistricts(...) {
-  // Check if city already has committed districts
-  const { data: existingDistricts } = await supabase
-    .from("districts")
-    .select("id, name")
-    .eq("city_id", cityId);
-  
-  if (existingDistricts?.length > 0) {
-    // Reuse existing district structure
-    hierarchy = buildHierarchyFromExisting(existingDistricts);
-    // Only classify the NEW areas into these districts
-  } else {
-    // Full AI discovery for new cities
-    allDistricts = await discoverDistrictsForCity(...);
-  }
-}
-```
-
-### 5. Update Snapshot After Commit
-
-After successfully committing to production:
-
-```typescript
-case "commit": {
-  // Commit to production...
-  const result = await commitToProduction(supabase, batchId);
-  
-  // Update snapshot with current Navio state
-  await updateSnapshot(supabase, navioAreas);
-  
-  return result;
-}
-
-async function updateSnapshot(supabase, navioAreas) {
-  // Upsert all current Navio areas
-  await supabase
-    .from("navio_snapshot")
-    .upsert(
-      navioAreas.map(a => ({
-        navio_service_area_id: a.id,
-        name: a.name,
-        display_name: a.display_name,
-        city_name: parseCityFromName(a.name),
-        country_code: parseCountryFromName(a.name),
-        last_seen_at: new Date().toISOString(),
-      })),
-      { onConflict: 'navio_service_area_id' }
-    );
-  
-  // Mark removed areas
-  const currentIds = navioAreas.map(a => a.id);
-  await supabase
-    .from("navio_snapshot")
-    .update({ is_active: false })
-    .not("navio_service_area_id", "in", currentIds);
+  return { updated: count };
 }
 ```
 
 ---
 
-## Frontend Changes
+## Simplified Approach (Recommended First Step)
 
-### 1. Dashboard: Quick Delta Check Button
+If full PostGIS setup is too complex, we can start simpler:
 
-Add a "Check for Changes" button that runs `delta_check` mode:
+### Store GeoJSON as JSONB
+
+```sql
+ALTER TABLE areas ADD COLUMN geofence_json jsonb;
+ALTER TABLE navio_snapshot ADD COLUMN geofence_json jsonb;
+```
+
+Benefits:
+- No PostGIS dependency
+- Can still do basic bounding box checks in JavaScript
+- Full polygon data available for frontend maps
+- Can upgrade to PostGIS later for point-in-polygon queries
+
+### Display on Map
+
+The stored polygons can be rendered on a map UI to show exact delivery coverage:
 
 ```tsx
-// Quick preview of what changed without full import
-<Button onClick={() => checkDelta.mutate()}>
-  <RefreshCw className="h-4 w-4 mr-2" />
-  Check for Changes
-</Button>
-
-{deltaResult && (
-  <Card>
-    <CardContent>
-      <p>New areas: {deltaResult.summary.new}</p>
-      <p>Removed: {deltaResult.summary.removed}</p>
-      <p>Unchanged: {deltaResult.summary.unchanged}</p>
-      
-      {deltaResult.hasChanges ? (
-        <Button onClick={() => runIncrementalImport()}>
-          Import Changes Only
-        </Button>
-      ) : (
-        <p>All delivery areas are up to date!</p>
-      )}
-    </CardContent>
-  </Card>
-)}
-```
-
-### 2. Removed Areas Preview
-
-Show areas that are no longer in Navio (need review):
-
-```tsx
-{removedAreas.length > 0 && (
-  <Alert variant="warning">
-    <AlertTriangle className="h-4 w-4" />
-    <AlertTitle>{removedAreas.length} areas no longer in Navio</AlertTitle>
-    <AlertDescription>
-      These delivery areas were removed from Navio. Review and optionally mark as inactive.
-    </AlertDescription>
-  </Alert>
-)}
+// Leaflet/MapboxGL example
+const DeliveryMap = ({ areas }) => {
+  return (
+    <Map>
+      {areas.filter(a => a.geofence_json).map(area => (
+        <GeoJSON 
+          key={area.id}
+          data={area.geofence_json}
+          style={{ color: '#22c55e', fillOpacity: 0.3 }}
+        />
+      ))}
+    </Map>
+  );
+};
 ```
 
 ---
 
-## Files to Create/Modify
+## Delta Sync with Polygons
 
-| File | Action | Changes |
-|------|--------|---------|
-| `supabase/migrations/xxx_add_navio_snapshot.sql` | Create | Add `navio_snapshot` table |
-| `supabase/functions/navio-import/index.ts` | Modify | Add `delta_check` mode, modify `initialize` for delta, update snapshot on commit |
-| `src/hooks/useNavioImport.ts` | Modify | Add `checkDelta` function, handle "no changes" result |
-| `src/pages/Dashboard.tsx` | Modify | Add "Check for Changes" button, show delta summary |
-| `src/components/sync/DeltaSummary.tsx` | Create | Display delta results with new/removed/unchanged counts |
+The snapshot can detect polygon changes too:
+
+```typescript
+// In delta_check mode
+const changedAreas = navioAreas.filter(a => {
+  const existing = snapshotMap.get(a.id);
+  if (!existing) return false;
+  
+  // Check if name OR polygon changed
+  const nameChanged = existing.name !== a.name;
+  const polygonChanged = hashGeoJSON(a.geofence_geojson) !== existing.geofence_hash;
+  
+  return nameChanged || polygonChanged;
+});
+```
 
 ---
 
-## Migration Path
+## Files to Modify
 
-1. **First run after deployment**: No snapshot exists, so full import runs as before
-2. **Snapshot created**: After commit, snapshot table is populated
-3. **Subsequent runs**: Delta check shows only changes, vastly faster
+| File | Changes |
+|------|---------|
+| `supabase/migrations/xxx_add_geofence.sql` | Add geofence columns (JSONB or PostGIS) |
+| `supabase/functions/navio-import/index.ts` | Store geofence data during import |
+| `src/pages/NavioPreview.tsx` | Show map with delivery polygons |
+| `src/components/sync/DeltaSummary.tsx` | Show polygon changes in delta |
 
 ---
 
-## Expected Results
+## Recommended Phased Approach
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Typical sync time | 20-40 min | 10 sec - 5 min |
-| AI API calls (no changes) | ~50 | 0 |
-| DB operations (no changes) | 7,000+ | ~10 |
-| Timeout risk | High | Very Low |
-| Resume needed | Often | Rarely |
+**Phase 1 (Quick win):** Store `geofence_json` as JSONB in areas/snapshot tables during import. Display on preview page.
+
+**Phase 2 (Enhanced):** Add PostGIS for spatial queries. Enable "check if address is in delivery zone" API.
+
+**Phase 3 (Full geo):** Replace AI discovery with pure geo-based hierarchy. Use polygon containment to auto-classify areas into districts.
+
+---
+
+## Expected Outcomes
+
+| Before | After |
+|--------|-------|
+| "Is this a delivery area?" → Check `is_delivery` flag (set by AI guess) | "Is this a delivery area?" → Point-in-polygon query against actual Navio boundaries |
+| ~5400 AI-discovered areas, unknown accuracy | ~300 precise delivery polygons + optional SEO areas |
+| 30 min import with AI | 1-2 min import (polygon storage only) |
+| No map visualization | Interactive delivery zone map |
 
