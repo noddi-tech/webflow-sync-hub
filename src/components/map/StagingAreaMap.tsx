@@ -3,8 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/utils";
 import type { GeoJSON as GeoJSONType } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -24,6 +27,13 @@ interface AreaWithGeo {
   city: string;
   countryCode: string;
   geofence: GeoJSON.Geometry;
+}
+
+interface CityWithCount {
+  id: string;
+  name: string;
+  country_code: string | null;
+  area_count: number;
 }
 
 // Swap coordinates from [lat, lng] to [lng, lat] for GeoJSON compliance
@@ -196,25 +206,58 @@ function useSnapshot() {
   });
 }
 
-interface CityOption {
-  id: string;
-  name: string;
-  country_code: string | null;
-}
-
-// Extract areas from production areas table with city filter
-function useProduction(cityFilter?: string | null) {
+// Fetch all cities with their geofence counts
+function useCitiesWithCounts() {
   return useQuery({
-    queryKey: ["production-geofences", cityFilter],
+    queryKey: ["cities-with-geofence-counts"],
     queryFn: async () => {
-      // First, get list of all cities
-      const { data: citiesData } = await supabase
+      const { data, error } = await supabase
         .from("cities")
         .select("id, name, country_code")
         .order("name");
       
-      // Build query for areas
-      let query = supabase
+      if (error) throw error;
+      
+      // Get area counts per city (separate lightweight query)
+      const { data: counts } = await supabase
+        .from("areas")
+        .select("city_id")
+        .not("geofence_json", "is", null);
+      
+      // Build count map
+      const countMap = new Map<string, number>();
+      for (const row of counts || []) {
+        if (row.city_id) {
+          countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
+        }
+      }
+      
+      // Filter to cities that have geofenced areas and sort by count
+      const citiesWithCounts: CityWithCount[] = (data || [])
+        .map(city => ({
+          ...city,
+          area_count: countMap.get(city.id) || 0
+        }))
+        .filter(city => city.area_count > 0)
+        .sort((a, b) => b.area_count - a.area_count);
+      
+      return citiesWithCounts;
+    },
+    staleTime: 60000, // Cache for 1 minute
+  });
+}
+
+// Extract areas from production areas table with multi-city filter
+function useProduction(selectedCityIds: string[]) {
+  return useQuery({
+    queryKey: ["production-geofences", selectedCityIds],
+    enabled: selectedCityIds.length > 0,
+    queryFn: async () => {
+      const allAreas: AreaWithGeo[] = [];
+      const cityNames = new Set<string>();
+      
+      // Fetch areas for all selected cities in one query using .in()
+      const { data, error } = await supabase
         .from("areas")
         .select(`
           id, 
@@ -222,21 +265,10 @@ function useProduction(cityFilter?: string | null) {
           geofence_json,
           city:cities!areas_city_id_fkey(id, name, country_code)
         `)
+        .in("city_id", selectedCityIds)
         .not("geofence_json", "is", null);
       
-      // Apply city filter if selected
-      if (cityFilter) {
-        query = query.eq("city_id", cityFilter);
-      } else {
-        // If no filter, limit to first 100 to show something
-        query = query.limit(100);
-      }
-      
-      const { data, error } = await query;
       if (error) throw error;
-      
-      const areasWithGeo: AreaWithGeo[] = [];
-      const cityNames = new Set<string>();
       
       for (const entry of data || []) {
         const city = entry.city as { id: string; name: string; country_code: string } | null;
@@ -246,7 +278,7 @@ function useProduction(cityFilter?: string | null) {
         // Production data IS in [lat, lng] format - NEEDS swap
         const geofence = extractGeometry(entry.geofence_json, true);
         if (geofence) {
-          areasWithGeo.push({
+          allAreas.push({
             id: entry.id,
             name: entry.name,
             city: cityName,
@@ -257,9 +289,8 @@ function useProduction(cityFilter?: string | null) {
       }
       
       return {
-        areas: areasWithGeo,
+        areas: allAreas,
         cities: Array.from(cityNames),
-        availableCities: (citiesData || []) as CityOption[],
       };
     },
   });
@@ -405,13 +436,126 @@ function MapContent({
   );
 }
 
+// City tag selector component
+function CityTagSelector({
+  cities,
+  selectedCityIds,
+  onToggleCity,
+  onSelectAll,
+  onClearAll,
+  isLoading,
+}: {
+  cities: CityWithCount[];
+  selectedCityIds: string[];
+  onToggleCity: (cityId: string) => void;
+  onSelectAll: () => void;
+  onClearAll: () => void;
+  isLoading: boolean;
+}) {
+  const MAX_AREAS = 2000;
+  const totalSelectedAreas = cities
+    .filter(c => selectedCityIds.includes(c.id))
+    .reduce((sum, c) => sum + c.area_count, 0);
+
+  if (isLoading) {
+    return <Skeleton className="h-20 w-full" />;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium">Select cities to display:</span>
+        <div className="flex gap-2">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={onSelectAll}
+            className="text-xs h-7"
+          >
+            Select All
+          </Button>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={onClearAll}
+            className="text-xs h-7"
+          >
+            Clear
+          </Button>
+        </div>
+      </div>
+      
+      {totalSelectedAreas > MAX_AREAS && (
+        <Alert variant="destructive" className="py-2">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription className="text-xs">
+            {totalSelectedAreas.toLocaleString()} areas selected. Consider selecting fewer cities for better performance.
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      <div className="flex flex-wrap gap-2">
+        {cities.map((city, idx) => {
+          const isSelected = selectedCityIds.includes(city.id);
+          const color = getCityColor(idx);
+          
+          return (
+            <button
+              key={city.id}
+              onClick={() => onToggleCity(city.id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+                "border cursor-pointer",
+                isSelected 
+                  ? "border-transparent text-white" 
+                  : "border-border bg-background text-muted-foreground hover:bg-muted"
+              )}
+              style={isSelected ? { backgroundColor: color } : undefined}
+            >
+              <span 
+                className="w-2 h-2 rounded-full" 
+                style={{ backgroundColor: color }}
+              />
+              {city.name} ({city.area_count.toLocaleString()})
+            </button>
+          );
+        })}
+      </div>
+      
+      {selectedCityIds.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {selectedCityIds.length} cities selected · {totalSelectedAreas.toLocaleString()} areas
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingAreaMapProps) {
   const [activeSource, setActiveSource] = useState<MapSource>(defaultSource);
-  const [selectedCity, setSelectedCity] = useState<string | null>(null);
+  const [selectedCityIds, setSelectedCityIds] = useState<string[]>([]);
   
   const stagingQuery = useStaging(batchId);
   const snapshotQuery = useSnapshot();
-  const productionQuery = useProduction(selectedCity);
+  const citiesQuery = useCitiesWithCounts();
+  const productionQuery = useProduction(selectedCityIds);
+  
+  // Auto-select top 3 cities when data loads
+  useEffect(() => {
+    if (citiesQuery.data && citiesQuery.data.length > 0 && selectedCityIds.length === 0) {
+      const top3 = citiesQuery.data.slice(0, 3).map(c => c.id);
+      setSelectedCityIds(top3);
+    }
+  }, [citiesQuery.data, selectedCityIds.length]);
+  
+  // Toggle a city on/off
+  const toggleCity = (cityId: string) => {
+    setSelectedCityIds(prev => 
+      prev.includes(cityId) 
+        ? prev.filter(id => id !== cityId)
+        : [...prev, cityId]
+    );
+  };
   
   // Determine which data to show
   const currentQuery = 
@@ -436,22 +580,14 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
       </Tabs>
       
       {activeSource === "production" && (
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Filter by city:</span>
-          <Select value={selectedCity || "all"} onValueChange={(v) => setSelectedCity(v === "all" ? null : v)}>
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="All cities (first 100)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All cities (first 100)</SelectItem>
-              {productionQuery.data?.availableCities?.map((city) => (
-                <SelectItem key={city.id} value={city.id}>
-                  {city.name} ({city.country_code || "XX"})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <CityTagSelector
+          cities={citiesQuery.data || []}
+          selectedCityIds={selectedCityIds}
+          onToggleCity={toggleCity}
+          onSelectAll={() => setSelectedCityIds(citiesQuery.data?.map(c => c.id) || [])}
+          onClearAll={() => setSelectedCityIds([])}
+          isLoading={citiesQuery.isLoading}
+        />
       )}
       
       <MapContent 
