@@ -1,259 +1,143 @@
 
-# Fix: forwardRef Console Warnings and Verify City Display
 
-## Investigation Results
+# Fix: Production Map Not Showing All Areas
 
-### Database Status (Verified)
-All 18 cities exist in the database with complete data:
-| City | Areas | Districts | Geofences |
-|------|-------|-----------|-----------|
-| Oslo | 573 | 15 | 573 (100%) |
-| Goteborg | 1,113 | 28 | 1,113 |
-| Munchen | 962 | 26 | 962 |
-| Stockholm | 508 | 18 | 508 |
-| Bergen | 379 | 9 | 379 |
-| ... and 13 more cities |
+## Root Cause Analysis
 
-**Total: 4,898 areas, 128 districts, 100% geofence coverage**
+I found two issues causing the Production tab to show only a few areas:
 
-### Root Cause of Missing Cities
+### Issue 1: Hardcoded Limit of 300 Rows
+The `useProduction` hook in `StagingAreaMap.tsx` has a hardcoded `.limit(300)` (line 213) that restricts the query to only 300 areas, even though there are **4,898 areas** in the production database with geofence data.
 
-The cities ARE in the database and the query logic is correct. The issue is likely:
-1. **Stale query cache** after the previous code refactor
-2. **Scroll position** - the table may require scrolling to see all 18 cities
+### Issue 2: Double Coordinate Swapping
+The `extractGeometry` function applies coordinate swapping (`[lat, lng]` → `[lng, lat]`) to all data sources. However:
 
-**Recommended Action**: Click the refresh button in the Production tab or navigate away and back to trigger a fresh data fetch.
+- **Snapshot/Staging data** from Navio API is stored as `[lat, lng]` → needs swapping ✅
+- **Production data** was already corrected to `[lng, lat]` by the database trigger during Geo Sync → should NOT be swapped ❌
 
-### Root Cause of forwardRef Warnings
+The result: Production coordinates get double-swapped back to `[lat, lng]`, placing polygons in the wrong geographic location (they appear off the map or in completely wrong positions).
 
-React warns when function components receive refs without `forwardRef`. This occurs when:
-- React Router's `Outlet` passes refs to page components
-- Radix UI primitives pass refs for focus management
-- Components are used inside Tooltip, Dialog, or other wrappers
+---
 
-The warnings are **cosmetic** - they don't break functionality but should be fixed for proper focus management and tooling support.
+## What is Snapshot vs Production?
+
+| Term | Definition | Table | Current Count |
+|------|------------|-------|---------------|
+| **Snapshot** | Last known state of Navio API service areas. The "source of truth" from the external Navio system. | `navio_snapshot` | 215 areas |
+| **Production** | Your app's live geographic data used for delivery lookups and map display. | `areas` | 4,898 areas |
+| **Staging** | Temporary holding area for AI-classified data pending review/approval. | `navio_import_queue` | 0 areas |
 
 ---
 
 ## Solution
 
-### Part 1: Wrap Components with forwardRef
+### File: `src/components/map/StagingAreaMap.tsx`
 
-Add `React.forwardRef` to all affected components to properly forward refs.
+### Change 1: Add Source Parameter to extractGeometry
 
-**Files to modify:**
-
-| File | Component(s) to wrap |
-|------|---------------------|
-| `src/pages/NavioDashboard.tsx` | `NavioDashboard` (default export) |
-| `src/components/navio/PipelineStatusBanner.tsx` | `PipelineStatusBanner`, `StageCard` |
-| `src/components/navio/NextActionCard.tsx` | `NextActionCard` |
-| `src/components/navio/OperationHistoryTable.tsx` | `OperationHistoryTable` |
-| `src/components/sync/SyncProgressDialog.tsx` | `SyncProgressDialog` |
-| `src/components/navio/ProductionDataPanel.tsx` | `ProductionDataPanel`, `CityRow`, `DistrictsList` |
-
-### Part 2: Pattern for Each Component
-
-For each component, apply this transformation:
+Make the coordinate swapping conditional based on whether the data is from Navio (snapshot/staging) or production:
 
 ```tsx
-// BEFORE
-function MyComponent(props: MyProps) {
-  return <div>...</div>;
+// Helper to extract geometry from Feature-wrapped or raw GeoJSON
+// needsSwap: true for Navio-sourced data (snapshot/staging), false for production
+function extractGeometry(geofenceData: unknown, needsSwap: boolean = true): GeoJSON.Geometry | null {
+  if (!geofenceData || typeof geofenceData !== 'object') return null;
+  
+  const geo = geofenceData as { type?: string; geometry?: GeoJSON.Geometry };
+  
+  // Handle Feature wrapper
+  if (geo.type === "Feature" && geo.geometry) {
+    return needsSwap ? swapCoordinates(geo.geometry) : geo.geometry;
+  }
+  
+  // Handle direct Geometry
+  if (geo.type === "Polygon" || geo.type === "MultiPolygon") {
+    return needsSwap ? swapCoordinates(geo as GeoJSON.Geometry) : geo as GeoJSON.Geometry;
+  }
+  
+  return null;
 }
-
-// AFTER
-import { forwardRef } from "react";
-
-const MyComponent = forwardRef<HTMLDivElement, MyProps>(
-  (props, ref) => {
-    return <div ref={ref}>...</div>;
-  }
-);
-MyComponent.displayName = "MyComponent";
-
-export { MyComponent };
 ```
 
-For components that return multiple elements (like `CityRow` with its Fragment):
+### Change 2: Update useSnapshot and useStaging to Pass needsSwap = true
 
 ```tsx
-// CityRow returns multiple TableRows, so ref goes on first visible element
-const CityRow = forwardRef<HTMLTableRowElement, { city: ProductionCity }>(
-  ({ city }, ref) => {
-    const [isOpen, setIsOpen] = useState(false);
-    return (
-      <>
-        <TableRow ref={ref} className="cursor-pointer hover:bg-muted/50">
-          {/* ... cells ... */}
-        </TableRow>
-        {isOpen && (
-          <TableRow className="bg-muted/30">
-            {/* ... expanded content ... */}
-          </TableRow>
-        )}
-      </>
-    );
-  }
-);
-CityRow.displayName = "CityRow";
+// In useStaging (line 136):
+const geofence = extractGeometry(area.geofence_geojson, true); // Navio data needs swap
+
+// In useSnapshot (line 178):
+const geofence = extractGeometry(entry.geofence_json, true); // Navio data needs swap
 ```
 
----
-
-## Detailed Changes
-
-### 1. NavioDashboard.tsx
+### Change 3: Update useProduction to Pass needsSwap = false
 
 ```tsx
-import { forwardRef, useState, useEffect, useCallback } from "react";
-
-const NavioDashboard = forwardRef<HTMLDivElement>((props, ref) => {
-  // ... existing implementation
-  return (
-    <div ref={ref} className="p-8">
-      {/* ... existing JSX ... */}
-    </div>
-  );
-});
-NavioDashboard.displayName = "NavioDashboard";
-
-export default NavioDashboard;
+// In useProduction (line 224):
+const geofence = extractGeometry(entry.geofence_json, false); // Production data already correct
 ```
 
-### 2. PipelineStatusBanner.tsx
+### Change 4: Remove the 300-Row Limit and Add Pagination
+
+Replace the limited query with paginated fetching to handle all 4,898 areas:
 
 ```tsx
-import { forwardRef } from "react";
-
-const StageCard = forwardRef<HTMLDivElement, StageCardProps>(
-  ({ label, icon, count, secondaryCount, secondaryLabel, status, showArrow = true }, ref) => {
-    return (
-      <div ref={ref} className="flex items-center gap-2">
-        {/* ... existing JSX ... */}
-      </div>
-    );
-  }
-);
-StageCard.displayName = "StageCard";
-
-export const PipelineStatusBanner = forwardRef<HTMLDivElement>((props, ref) => {
-  // ... existing implementation
-  return (
-    <Card ref={ref}>
-      {/* ... existing JSX ... */}
-    </Card>
-  );
-});
-PipelineStatusBanner.displayName = "PipelineStatusBanner";
-```
-
-### 3. NextActionCard.tsx
-
-```tsx
-import { forwardRef } from "react";
-
-export const NextActionCard = forwardRef<HTMLDivElement, NextActionCardProps>(
-  (props, ref) => {
-    // ... existing implementation
-    return (
-      <Card ref={ref} className={...}>
-        {/* ... existing JSX ... */}
-      </Card>
-    );
-  }
-);
-NextActionCard.displayName = "NextActionCard";
-```
-
-### 4. ProductionDataPanel.tsx
-
-```tsx
-import { forwardRef, useState } from "react";
-
-const DistrictsList = forwardRef<HTMLDivElement, { cityId: string }>(
-  ({ cityId }, ref) => {
-    // ... existing implementation
-    return (
-      <div ref={ref} className="pl-8 py-2 border-l ml-4">
-        {/* ... existing JSX ... */}
-      </div>
-    );
-  }
-);
-DistrictsList.displayName = "DistrictsList";
-
-const CityRow = forwardRef<HTMLTableRowElement, { city: ProductionCity }>(
-  ({ city }, ref) => {
-    const [isOpen, setIsOpen] = useState(false);
-    // ... existing implementation
-    return (
-      <>
-        <TableRow ref={ref} className="cursor-pointer hover:bg-muted/50">
-          {/* ... existing cells ... */}
-        </TableRow>
-        {isOpen && (
-          <TableRow className="bg-muted/30 hover:bg-muted/30">
-            <TableCell colSpan={6} className="p-0">
-              <DistrictsList cityId={city.id} />
-            </TableCell>
-          </TableRow>
-        )}
-      </>
-    );
-  }
-);
-CityRow.displayName = "CityRow";
-
-export const ProductionDataPanel = forwardRef<HTMLDivElement, ProductionDataPanelProps>(
-  ({ onGeoSync, isGeoSyncing }, ref) => {
-    // ... existing implementation
-    return (
-      <Card ref={ref}>
-        {/* ... existing JSX ... */}
-      </Card>
-    );
-  }
-);
-ProductionDataPanel.displayName = "ProductionDataPanel";
-```
-
-### 5. OperationHistoryTable.tsx
-
-```tsx
-import { forwardRef } from "react";
-
-export const OperationHistoryTable = forwardRef<HTMLDivElement, OperationHistoryTableProps>(
-  ({ limit = 10, showHeader = true }, ref) => {
-    // ... existing implementation
-    return (
-      <Card ref={ref}>
-        {/* ... existing JSX ... */}
-      </Card>
-    );
-  }
-);
-OperationHistoryTable.displayName = "OperationHistoryTable";
-```
-
-### 6. SyncProgressDialog.tsx
-
-```tsx
-import { forwardRef } from "react";
-
-export const SyncProgressDialog = forwardRef<HTMLDivElement, SyncProgressDialogProps>(
-  (props, ref) => {
-    // ... existing implementation
-    return (
-      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-        <DialogContent ref={ref}>
-          {/* ... existing JSX ... */}
-        </DialogContent>
-      </Dialog>
-    );
-  }
-);
-SyncProgressDialog.displayName = "SyncProgressDialog";
+function useProduction() {
+  return useQuery({
+    queryKey: ["production-geofences"],
+    queryFn: async () => {
+      // Fetch all production areas with pagination
+      const allAreas: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      
+      while (true) {
+        const { data, error } = await supabase
+          .from("areas")
+          .select(`
+            id, 
+            name, 
+            geofence_json,
+            city:cities!areas_city_id_fkey(id, name, country_code)
+          `)
+          .not("geofence_json", "is", null)
+          .range(from, from + pageSize - 1);
+        
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        
+        allAreas.push(...data);
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      
+      const areasWithGeo: AreaWithGeo[] = [];
+      const cityNames = new Set<string>();
+      
+      for (const entry of allAreas) {
+        const city = entry.city as { id: string; name: string; country_code: string } | null;
+        const cityName = city?.name || "Unknown";
+        cityNames.add(cityName);
+        
+        // Production data is already in correct [lng, lat] format - don't swap
+        const geofence = extractGeometry(entry.geofence_json, false);
+        if (geofence) {
+          areasWithGeo.push({
+            id: entry.id,
+            name: entry.name,
+            city: cityName,
+            countryCode: city?.country_code || "XX",
+            geofence,
+          });
+        }
+      }
+      
+      return {
+        areas: areasWithGeo,
+        cities: Array.from(cityNames),
+      };
+    },
+  });
+}
 ```
 
 ---
@@ -261,17 +145,32 @@ SyncProgressDialog.displayName = "SyncProgressDialog";
 ## Expected Outcome
 
 After these changes:
-1. Console will be free of forwardRef warnings
-2. All 18 cities will display correctly in the Production tab (they already exist in DB)
-3. Focus management will work properly in dialogs and modals
-4. React Router transitions will work correctly
-5. Development tooling will be able to inspect components properly
+
+| Tab | Before | After |
+|-----|--------|-------|
+| **Snapshot** | 215 areas rendering correctly | No change (still works) |
+| **Staging** | 0 areas | No change |
+| **Production** | 300 areas (mostly off-map) | **4,898 areas** rendering correctly across all 18 cities |
+
+The Production map will show:
+- Göteborg (1,113 areas)
+- München (962 areas)
+- Oslo (573 areas)
+- Stockholm (508 areas)
+- Bergen (379 areas)
+- And all other cities...
 
 ---
 
-## Technical Notes
+## Technical Details
 
-- `forwardRef` is required when a component might receive a ref from a parent
-- The `displayName` property helps with debugging in React DevTools
-- For components returning Fragments, the ref goes on the first meaningful DOM element
-- Card components from shadcn already forward refs, so we just pass the ref through
+### Why Production Data Doesn't Need Coordinate Swapping
+
+The `sync_geofence_geometry` database trigger processes incoming GeoJSON during Geo Sync and stores it in the correct GeoJSON standard format (`[longitude, latitude]`). The Navio API returns non-standard `[latitude, longitude]`, but this is corrected at import time.
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/components/map/StagingAreaMap.tsx` | Update `extractGeometry` signature, fix `useProduction` to not swap and add pagination |
+
