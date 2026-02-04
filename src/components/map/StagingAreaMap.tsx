@@ -26,6 +26,25 @@ interface AreaWithGeo {
   geofence: GeoJSON.Geometry;
 }
 
+// Helper to extract geometry from Feature-wrapped or raw GeoJSON
+function extractGeometry(geofenceData: unknown): GeoJSON.Geometry | null {
+  if (!geofenceData || typeof geofenceData !== 'object') return null;
+  
+  const geo = geofenceData as { type?: string; geometry?: GeoJSON.Geometry };
+  
+  // Handle Feature wrapper
+  if (geo.type === "Feature" && geo.geometry) {
+    return geo.geometry;
+  }
+  
+  // Handle direct Geometry
+  if (geo.type === "Polygon" || geo.type === "MultiPolygon") {
+    return geo as GeoJSON.Geometry;
+  }
+  
+  return null;
+}
+
 type MapSource = "staging" | "snapshot" | "production";
 
 interface StagingAreaMapProps {
@@ -128,8 +147,8 @@ function useSnapshot() {
         const cityName = entry.city_name || "Unknown";
         cityNames.add(cityName);
         
-        const geofence = entry.geofence_json as unknown as GeoJSON.Geometry | null;
-        if (geofence && geofence.type && (geofence.type === "Polygon" || geofence.type === "MultiPolygon")) {
+        const geofence = extractGeometry(entry.geofence_json);
+        if (geofence) {
           areasWithGeo.push({
             id: entry.navio_service_area_id,
             name: entry.display_name || entry.name,
@@ -174,8 +193,8 @@ function useProduction() {
         const cityName = city?.name || "Unknown";
         cityNames.add(cityName);
         
-        const geofence = entry.geofence_json as unknown as GeoJSON.Geometry | null;
-        if (geofence && geofence.type && (geofence.type === "Polygon" || geofence.type === "MultiPolygon")) {
+        const geofence = extractGeometry(entry.geofence_json);
+        if (geofence) {
           areasWithGeo.push({
             id: entry.id,
             name: entry.name,
