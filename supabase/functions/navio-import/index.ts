@@ -2268,6 +2268,26 @@ serve(async (req) => {
       case "commit_city": {
         // Incremental commit - process one city at a time to avoid timeout
         
+        // SELF-HEALING: Fix any stale "approved" records that already have committed IDs
+        // This handles interrupted commits where data was saved but status wasn't updated
+        await supabase
+          .from("navio_staging_cities")
+          .update({ status: "committed" })
+          .eq("status", "approved")
+          .not("committed_city_id", "is", null);
+        
+        await supabase
+          .from("navio_staging_districts")
+          .update({ status: "committed" })
+          .in("status", ["approved", "pending"])
+          .not("committed_district_id", "is", null);
+        
+        await supabase
+          .from("navio_staging_areas")
+          .update({ status: "committed" })
+          .in("status", ["approved", "pending"])
+          .not("committed_area_id", "is", null);
+        
         // Fetch geofence data from queue to use during commit
         const { data: queueData } = await supabase
           .from("navio_import_queue")
