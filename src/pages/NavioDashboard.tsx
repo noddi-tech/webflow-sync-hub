@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, forwardRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +28,7 @@ import { useNavioPipelineStatus } from "@/hooks/useNavioPipelineStatus";
 import { ProductionDataPanel } from "@/components/navio/ProductionDataPanel";
 import NavioStagingTab from "@/components/navio/NavioStagingTab";
 
-export default function NavioDashboard() {
+const NavioDashboard = forwardRef<HTMLDivElement>((_, ref) => {
   const queryClient = useQueryClient();
   const [progressOpen, setProgressOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
@@ -66,7 +66,7 @@ export default function NavioDashboard() {
   }, [navioIncrementalImport]);
 
   return (
-    <div className="p-8">
+    <div ref={ref} className="p-8">
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-foreground">Navio Dashboard</h1>
         <p className="text-muted-foreground mt-1">
@@ -294,4 +294,7 @@ export default function NavioDashboard() {
       />
     </div>
   );
-}
+});
+NavioDashboard.displayName = "NavioDashboard";
+
+export default NavioDashboard;
