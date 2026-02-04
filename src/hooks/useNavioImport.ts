@@ -426,10 +426,12 @@ export function useNavioImport() {
       return response.data;
     },
     onSuccess: (data) => {
-      // Invalidate queries so UI updates immediately
+      // Force immediate refetch for always-visible pipeline status
+      queryClient.refetchQueries({ queryKey: ["navio-pipeline-status"] });
+      
+      // Invalidate (mark stale) for tab-based queries - they'll refetch when visited
       queryClient.invalidateQueries({ queryKey: ["production-data"] });
       queryClient.invalidateQueries({ queryKey: ["production-geofences"] });
-      queryClient.invalidateQueries({ queryKey: ["navio-pipeline-status"] });
       
       const productionUpdated = data.result?.production_areas_updated || 0;
       const polygonsSynced = data.result?.polygons_synced || 0;
