@@ -91,7 +91,7 @@ export function useProductionData() {
 
       return { cities: productionCities, summary };
     },
-    staleTime: 30000,
+    staleTime: 5000,
   });
 }
 

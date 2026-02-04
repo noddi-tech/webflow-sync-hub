@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ import {
   ExternalLink,
   Database,
   Map,
+  RefreshCw,
 } from "lucide-react";
 import { useProductionData, useProductionDistricts, type ProductionCity } from "@/hooks/useProductionData";
 import { cn } from "@/lib/utils";
@@ -168,7 +170,15 @@ interface ProductionDataPanelProps {
 }
 
 export function ProductionDataPanel({ onGeoSync, isGeoSyncing }: ProductionDataPanelProps) {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useProductionData();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await queryClient.refetchQueries({ queryKey: ["production-data"] });
+    setIsRefreshing(false);
+  };
 
   if (isLoading) {
     return (
@@ -197,10 +207,21 @@ export function ProductionDataPanel({ onGeoSync, isGeoSyncing }: ProductionDataP
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Database className="h-4 w-4" />
-            Production Data
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Production Data
+            </CardTitle>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="h-7 w-7 p-0"
+            >
+              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+            </Button>
+          </div>
           {needsGeoSync && onGeoSync && (
             <Button 
               size="sm" 
