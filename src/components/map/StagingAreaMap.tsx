@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useMemo, useState } from "react";
 import type { GeoJSON as GeoJSONType } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -196,51 +196,55 @@ function useSnapshot() {
   });
 }
 
-// Extract areas from production areas table
-function useProduction() {
+interface CityOption {
+  id: string;
+  name: string;
+  country_code: string | null;
+}
+
+// Extract areas from production areas table with city filter
+function useProduction(cityFilter?: string | null) {
   return useQuery({
-    queryKey: ["production-geofences"],
+    queryKey: ["production-geofences", cityFilter],
     queryFn: async () => {
-      // Fetch all production areas with pagination to handle 4,898+ areas
-      const allAreas: Array<{
-        id: string;
-        name: string;
-        geofence_json: unknown;
-        city: { id: string; name: string; country_code: string } | null;
-      }> = [];
-      let from = 0;
-      const pageSize = 1000;
+      // First, get list of all cities
+      const { data: citiesData } = await supabase
+        .from("cities")
+        .select("id, name, country_code")
+        .order("name");
       
-      while (true) {
-        const { data, error } = await supabase
-          .from("areas")
-          .select(`
-            id, 
-            name, 
-            geofence_json,
-            city:cities!areas_city_id_fkey(id, name, country_code)
-          `)
-          .not("geofence_json", "is", null)
-          .range(from, from + pageSize - 1);
-        
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-        
-        allAreas.push(...(data as typeof allAreas));
-        if (data.length < pageSize) break;
-        from += pageSize;
+      // Build query for areas
+      let query = supabase
+        .from("areas")
+        .select(`
+          id, 
+          name, 
+          geofence_json,
+          city:cities!areas_city_id_fkey(id, name, country_code)
+        `)
+        .not("geofence_json", "is", null);
+      
+      // Apply city filter if selected
+      if (cityFilter) {
+        query = query.eq("city_id", cityFilter);
+      } else {
+        // If no filter, limit to first 100 to show something
+        query = query.limit(100);
       }
+      
+      const { data, error } = await query;
+      if (error) throw error;
       
       const areasWithGeo: AreaWithGeo[] = [];
       const cityNames = new Set<string>();
       
-      for (const entry of allAreas) {
-        const city = entry.city;
+      for (const entry of data || []) {
+        const city = entry.city as { id: string; name: string; country_code: string } | null;
         const cityName = city?.name || "Unknown";
         cityNames.add(cityName);
         
-        // Production data is already in correct [lng, lat] format - don't swap
-        const geofence = extractGeometry(entry.geofence_json, false);
+        // Production data IS in [lat, lng] format - NEEDS swap
+        const geofence = extractGeometry(entry.geofence_json, true);
         if (geofence) {
           areasWithGeo.push({
             id: entry.id,
@@ -255,6 +259,7 @@ function useProduction() {
       return {
         areas: areasWithGeo,
         cities: Array.from(cityNames),
+        availableCities: (citiesData || []) as CityOption[],
       };
     },
   });
@@ -402,10 +407,11 @@ function MapContent({
 
 export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingAreaMapProps) {
   const [activeSource, setActiveSource] = useState<MapSource>(defaultSource);
+  const [selectedCity, setSelectedCity] = useState<string | null>(null);
   
   const stagingQuery = useStaging(batchId);
   const snapshotQuery = useSnapshot();
-  const productionQuery = useProduction();
+  const productionQuery = useProduction(selectedCity);
   
   // Determine which data to show
   const currentQuery = 
@@ -418,16 +424,35 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
       <Tabs value={activeSource} onValueChange={(v) => setActiveSource(v as MapSource)}>
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="snapshot" className="text-xs">
-            Snapshot ({snapshotQuery.data?.areas.length ?? "..."})
+            Navio Snapshot ({snapshotQuery.data?.areas.length ?? "..."})
           </TabsTrigger>
           <TabsTrigger value="staging" className="text-xs">
-            Staging ({stagingQuery.data?.areas.length ?? "..."})
+            Import Staging ({stagingQuery.data?.areas.length ?? "..."})
           </TabsTrigger>
           <TabsTrigger value="production" className="text-xs">
-            Production ({productionQuery.data?.areas.length ?? "..."})
+            Live Production ({productionQuery.data?.areas.length ?? "..."})
           </TabsTrigger>
         </TabsList>
       </Tabs>
+      
+      {activeSource === "production" && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Filter by city:</span>
+          <Select value={selectedCity || "all"} onValueChange={(v) => setSelectedCity(v === "all" ? null : v)}>
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="All cities (first 100)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All cities (first 100)</SelectItem>
+              {productionQuery.data?.availableCities?.map((city) => (
+                <SelectItem key={city.id} value={city.id}>
+                  {city.name} ({city.country_code || "XX"})
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       
       <MapContent 
         areas={currentQuery.data?.areas ?? []}
