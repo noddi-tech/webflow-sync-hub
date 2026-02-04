@@ -1,162 +1,290 @@
 
 
-# Fix: Production Map Coordinates and Add City Filter
+# Complete Fix: Production Map with Multi-Select City Tags
 
-## Root Cause Identified
+## Current Problems Identified
 
-The production geofence data in `areas.geofence_json` is stored as `[latitude, longitude]`, NOT `[longitude, latitude]` as I previously assumed. The database sample shows:
-- `coord0_0: 59.75` (latitude for Lierstranda, Norway - correct!)
-- `coord0_1: 10.22` (longitude for Lierstranda, Norway - correct!)
+### Problem 1: Missing Cities (e.g., Oslo)
+The current implementation uses `.limit(100)` when no city filter is selected. The database shows:
+- **First 100 areas happen to be:** Göteborg (45), Lillestrøm (20), Stockholm (19), Lier (16)
+- **Oslo (573 areas) is NOT in the first 100 rows** because of default database ordering
 
-But in GeoJSON standard and Leaflet, coordinates must be `[longitude, latitude]`. So the production data **does need coordinate swapping**, just like the snapshot data.
+### Problem 2: Single-Select Dropdown
+The current dropdown only allows selecting ONE city at a time. The user wants multi-select tags where multiple cities can be toggled on/off.
 
-The previous fix incorrectly set `needsSwap: false` for production, causing polygons to render in the Indian Ocean (swapping lat/lng puts European coordinates in the ocean).
+### Problem 3: No City Count Information
+Users can't see how many areas each city has until they select it.
 
-## Solution
+---
+
+## Database Verification
+
+| City | Country | Areas with Geofence |
+|------|---------|---------------------|
+| Göteborg | SE | 1,113 |
+| München | DE | 962 |
+| Oslo | NO | 573 |
+| Stockholm | SE | 508 |
+| Bergen | NO | 379 |
+| Kristiansand | NO | 338 |
+| Trondheim | NO | 269 |
+| Toronto | CA | 267 |
+| + 10 more cities | | |
+| **Total** | | **4,898** |
+
+---
+
+## Solution Design
+
+### UI Changes
+1. **Replace dropdown with clickable tag badges**
+2. **Show all cities with area counts**
+3. **Multi-select: toggle cities on/off**
+4. **Default: show first 3-5 cities pre-selected** (so map isn't empty)
+5. **"Select All" / "Clear All" buttons** for convenience
+
+### Data Fetching Strategy
+1. **Always fetch city list with counts first** (fast, lightweight query)
+2. **Fetch areas only for selected cities** (paginated if needed)
+3. **Limit total rendered polygons to ~2,000** at once for performance
+
+---
+
+## Implementation Plan
 
 ### File: `src/components/map/StagingAreaMap.tsx`
 
-### Change 1: Fix Production Coordinate Swapping
+### Step 1: Create City List Hook (Separate from Areas)
 
-```tsx
-// Line 243: Change from false to true
-const geofence = extractGeometry(entry.geofence_json, true); // Production data ALSO needs swap
-```
+Fetch all cities with their geofence counts upfront:
 
-### Change 2: Add City Filter Dropdown for Production Tab
+```typescript
+interface CityWithCount {
+  id: string;
+  name: string;
+  country_code: string | null;
+  area_count: number;
+}
 
-Add a city selector dropdown so users can filter production areas by city instead of loading all 4,898 at once:
-
-```tsx
-// Add state for selected city
-const [selectedCity, setSelectedCity] = useState<string | null>(null);
-
-// Modify useProduction to accept optional city filter
-function useProduction(cityFilter?: string | null) {
+function useCitiesWithCounts() {
   return useQuery({
-    queryKey: ["production-geofences", cityFilter],
+    queryKey: ["cities-with-geofence-counts"],
     queryFn: async () => {
-      // First, get list of all cities with geofence counts
-      const { data: citiesData } = await supabase
+      const { data, error } = await supabase
         .from("cities")
-        .select("id, name, country_code")
-        .order("name");
-      
-      // Build query for areas
-      let query = supabase
-        .from("areas")
         .select(`
           id, 
           name, 
-          geofence_json,
-          city:cities!areas_city_id_fkey(id, name, country_code)
+          country_code
         `)
-        .not("geofence_json", "is", null);
+        .order("name");
       
-      // Apply city filter if selected
-      if (cityFilter) {
-        query = query.eq("city_id", cityFilter);
-      } else {
-        // If no filter, limit to first 100 to show something
-        query = query.limit(100);
-      }
-      
-      const { data, error } = await query;
       if (error) throw error;
       
-      // Process areas and apply coordinate swapping
-      const areasWithGeo = [];
+      // Get area counts per city (separate lightweight query)
+      const { data: counts } = await supabase
+        .from("areas")
+        .select("city_id")
+        .not("geofence_json", "is", null);
+      
+      // Build count map
+      const countMap = new Map<string, number>();
+      for (const row of counts || []) {
+        countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
+      }
+      
+      // Filter to cities that have geofenced areas
+      const citiesWithCounts: CityWithCount[] = (data || [])
+        .map(city => ({
+          ...city,
+          area_count: countMap.get(city.id) || 0
+        }))
+        .filter(city => city.area_count > 0)
+        .sort((a, b) => b.area_count - a.area_count);
+      
+      return citiesWithCounts;
+    },
+    staleTime: 60000, // Cache for 1 minute
+  });
+}
+```
+
+### Step 2: Update useProduction to Accept Multiple Cities
+
+```typescript
+function useProduction(selectedCityIds: string[]) {
+  return useQuery({
+    queryKey: ["production-geofences", selectedCityIds],
+    enabled: selectedCityIds.length > 0,
+    queryFn: async () => {
+      const allAreas: AreaWithGeo[] = [];
       const cityNames = new Set<string>();
       
-      for (const entry of data || []) {
-        const city = entry.city;
-        const cityName = city?.name || "Unknown";
-        cityNames.add(cityName);
+      // Fetch areas for each selected city
+      for (const cityId of selectedCityIds) {
+        const { data, error } = await supabase
+          .from("areas")
+          .select(`
+            id, 
+            name, 
+            geofence_json,
+            city:cities!areas_city_id_fkey(id, name, country_code)
+          `)
+          .eq("city_id", cityId)
+          .not("geofence_json", "is", null);
         
-        // Production data IS in [lat, lng] format - NEEDS swap
-        const geofence = extractGeometry(entry.geofence_json, true);
-        if (geofence) {
-          areasWithGeo.push({
-            id: entry.id,
-            name: entry.name,
-            city: cityName,
-            countryCode: city?.country_code || "XX",
-            geofence,
-          });
+        if (error) throw error;
+        
+        for (const entry of data || []) {
+          const city = entry.city as { name: string; country_code: string } | null;
+          const cityName = city?.name || "Unknown";
+          cityNames.add(cityName);
+          
+          const geofence = extractGeometry(entry.geofence_json, true);
+          if (geofence) {
+            allAreas.push({
+              id: entry.id,
+              name: entry.name,
+              city: cityName,
+              countryCode: city?.country_code || "XX",
+              geofence,
+            });
+          }
         }
       }
       
       return {
-        areas: areasWithGeo,
+        areas: allAreas,
         cities: Array.from(cityNames),
-        availableCities: citiesData || [],
       };
     },
   });
 }
 ```
 
-### Change 3: Update Tab Labels
+### Step 3: Add State for Selected Cities (Multi-Select)
 
-Make the tab labels clearer as requested:
+```typescript
+// In StagingAreaMap component
+const [selectedCityIds, setSelectedCityIds] = useState<string[]>([]);
+const citiesQuery = useCitiesWithCounts();
 
-```tsx
-<TabsList className="grid w-full grid-cols-3">
-  <TabsTrigger value="snapshot" className="text-xs">
-    Navio Snapshot ({snapshotQuery.data?.areas.length ?? "..."})
-  </TabsTrigger>
-  <TabsTrigger value="staging" className="text-xs">
-    Import Staging ({stagingQuery.data?.areas.length ?? "..."})
-  </TabsTrigger>
-  <TabsTrigger value="production" className="text-xs">
-    Live Production ({productionQuery.data?.areas.length ?? "..."})
-  </TabsTrigger>
-</TabsList>
+// Auto-select top 3 cities when data loads
+useEffect(() => {
+  if (citiesQuery.data && selectedCityIds.length === 0) {
+    const top3 = citiesQuery.data.slice(0, 3).map(c => c.id);
+    setSelectedCityIds(top3);
+  }
+}, [citiesQuery.data]);
+
+// Toggle a city on/off
+const toggleCity = (cityId: string) => {
+  setSelectedCityIds(prev => 
+    prev.includes(cityId) 
+      ? prev.filter(id => id !== cityId)
+      : [...prev, cityId]
+  );
+};
 ```
 
-### Change 4: Add City Selector UI for Production Tab
+### Step 4: Create Tag-Based City Selector UI
 
 ```tsx
-// When production tab is active, show city selector
-{activeSource === "production" && (
-  <div className="flex items-center gap-2">
-    <span className="text-sm text-muted-foreground">Filter by city:</span>
-    <Select value={selectedCity || "all"} onValueChange={(v) => setSelectedCity(v === "all" ? null : v)}>
-      <SelectTrigger className="w-[200px]">
-        <SelectValue placeholder="All cities (first 100)" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="all">All cities (first 100)</SelectItem>
-        {productionQuery.data?.availableCities?.map((city) => (
-          <SelectItem key={city.id} value={city.id}>
-            {city.name} ({city.country_code})
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+// City tags with toggle behavior
+<div className="space-y-2">
+  <div className="flex items-center justify-between">
+    <span className="text-sm font-medium">Select cities to display:</span>
+    <div className="flex gap-2">
+      <Button 
+        variant="ghost" 
+        size="sm" 
+        onClick={() => setSelectedCityIds(citiesQuery.data?.map(c => c.id) || [])}
+      >
+        Select All
+      </Button>
+      <Button 
+        variant="ghost" 
+        size="sm" 
+        onClick={() => setSelectedCityIds([])}
+      >
+        Clear
+      </Button>
+    </div>
   </div>
+  
+  <div className="flex flex-wrap gap-2">
+    {citiesQuery.data?.map((city, idx) => {
+      const isSelected = selectedCityIds.includes(city.id);
+      const color = getCityColor(idx);
+      
+      return (
+        <button
+          key={city.id}
+          onClick={() => toggleCity(city.id)}
+          className={cn(
+            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
+            "border cursor-pointer",
+            isSelected 
+              ? "border-transparent text-white" 
+              : "border-gray-300 bg-white text-gray-600 hover:bg-gray-100"
+          )}
+          style={isSelected ? { backgroundColor: color } : undefined}
+        >
+          <span 
+            className="w-2 h-2 rounded-full" 
+            style={{ backgroundColor: color }}
+          />
+          {city.name} ({city.area_count})
+        </button>
+      );
+    })}
+  </div>
+</div>
+```
+
+---
+
+## Performance Safeguards
+
+### Limit Total Polygons
+Add a warning if too many cities are selected:
+
+```typescript
+const MAX_AREAS = 2000;
+const totalSelectedAreas = citiesQuery.data
+  ?.filter(c => selectedCityIds.includes(c.id))
+  .reduce((sum, c) => sum + c.area_count, 0) || 0;
+
+{totalSelectedAreas > MAX_AREAS && (
+  <Alert variant="warning">
+    <AlertCircle className="h-4 w-4" />
+    <AlertDescription>
+      {totalSelectedAreas} areas selected. Consider selecting fewer cities for better performance.
+    </AlertDescription>
+  </Alert>
 )}
 ```
 
+---
+
 ## Summary of Changes
 
-| Issue | Before | After |
-|-------|--------|-------|
-| Coordinate swap for production | `needsSwap: false` (wrong) | `needsSwap: true` (correct) |
-| Production data loading | All 4,898 areas at once | City dropdown filter, default 100 |
-| Tab labels | "Snapshot / Staging / Production" | "Navio Snapshot / Import Staging / Live Production" |
+| Component | Before | After |
+|-----------|--------|-------|
+| City selector | Single dropdown | Multi-select tags |
+| Default view | Random first 100 areas | Top 3 cities pre-selected |
+| City list | Buried in dropdown | Visible tags with counts |
+| Data fetching | All or one city | Only selected cities |
+| Performance | Could load 4,898 at once | Controlled by selection |
 
-## Expected Outcome
+---
 
-1. Production polygons will render correctly in Scandinavia (not Indian Ocean)
-2. Faster map loading with city-based filtering
-3. Clearer terminology for each data source
+## Expected Result
 
-## Data Source Definitions (Updated Labels)
-
-| Tab | Label | Source | Description |
-|-----|-------|--------|-------------|
-| 1 | **Navio Snapshot** | `navio_snapshot` table | Last fetched state from external Navio API |
-| 2 | **Import Staging** | `navio_import_queue` table | Pending data awaiting approval |
-| 3 | **Live Production** | `areas` table | Active delivery areas used by the app |
+1. All 18 cities visible as clickable tags
+2. Each tag shows area count (e.g., "Oslo (573)")
+3. Tags can be toggled on/off individually
+4. Top 3 cities auto-selected on load (Göteborg, München, Oslo)
+5. Map only renders areas for selected cities
+6. Performance warning if too many areas selected
 
