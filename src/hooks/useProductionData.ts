@@ -33,57 +33,86 @@ export function useProductionData() {
   return useQuery({
     queryKey: ["production-data"],
     queryFn: async () => {
-      // Fetch cities with counts
-      const { data: cities, error: citiesError } = await supabase
-        .from("cities")
-        .select(`
-          id,
-          name,
-          country_code,
-          is_delivery,
-          districts!districts_city_id_fkey(
-            id,
-            areas!areas_district_id_fkey(id, geofence_json)
-          )
-        `)
-        .order("name");
-
-      if (citiesError) throw citiesError;
-
-      // Transform data
-      const productionCities: ProductionCity[] = (cities || []).map(city => {
-        const districts = (city.districts as Array<{
-          id: string;
-          areas: Array<{ id: string; geofence_json: unknown }>;
-        }>) || [];
+      // Run all lightweight queries in parallel - NO geofence_json fetching!
+      const [citiesResult, districtsResult, areasResult, areasWithGeoResult] = await Promise.all([
+        // Cities with basic info only
+        supabase
+          .from("cities")
+          .select("id, name, country_code, is_delivery")
+          .order("name"),
         
-        let areaCount = 0;
-        let areasWithGeo = 0;
+        // Districts with just city_id for aggregation
+        supabase
+          .from("districts")
+          .select("id, city_id"),
         
-        for (const district of districts) {
-          const areas = district.areas || [];
-          areaCount += areas.length;
-          areasWithGeo += areas.filter(a => a.geofence_json != null).length;
+        // Areas with just district_id for aggregation (NO geofence_json!)
+        supabase
+          .from("areas")
+          .select("id, district_id, city_id"),
+        
+        // Count of areas WITH geofence using HEAD request (no data transfer)
+        supabase
+          .from("areas")
+          .select("id, district_id, city_id")
+          .not("geofence_json", "is", null),
+      ]);
+
+      if (citiesResult.error) throw citiesResult.error;
+      if (districtsResult.error) throw districtsResult.error;
+      if (areasResult.error) throw areasResult.error;
+      if (areasWithGeoResult.error) throw areasWithGeoResult.error;
+
+      const cities = citiesResult.data || [];
+      const districts = districtsResult.data || [];
+      const areas = areasResult.data || [];
+      const areasWithGeo = areasWithGeoResult.data || [];
+
+      // Build lookup maps for efficient aggregation
+      const districtsByCity = new Map<string, string[]>();
+      for (const district of districts) {
+        const cityDistricts = districtsByCity.get(district.city_id) || [];
+        cityDistricts.push(district.id);
+        districtsByCity.set(district.city_id, cityDistricts);
+      }
+
+      const areasByCity = new Map<string, number>();
+      const areasWithGeoByCity = new Map<string, number>();
+
+      // Count areas per city
+      for (const area of areas) {
+        const cityId = area.city_id;
+        if (cityId) {
+          areasByCity.set(cityId, (areasByCity.get(cityId) || 0) + 1);
         }
+      }
 
-        return {
-          id: city.id,
-          name: city.name,
-          country_code: city.country_code,
-          is_delivery: city.is_delivery,
-          district_count: districts.length,
-          area_count: areaCount,
-          areas_with_geofence: areasWithGeo,
-        };
-      });
+      // Count areas with geofence per city
+      for (const area of areasWithGeo) {
+        const cityId = area.city_id;
+        if (cityId) {
+          areasWithGeoByCity.set(cityId, (areasWithGeoByCity.get(cityId) || 0) + 1);
+        }
+      }
+
+      // Transform to ProductionCity format
+      const productionCities: ProductionCity[] = cities.map(city => ({
+        id: city.id,
+        name: city.name,
+        country_code: city.country_code,
+        is_delivery: city.is_delivery,
+        district_count: districtsByCity.get(city.id)?.length || 0,
+        area_count: areasByCity.get(city.id) || 0,
+        areas_with_geofence: areasWithGeoByCity.get(city.id) || 0,
+      }));
 
       // Calculate summary
-      const totalAreas = productionCities.reduce((acc, c) => acc + c.area_count, 0);
-      const totalAreasWithGeo = productionCities.reduce((acc, c) => acc + c.areas_with_geofence, 0);
+      const totalAreas = areas.length;
+      const totalAreasWithGeo = areasWithGeo.length;
       
       const summary: ProductionSummary = {
-        cities: productionCities.length,
-        districts: productionCities.reduce((acc, c) => acc + c.district_count, 0),
+        cities: cities.length,
+        districts: districts.length,
         areas: totalAreas,
         areasWithGeofence: totalAreasWithGeo,
         geofenceCoverage: totalAreas > 0 ? Math.round((totalAreasWithGeo / totalAreas) * 100) : 0,
@@ -100,35 +129,63 @@ export function useProductionDistricts(cityId?: string) {
     queryKey: ["production-districts", cityId],
     enabled: !!cityId,
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Fetch districts for the city
+      const { data: districts, error: districtsError } = await supabase
         .from("districts")
-        .select(`
-          id,
-          name,
-          city_id,
-          is_delivery,
-          city:cities!districts_city_id_fkey(name),
-          areas!areas_district_id_fkey(id, geofence_json)
-        `)
+        .select("id, name, city_id, is_delivery")
         .eq("city_id", cityId!)
         .order("name");
 
-      if (error) throw error;
+      if (districtsError) throw districtsError;
 
-      const districts: ProductionDistrict[] = (data || []).map(d => {
-        const areas = (d.areas as Array<{ id: string; geofence_json: unknown }>) || [];
-        return {
-          id: d.id,
-          name: d.name,
-          city_id: d.city_id,
-          city_name: (d.city as { name: string })?.name || "Unknown",
-          is_delivery: d.is_delivery,
-          area_count: areas.length,
-          areas_with_geofence: areas.filter(a => a.geofence_json != null).length,
-        };
-      });
+      // Fetch city name
+      const { data: city } = await supabase
+        .from("cities")
+        .select("name")
+        .eq("id", cityId!)
+        .single();
 
-      return districts;
+      // Fetch areas for these districts (NO geofence_json!)
+      const districtIds = (districts || []).map(d => d.id);
+      
+      const [areasResult, areasWithGeoResult] = await Promise.all([
+        supabase
+          .from("areas")
+          .select("id, district_id")
+          .in("district_id", districtIds),
+        supabase
+          .from("areas")
+          .select("id, district_id")
+          .in("district_id", districtIds)
+          .not("geofence_json", "is", null),
+      ]);
+
+      const areas = areasResult.data || [];
+      const areasWithGeo = areasWithGeoResult.data || [];
+
+      // Build counts per district
+      const areasByDistrict = new Map<string, number>();
+      const areasWithGeoByDistrict = new Map<string, number>();
+
+      for (const area of areas) {
+        areasByDistrict.set(area.district_id, (areasByDistrict.get(area.district_id) || 0) + 1);
+      }
+
+      for (const area of areasWithGeo) {
+        areasWithGeoByDistrict.set(area.district_id, (areasWithGeoByDistrict.get(area.district_id) || 0) + 1);
+      }
+
+      const result: ProductionDistrict[] = (districts || []).map(d => ({
+        id: d.id,
+        name: d.name,
+        city_id: d.city_id,
+        city_name: city?.name || "Unknown",
+        is_delivery: d.is_delivery,
+        area_count: areasByDistrict.get(d.id) || 0,
+        areas_with_geofence: areasWithGeoByDistrict.get(d.id) || 0,
+      }));
+
+      return result;
     },
   });
 }

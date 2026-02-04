@@ -200,6 +200,7 @@ function useProduction() {
   return useQuery({
     queryKey: ["production-geofences"],
     queryFn: async () => {
+      // Reduced limit from 1000 to 300 to prevent timeout with large geofence_json payloads
       const { data, error } = await supabase
         .from("areas")
         .select(`
@@ -209,7 +210,7 @@ function useProduction() {
           city:cities!areas_city_id_fkey(id, name, country_code)
         `)
         .not("geofence_json", "is", null)
-        .limit(1000);
+        .limit(300);
       
       if (error) throw error;
       
