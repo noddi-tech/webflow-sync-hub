@@ -17,5 +17,7 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Prevent duplicate React instances (can break Context.Consumer in libraries)
+    dedupe: ["react", "react-dom", "react/jsx-runtime"],
   },
 }));
