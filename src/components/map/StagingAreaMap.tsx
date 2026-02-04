@@ -3,7 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { MapContainer, TileLayer, GeoJSON, Popup, useMap } from "react-leaflet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useEffect, useMemo } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useEffect, useMemo, useState } from "react";
 import type { GeoJSON as GeoJSONType } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -17,8 +18,19 @@ interface NavioArea {
   } | null;
 }
 
+interface AreaWithGeo {
+  id: number | string;
+  name: string;
+  city: string;
+  countryCode: string;
+  geofence: GeoJSON.Geometry;
+}
+
+type MapSource = "staging" | "snapshot" | "production";
+
 interface StagingAreaMapProps {
   batchId?: string;
+  defaultSource?: MapSource;
 }
 
 // Color palette for cities
@@ -35,7 +47,7 @@ const CITY_COLORS = [
   "#84cc16", // lime
 ];
 
-function getCityColor(cityName: string, cityIndex: number): string {
+function getCityColor(cityIndex: number): string {
   return CITY_COLORS[cityIndex % CITY_COLORS.length];
 }
 
@@ -52,8 +64,9 @@ function FitBounds({ bounds }: { bounds: L.LatLngBounds | null }) {
   return null;
 }
 
-export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
-  const { data: areasWithGeo, isLoading } = useQuery({
+// Extract areas from staging queue data
+function useStaging(batchId?: string) {
+  return useQuery({
     queryKey: ["staging-geofences", batchId],
     queryFn: async () => {
       let query = supabase
@@ -65,18 +78,9 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
       }
       
       const { data, error } = await query;
-      
       if (error) throw error;
       
-      // Extract areas with geofences
-      const areasWithGeo: Array<{
-        id: number;
-        name: string;
-        city: string;
-        countryCode: string;
-        geofence: GeoJSON.Geometry;
-      }> = [];
-      
+      const areasWithGeo: AreaWithGeo[] = [];
       const cityNames = new Set<string>();
       
       for (const entry of data || []) {
@@ -102,17 +106,113 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
       };
     },
   });
+}
 
+// Extract areas from snapshot table
+function useSnapshot() {
+  return useQuery({
+    queryKey: ["snapshot-geofences"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("navio_snapshot")
+        .select("navio_service_area_id, name, display_name, city_name, country_code, geofence_json")
+        .eq("is_active", true)
+        .not("geofence_json", "is", null);
+      
+      if (error) throw error;
+      
+      const areasWithGeo: AreaWithGeo[] = [];
+      const cityNames = new Set<string>();
+      
+      for (const entry of data || []) {
+        const cityName = entry.city_name || "Unknown";
+        cityNames.add(cityName);
+        
+        const geofence = entry.geofence_json as unknown as GeoJSON.Geometry | null;
+        if (geofence && geofence.type && (geofence.type === "Polygon" || geofence.type === "MultiPolygon")) {
+          areasWithGeo.push({
+            id: entry.navio_service_area_id,
+            name: entry.display_name || entry.name,
+            city: cityName,
+            countryCode: entry.country_code || "XX",
+            geofence,
+          });
+        }
+      }
+      
+      return {
+        areas: areasWithGeo,
+        cities: Array.from(cityNames),
+      };
+    },
+  });
+}
+
+// Extract areas from production areas table
+function useProduction() {
+  return useQuery({
+    queryKey: ["production-geofences"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("areas")
+        .select(`
+          id, 
+          name, 
+          geofence_json,
+          city:cities!areas_city_id_fkey(id, name, country_code)
+        `)
+        .not("geofence_json", "is", null)
+        .limit(1000);
+      
+      if (error) throw error;
+      
+      const areasWithGeo: AreaWithGeo[] = [];
+      const cityNames = new Set<string>();
+      
+      for (const entry of data || []) {
+        const city = entry.city as { id: string; name: string; country_code: string } | null;
+        const cityName = city?.name || "Unknown";
+        cityNames.add(cityName);
+        
+        const geofence = entry.geofence_json as unknown as GeoJSON.Geometry | null;
+        if (geofence && geofence.type && (geofence.type === "Polygon" || geofence.type === "MultiPolygon")) {
+          areasWithGeo.push({
+            id: entry.id,
+            name: entry.name,
+            city: cityName,
+            countryCode: city?.country_code || "XX",
+            geofence,
+          });
+        }
+      }
+      
+      return {
+        areas: areasWithGeo,
+        cities: Array.from(cityNames),
+      };
+    },
+  });
+}
+
+function MapContent({ 
+  areas, 
+  cities, 
+  isLoading 
+}: { 
+  areas: AreaWithGeo[]; 
+  cities: string[]; 
+  isLoading: boolean;
+}) {
   // Calculate bounds for all polygons
   const bounds = useMemo(() => {
-    if (!areasWithGeo?.areas.length) return null;
+    if (!areas.length) return null;
     
     const L = (window as unknown as { L: typeof import("leaflet") }).L;
     if (!L) return null;
     
     const allCoords: [number, number][] = [];
     
-    for (const area of areasWithGeo.areas) {
+    for (const area of areas) {
       try {
         const geojson = area.geofence;
         if (geojson.type === "Polygon") {
@@ -136,26 +236,24 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
     if (allCoords.length === 0) return null;
     
     return L.latLngBounds(allCoords);
-  }, [areasWithGeo?.areas]);
+  }, [areas]);
 
   if (isLoading) {
     return <Skeleton className="h-[500px] w-full rounded-lg" />;
   }
 
-  if (!areasWithGeo?.areas.length) {
+  if (!areas.length) {
     return (
-      <Card>
-        <CardContent className="py-12 text-center text-muted-foreground">
-          <p>No geofence data available in staging.</p>
-          <p className="text-sm mt-2">Run an AI Import to fetch delivery areas with polygon data.</p>
-        </CardContent>
-      </Card>
+      <div className="py-12 text-center text-muted-foreground">
+        <p>No geofence data available.</p>
+        <p className="text-sm mt-2">Run a Geo Sync or AI Import to fetch delivery areas with polygon data.</p>
+      </div>
     );
   }
 
   const cityColorMap = new Map<string, string>();
-  areasWithGeo.cities.forEach((city, idx) => {
-    cityColorMap.set(city, getCityColor(city, idx));
+  cities.forEach((city, idx) => {
+    cityColorMap.set(city, getCityColor(idx));
   });
 
   return (
@@ -163,7 +261,7 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
       {/* Legend */}
       <div className="flex flex-wrap gap-3 text-sm">
         <span className="text-muted-foreground font-medium">Cities:</span>
-        {areasWithGeo.cities.map((city) => (
+        {cities.slice(0, 10).map((city) => (
           <div key={city} className="flex items-center gap-1.5">
             <div 
               className="w-3 h-3 rounded-sm" 
@@ -171,10 +269,13 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
             />
             <span>{city}</span>
             <span className="text-muted-foreground">
-              ({areasWithGeo.areas.filter(a => a.city === city).length})
+              ({areas.filter(a => a.city === city).length})
             </span>
           </div>
         ))}
+        {cities.length > 10 && (
+          <span className="text-muted-foreground">+{cities.length - 10} more</span>
+        )}
       </div>
 
       {/* Map */}
@@ -189,9 +290,9 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           />
           
-          {areasWithGeo.areas.map((area) => (
+          {areas.map((area) => (
             <GeoJSON
-              key={area.id}
+              key={`${area.id}`}
               data={{
                 type: "Feature",
                 properties: { name: area.name, city: area.city },
@@ -218,8 +319,46 @@ export function StagingAreaMap({ batchId }: StagingAreaMapProps) {
       </div>
       
       <p className="text-xs text-muted-foreground text-center">
-        Showing {areasWithGeo.areas.length} delivery areas with polygon data from staging
+        Showing {areas.length} delivery areas with polygon data
       </p>
+    </div>
+  );
+}
+
+export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingAreaMapProps) {
+  const [activeSource, setActiveSource] = useState<MapSource>(defaultSource);
+  
+  const stagingQuery = useStaging(batchId);
+  const snapshotQuery = useSnapshot();
+  const productionQuery = useProduction();
+  
+  // Determine which data to show
+  const currentQuery = 
+    activeSource === "staging" ? stagingQuery :
+    activeSource === "snapshot" ? snapshotQuery :
+    productionQuery;
+
+  return (
+    <div className="space-y-4">
+      <Tabs value={activeSource} onValueChange={(v) => setActiveSource(v as MapSource)}>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="snapshot" className="text-xs">
+            Snapshot ({snapshotQuery.data?.areas.length ?? "..."})
+          </TabsTrigger>
+          <TabsTrigger value="staging" className="text-xs">
+            Staging ({stagingQuery.data?.areas.length ?? "..."})
+          </TabsTrigger>
+          <TabsTrigger value="production" className="text-xs">
+            Production ({productionQuery.data?.areas.length ?? "..."})
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+      
+      <MapContent 
+        areas={currentQuery.data?.areas ?? []}
+        cities={currentQuery.data?.cities ?? []}
+        isLoading={currentQuery.isLoading}
+      />
     </div>
   );
 }
