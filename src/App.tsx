@@ -16,9 +16,7 @@ import PartnerServiceLocations from "./pages/PartnerServiceLocations";
 import ServiceLocations from "./pages/ServiceLocations";
 import SyncHistory from "./pages/SyncHistory";
 import Settings from "./pages/Settings";
-import NavioPreview from "./pages/NavioPreview";
-import NavioOperations from "./pages/NavioOperations";
-import NavioDeliveryMap from "./pages/NavioDeliveryMap";
+import NavioDashboard from "./pages/NavioDashboard";
 import WebflowImport from "./pages/WebflowImport";
 import WebflowSync from "./pages/WebflowSync";
 import NotFound from "./pages/NotFound";
@@ -45,10 +43,11 @@ const App = () => (
             <Route path="/service-locations" element={<ServiceLocations />} />
             <Route path="/webflow/import" element={<WebflowImport />} />
             <Route path="/webflow/sync" element={<WebflowSync />} />
-            <Route path="/navio" element={<NavioOperations />} />
-            <Route path="/navio-staging" element={<NavioPreview />} />
-            <Route path="/navio-map" element={<NavioDeliveryMap />} />
-            <Route path="/navio-preview" element={<Navigate to="/navio-staging" replace />} />
+            <Route path="/navio" element={<NavioDashboard />} />
+            {/* Redirects for old routes */}
+            <Route path="/navio-staging" element={<Navigate to="/navio" replace />} />
+            <Route path="/navio-map" element={<Navigate to="/navio" replace />} />
+            <Route path="/navio-preview" element={<Navigate to="/navio" replace />} />
             <Route path="/sync-history" element={<SyncHistory />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
