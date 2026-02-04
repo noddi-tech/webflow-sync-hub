@@ -1895,6 +1895,12 @@ async function syncGeoAreas(
   };
 
   for (const [, cityData] of cityMap) {
+    // Skip invalid city names
+    if (!cityData.name || cityData.name === 'Unknown' || cityData.name.trim() === '') {
+      console.log(`Skipping invalid city: "${cityData.name}" with ${cityData.areas.length} areas`);
+      continue;
+    }
+
     // Upsert city
     const { data: existingCity } = await supabase
       .from("cities")
@@ -1912,7 +1918,7 @@ async function syncGeoAreas(
       }).eq("id", cityId);
       result.cities_updated++;
     } else {
-      const { data: newCity } = await supabase
+      const { data: newCity, error: cityError } = await supabase
         .from("cities")
         .insert({
           name: cityData.name,
@@ -1923,7 +1929,12 @@ async function syncGeoAreas(
         })
         .select("id")
         .single();
-      cityId = newCity!.id;
+      
+      if (cityError || !newCity) {
+        console.error(`Failed to create city "${cityData.name}":`, cityError);
+        continue; // Skip this city and continue with others
+      }
+      cityId = newCity.id;
       result.cities_created++;
     }
 
@@ -1944,18 +1955,23 @@ async function syncGeoAreas(
       }).eq("id", districtId);
       result.districts_updated++;
     } else {
-      const { data: newDistrict } = await supabase
+      const { data: newDistrict, error: districtError } = await supabase
         .from("districts")
         .insert({
           name: cityData.name,
-          slug: slugify(cityData.name),
+          slug: `${slugify(cityData.name)}-district`,
           city_id: cityId,
           is_delivery: true,
           navio_district_key: `${cityData.name.toLowerCase().replace(/\s+/g, "_")}_default`,
         })
         .select("id")
         .single();
-      districtId = newDistrict!.id;
+      
+      if (districtError || !newDistrict) {
+        console.error(`Failed to create district for "${cityData.name}":`, districtError);
+        continue; // Skip this city's areas
+      }
+      districtId = newDistrict.id;
       result.districts_created++;
     }
 
