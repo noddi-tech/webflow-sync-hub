@@ -1,3 +1,4 @@
+import { forwardRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,64 +25,59 @@ interface StageCardProps {
   showArrow?: boolean;
 }
 
-function StageCard({ 
-  label, 
-  icon, 
-  count, 
-  secondaryCount, 
-  secondaryLabel,
-  status,
-  showArrow = true,
-}: StageCardProps) {
-  const statusStyles = {
-    empty: "border-muted-foreground/20 bg-muted/30",
-    "has-data": "border-primary/30 bg-primary/5",
-    warning: "border-amber-500/30 bg-amber-500/5",
-    success: "border-green-500/30 bg-green-500/5",
-  };
+const StageCard = forwardRef<HTMLDivElement, StageCardProps>(
+  ({ label, icon, count, secondaryCount, secondaryLabel, status, showArrow = true }, ref) => {
+    const statusStyles = {
+      empty: "border-muted-foreground/20 bg-muted/30",
+      "has-data": "border-primary/30 bg-primary/5",
+      warning: "border-amber-500/30 bg-amber-500/5",
+      success: "border-green-500/30 bg-green-500/5",
+    };
 
-  const statusIcon = {
-    empty: <Clock className="h-3 w-3 text-muted-foreground" />,
-    "has-data": <Database className="h-3 w-3 text-primary" />,
-    warning: <AlertCircle className="h-3 w-3 text-amber-500" />,
-    success: <CheckCircle2 className="h-3 w-3 text-green-500" />,
-  };
+    const statusIcon = {
+      empty: <Clock className="h-3 w-3 text-muted-foreground" />,
+      "has-data": <Database className="h-3 w-3 text-primary" />,
+      warning: <AlertCircle className="h-3 w-3 text-amber-500" />,
+      success: <CheckCircle2 className="h-3 w-3 text-green-500" />,
+    };
 
-  return (
-    <div className="flex items-center gap-2">
-      <div className={cn(
-        "flex-1 rounded-lg border p-4 transition-colors",
-        statusStyles[status]
-      )}>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-          {icon}
-          <span className="font-medium uppercase tracking-wide">{label}</span>
-          {statusIcon[status]}
-        </div>
-        <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold">
-            {count > 0 ? count.toLocaleString() : "—"}
-          </span>
-          {secondaryCount !== undefined && secondaryCount > 0 && (
-            <span className="text-sm text-muted-foreground">
-              ({secondaryCount} {secondaryLabel})
+    return (
+      <div ref={ref} className="flex items-center gap-2">
+        <div className={cn(
+          "flex-1 rounded-lg border p-4 transition-colors",
+          statusStyles[status]
+        )}>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+            {icon}
+            <span className="font-medium uppercase tracking-wide">{label}</span>
+            {statusIcon[status]}
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold">
+              {count > 0 ? count.toLocaleString() : "—"}
             </span>
-          )}
+            {secondaryCount !== undefined && secondaryCount > 0 && (
+              <span className="text-sm text-muted-foreground">
+                ({secondaryCount} {secondaryLabel})
+              </span>
+            )}
+          </div>
         </div>
+        {showArrow && (
+          <ArrowRight className="h-4 w-4 text-muted-foreground/50 flex-shrink-0" />
+        )}
       </div>
-      {showArrow && (
-        <ArrowRight className="h-4 w-4 text-muted-foreground/50 flex-shrink-0" />
-      )}
-    </div>
-  );
-}
+    );
+  }
+);
+StageCard.displayName = "StageCard";
 
-export function PipelineStatusBanner() {
+export const PipelineStatusBanner = forwardRef<HTMLDivElement>((_, ref) => {
   const { data: status, isLoading } = useNavioPipelineStatus();
 
   if (isLoading) {
     return (
-      <Card>
+      <Card ref={ref}>
         <CardContent className="pt-6">
           <div className="flex items-center gap-2 mb-4">
             <Skeleton className="h-4 w-32" />
@@ -104,7 +100,7 @@ export function PipelineStatusBanner() {
   const { stages, lastSnapshotUpdate } = status;
 
   return (
-    <Card>
+    <Card ref={ref}>
       <CardContent className="pt-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -165,4 +161,5 @@ export function PipelineStatusBanner() {
       </CardContent>
     </Card>
   );
-}
+});
+PipelineStatusBanner.displayName = "PipelineStatusBanner";
