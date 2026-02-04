@@ -12,6 +12,7 @@ import {
   Search,
   MapPinned,
   Brain,
+  Database,
 } from "lucide-react";
 import { useNavioImport } from "@/hooks/useNavioImport";
 import { PipelineStatusBanner } from "@/components/navio/PipelineStatusBanner";
@@ -24,6 +25,7 @@ import { StagingAreaMap } from "@/components/map/StagingAreaMap";
 import { DeliveryChecker } from "@/components/delivery/DeliveryChecker";
 import { EnhancedSourceToggle, type MapSource } from "@/components/navio/EnhancedSourceToggle";
 import { useNavioPipelineStatus } from "@/hooks/useNavioPipelineStatus";
+import { ProductionDataPanel } from "@/components/navio/ProductionDataPanel";
 import NavioStagingTab from "@/components/navio/NavioStagingTab";
 
 export default function NavioDashboard() {
@@ -83,14 +85,16 @@ export default function NavioDashboard() {
           onCheckChanges={() => checkDelta()}
           onImport={handleStartImport}
           onGoToStaging={handleGoToStaging}
+          onGeoSync={() => startGeoSync()}
           isCheckingDelta={isCheckingDelta}
           isImporting={isNavioImporting}
+          isGeoSyncing={isGeoSyncing}
         />
       </div>
 
       {/* Main Tabbed Interface */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+        <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
           <TabsTrigger value="overview" className="flex items-center gap-2">
             <LayoutDashboard className="h-4 w-4" />
             <span className="hidden sm:inline">Overview</span>
@@ -101,6 +105,15 @@ export default function NavioDashboard() {
             {pipelineStatus && (pipelineStatus.stagingPending > 0 || pipelineStatus.stagingApproved > 0) && (
               <span className="ml-1 rounded-full bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">
                 {pipelineStatus.stagingPending + pipelineStatus.stagingApproved}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="production" className="flex items-center gap-2">
+            <Database className="h-4 w-4" />
+            <span className="hidden sm:inline">Production</span>
+            {pipelineStatus && pipelineStatus.productionAreas > 0 && pipelineStatus.productionAreasWithGeo === 0 && (
+              <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-xs text-white">
+                !
               </span>
             )}
           </TabsTrigger>
@@ -222,6 +235,14 @@ export default function NavioDashboard() {
           <NavioStagingTab />
         </TabsContent>
 
+        {/* Production Tab */}
+        <TabsContent value="production">
+          <ProductionDataPanel
+            onGeoSync={() => startGeoSync()}
+            isGeoSyncing={isGeoSyncing}
+          />
+        </TabsContent>
+
         {/* Map Tab */}
         <TabsContent value="map" className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-4">
@@ -232,6 +253,7 @@ export default function NavioDashboard() {
                 onChange={setMapSource}
                 stagingCount={pipelineStatus?.stagingPending ?? 0}
                 productionCount={pipelineStatus?.productionAreas ?? 0}
+                productionGeoCount={pipelineStatus?.productionAreasWithGeo ?? 0}
                 snapshotCount={pipelineStatus?.snapshotCount ?? 0}
               />
               <DeliveryChecker />

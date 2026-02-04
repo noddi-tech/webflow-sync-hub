@@ -7,6 +7,8 @@ import {
   Search,
   Upload,
   Sparkles,
+  MapPinned,
+  RefreshCw,
 } from "lucide-react";
 import { useNavioPipelineStatus } from "@/hooks/useNavioPipelineStatus";
 import { cn } from "@/lib/utils";
@@ -15,16 +17,20 @@ interface NextActionCardProps {
   onCheckChanges?: () => void;
   onImport?: () => void;
   onGoToStaging?: () => void;
+  onGeoSync?: () => void;
   isCheckingDelta?: boolean;
   isImporting?: boolean;
+  isGeoSyncing?: boolean;
 }
 
 export function NextActionCard({
   onCheckChanges,
   onImport,
   onGoToStaging,
+  onGeoSync,
   isCheckingDelta,
   isImporting,
+  isGeoSyncing,
 }: NextActionCardProps) {
   const { data: status, isLoading } = useNavioPipelineStatus();
 
@@ -50,6 +56,8 @@ export function NextActionCard({
         return <Upload className="h-5 w-5 text-green-500" />;
       case "sync":
         return <Search className="h-5 w-5 text-primary" />;
+      case "geo_sync":
+        return <MapPinned className="h-5 w-5 text-amber-500" />;
       case "none":
         return <CheckCircle2 className="h-5 w-5 text-green-500" />;
       default:
@@ -81,10 +89,54 @@ export function NextActionCard({
           </Button>
         );
       case "sync":
+        // Check if this is a geo-sync message (missing geofences)
+        if (nextAction.message.includes("geofence") && onGeoSync) {
+          return (
+            <Button 
+              onClick={onGeoSync} 
+              disabled={isGeoSyncing} 
+              size="sm"
+              className="bg-amber-500 hover:bg-amber-600"
+            >
+              {isGeoSyncing ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <MapPinned className="mr-2 h-4 w-4" />
+                  Run Geo Sync
+                </>
+              )}
+            </Button>
+          );
+        }
         return (
           <Button onClick={onCheckChanges} disabled={isCheckingDelta} variant="outline" size="sm">
             {isCheckingDelta ? "Checking..." : "Check for Changes"}
             <Search className="ml-2 h-4 w-4" />
+          </Button>
+        );
+      case "geo_sync":
+        return (
+          <Button 
+            onClick={onGeoSync} 
+            disabled={isGeoSyncing} 
+            size="sm"
+            className="bg-amber-500 hover:bg-amber-600"
+          >
+            {isGeoSyncing ? (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                Syncing...
+              </>
+            ) : (
+              <>
+                <MapPinned className="mr-2 h-4 w-4" />
+                Run Geo Sync
+              </>
+            )}
           </Button>
         );
       case "none":

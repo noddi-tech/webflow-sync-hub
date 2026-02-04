@@ -291,9 +291,16 @@ function MapContent({
 
   if (!areas.length) {
     return (
-      <div className="py-12 text-center text-muted-foreground">
-        <p>No geofence data available.</p>
-        <p className="text-sm mt-2">Run a Geo Sync or AI Import to fetch delivery areas with polygon data.</p>
+      <div className="py-12 text-center text-muted-foreground border rounded-lg bg-muted/20">
+        <div className="max-w-md mx-auto space-y-2">
+          <p className="font-medium">No geofence data available</p>
+          <p className="text-sm">
+            {cities.length === 0 
+              ? "Run a Geo Sync or AI Import to fetch delivery areas with polygon data from Navio."
+              : `Areas exist but none have polygon data yet. Run Geo Sync to populate geofences.`
+            }
+          </p>
+        </div>
       </div>
     );
   }
