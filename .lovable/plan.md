@@ -1,100 +1,76 @@
 
 
-# Complete Fix: Production Map with Multi-Select City Tags
+# Fix: Complete Solution for 1000-Row Limit Issues
 
-## Current Problems Identified
+## Root Cause Analysis
 
-### Problem 1: Missing Cities (e.g., Oslo)
-The current implementation uses `.limit(100)` when no city filter is selected. The database shows:
-- **First 100 areas happen to be:** Göteborg (45), Lillestrøm (20), Stockholm (19), Lier (16)
-- **Oslo (573 areas) is NOT in the first 100 rows** because of default database ordering
+Both issues stem from Supabase's **default 1000-row limit** on queries.
 
-### Problem 2: Single-Select Dropdown
-The current dropdown only allows selecting ONE city at a time. The user wants multi-select tags where multiple cities can be toggled on/off.
+### Issue 1: Wrong City Counts (Tags show wrong numbers)
 
-### Problem 3: No City Count Information
-Users can't see how many areas each city has until they select it.
+| City | Displayed | Actual | Why? |
+|------|-----------|--------|------|
+| Göteborg | 313 | 1,113 | First 1000 rows only contain 313 Göteborg areas |
+| Oslo | 310 | 573 | Same - incomplete sample |
+| Stockholm | 78 | 508 | Same - incomplete sample |
+| **Tab Total** | **1000** | **4,898** | Sum of incomplete counts |
 
----
+**Location**: `useCitiesWithCounts()` at line 222-225 fetches `city_id` from all areas but only gets 1000 rows.
 
-## Database Verification
+### Issue 2: Missing Göteborg Polygons
 
-| City | Country | Areas with Geofence |
-|------|---------|---------------------|
-| Göteborg | SE | 1,113 |
-| München | DE | 962 |
-| Oslo | NO | 573 |
-| Stockholm | SE | 508 |
-| Bergen | NO | 379 |
-| Kristiansand | NO | 338 |
-| Trondheim | NO | 269 |
-| Toronto | CA | 267 |
-| + 10 more cities | | |
-| **Total** | | **4,898** |
+When you select Göteborg + Oslo + Stockholm, there are **2,194 areas** total. But the `useProduction()` query at line 260 returns only the first 1000 rows (no pagination).
+
+The query returns areas in default database order, which happens to be mostly Oslo and Stockholm rows first - **Göteborg areas come later and get cut off**.
 
 ---
 
-## Solution Design
+## Solution
 
-### UI Changes
-1. **Replace dropdown with clickable tag badges**
-2. **Show all cities with area counts**
-3. **Multi-select: toggle cities on/off**
-4. **Default: show first 3-5 cities pre-selected** (so map isn't empty)
-5. **"Select All" / "Clear All" buttons** for convenience
+### Part 1: Fix City Counts with Pagination
 
-### Data Fetching Strategy
-1. **Always fetch city list with counts first** (fast, lightweight query)
-2. **Fetch areas only for selected cities** (paginated if needed)
-3. **Limit total rendered polygons to ~2,000** at once for performance
-
----
-
-## Implementation Plan
-
-### File: `src/components/map/StagingAreaMap.tsx`
-
-### Step 1: Create City List Hook (Separate from Areas)
-
-Fetch all cities with their geofence counts upfront:
+Replace the single query with paginated fetching to count ALL 4,898 areas:
 
 ```typescript
-interface CityWithCount {
-  id: string;
-  name: string;
-  country_code: string | null;
-  area_count: number;
-}
-
 function useCitiesWithCounts() {
   return useQuery({
     queryKey: ["cities-with-geofence-counts"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Fetch all cities first
+      const { data: citiesData, error } = await supabase
         .from("cities")
-        .select(`
-          id, 
-          name, 
-          country_code
-        `)
+        .select("id, name, country_code")
         .order("name");
       
       if (error) throw error;
       
-      // Get area counts per city (separate lightweight query)
-      const { data: counts } = await supabase
-        .from("areas")
-        .select("city_id")
-        .not("geofence_json", "is", null);
-      
-      // Build count map
+      // Paginate through ALL areas to get accurate counts
       const countMap = new Map<string, number>();
-      for (const row of counts || []) {
-        countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
+      let from = 0;
+      const pageSize = 1000;
+      
+      while (true) {
+        const { data: areaPage, error: areaError } = await supabase
+          .from("areas")
+          .select("city_id")
+          .not("geofence_json", "is", null)
+          .range(from, from + pageSize - 1);
+        
+        if (areaError) throw areaError;
+        if (!areaPage || areaPage.length === 0) break;
+        
+        for (const row of areaPage) {
+          if (row.city_id) {
+            countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
+          }
+        }
+        
+        if (areaPage.length < pageSize) break;
+        from += pageSize;
       }
       
-      // Filter to cities that have geofenced areas
-      const citiesWithCounts: CityWithCount[] = (data || [])
+      // Build city list with accurate counts
+      const citiesWithCounts: CityWithCount[] = (citiesData || [])
         .map(city => ({
           ...city,
           area_count: countMap.get(city.id) || 0
@@ -104,12 +80,14 @@ function useCitiesWithCounts() {
       
       return citiesWithCounts;
     },
-    staleTime: 60000, // Cache for 1 minute
+    staleTime: 60000,
   });
 }
 ```
 
-### Step 2: Update useProduction to Accept Multiple Cities
+### Part 2: Fix Production Areas Fetch with Pagination
+
+Add pagination to `useProduction()` to fetch all areas for selected cities:
 
 ```typescript
 function useProduction(selectedCityIds: string[]) {
@@ -120,8 +98,11 @@ function useProduction(selectedCityIds: string[]) {
       const allAreas: AreaWithGeo[] = [];
       const cityNames = new Set<string>();
       
-      // Fetch areas for each selected city
-      for (const cityId of selectedCityIds) {
+      // Paginate to get ALL areas for selected cities
+      let from = 0;
+      const pageSize = 1000;
+      
+      while (true) {
         const { data, error } = await supabase
           .from("areas")
           .select(`
@@ -130,13 +111,15 @@ function useProduction(selectedCityIds: string[]) {
             geofence_json,
             city:cities!areas_city_id_fkey(id, name, country_code)
           `)
-          .eq("city_id", cityId)
-          .not("geofence_json", "is", null);
+          .in("city_id", selectedCityIds)
+          .not("geofence_json", "is", null)
+          .range(from, from + pageSize - 1);
         
         if (error) throw error;
+        if (!data || data.length === 0) break;
         
-        for (const entry of data || []) {
-          const city = entry.city as { name: string; country_code: string } | null;
+        for (const entry of data) {
+          const city = entry.city as { id: string; name: string; country_code: string } | null;
           const cityName = city?.name || "Unknown";
           cityNames.add(cityName);
           
@@ -151,6 +134,9 @@ function useProduction(selectedCityIds: string[]) {
             });
           }
         }
+        
+        if (data.length < pageSize) break;
+        from += pageSize;
       }
       
       return {
@@ -162,129 +148,43 @@ function useProduction(selectedCityIds: string[]) {
 }
 ```
 
-### Step 3: Add State for Selected Cities (Multi-Select)
+---
 
-```typescript
-// In StagingAreaMap component
-const [selectedCityIds, setSelectedCityIds] = useState<string[]>([]);
-const citiesQuery = useCitiesWithCounts();
+## File to Modify
 
-// Auto-select top 3 cities when data loads
-useEffect(() => {
-  if (citiesQuery.data && selectedCityIds.length === 0) {
-    const top3 = citiesQuery.data.slice(0, 3).map(c => c.id);
-    setSelectedCityIds(top3);
-  }
-}, [citiesQuery.data]);
-
-// Toggle a city on/off
-const toggleCity = (cityId: string) => {
-  setSelectedCityIds(prev => 
-    prev.includes(cityId) 
-      ? prev.filter(id => id !== cityId)
-      : [...prev, cityId]
-  );
-};
-```
-
-### Step 4: Create Tag-Based City Selector UI
-
-```tsx
-// City tags with toggle behavior
-<div className="space-y-2">
-  <div className="flex items-center justify-between">
-    <span className="text-sm font-medium">Select cities to display:</span>
-    <div className="flex gap-2">
-      <Button 
-        variant="ghost" 
-        size="sm" 
-        onClick={() => setSelectedCityIds(citiesQuery.data?.map(c => c.id) || [])}
-      >
-        Select All
-      </Button>
-      <Button 
-        variant="ghost" 
-        size="sm" 
-        onClick={() => setSelectedCityIds([])}
-      >
-        Clear
-      </Button>
-    </div>
-  </div>
-  
-  <div className="flex flex-wrap gap-2">
-    {citiesQuery.data?.map((city, idx) => {
-      const isSelected = selectedCityIds.includes(city.id);
-      const color = getCityColor(idx);
-      
-      return (
-        <button
-          key={city.id}
-          onClick={() => toggleCity(city.id)}
-          className={cn(
-            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all",
-            "border cursor-pointer",
-            isSelected 
-              ? "border-transparent text-white" 
-              : "border-gray-300 bg-white text-gray-600 hover:bg-gray-100"
-          )}
-          style={isSelected ? { backgroundColor: color } : undefined}
-        >
-          <span 
-            className="w-2 h-2 rounded-full" 
-            style={{ backgroundColor: color }}
-          />
-          {city.name} ({city.area_count})
-        </button>
-      );
-    })}
-  </div>
-</div>
-```
+| File | Changes |
+|------|---------|
+| `src/components/map/StagingAreaMap.tsx` | Add pagination to `useCitiesWithCounts` and `useProduction` |
 
 ---
 
-## Performance Safeguards
+## Expected Results After Fix
 
-### Limit Total Polygons
-Add a warning if too many cities are selected:
+### City Tags (Correct Counts)
+| City | Before | After |
+|------|--------|-------|
+| Göteborg | 313 | **1,113** |
+| München | 28 | **962** |
+| Oslo | 310 | **573** |
+| Stockholm | 78 | **508** |
+| Bergen | 58 | **379** |
+| ... | | |
+| **Tab Total** | 1000 | **4,898** |
 
-```typescript
-const MAX_AREAS = 2000;
-const totalSelectedAreas = citiesQuery.data
-  ?.filter(c => selectedCityIds.includes(c.id))
-  .reduce((sum, c) => sum + c.area_count, 0) || 0;
-
-{totalSelectedAreas > MAX_AREAS && (
-  <Alert variant="warning">
-    <AlertCircle className="h-4 w-4" />
-    <AlertDescription>
-      {totalSelectedAreas} areas selected. Consider selecting fewer cities for better performance.
-    </AlertDescription>
-  </Alert>
-)}
-```
+### Map Display
+- Selecting Göteborg will show all 1,113 polygons (not cut off)
+- Selecting all 3 top cities will show all 2,194 polygons
+- Performance warning still triggers at 2,000+ areas
 
 ---
 
-## Summary of Changes
+## Technical Notes
 
-| Component | Before | After |
-|-----------|--------|-------|
-| City selector | Single dropdown | Multi-select tags |
-| Default view | Random first 100 areas | Top 3 cities pre-selected |
-| City list | Buried in dropdown | Visible tags with counts |
-| Data fetching | All or one city | Only selected cities |
-| Performance | Could load 4,898 at once | Controlled by selection |
+### Why Pagination is Required
 
----
+Supabase/PostgREST has a **default row limit of 1000**. This is a silent truncation - no error is thrown. The solution uses `.range(from, to)` to fetch data in batches until all rows are retrieved.
 
-## Expected Result
+### Performance Consideration
 
-1. All 18 cities visible as clickable tags
-2. Each tag shows area count (e.g., "Oslo (573)")
-3. Tags can be toggled on/off individually
-4. Top 3 cities auto-selected on load (Göteborg, München, Oslo)
-5. Map only renders areas for selected cities
-6. Performance warning if too many areas selected
+The paginated count query will make ~5 round trips (4898 areas / 1000 per page = 5 pages). This adds ~200ms to initial load but ensures accurate data. The result is cached for 1 minute.
 
