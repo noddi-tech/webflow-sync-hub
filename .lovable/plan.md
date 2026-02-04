@@ -1,190 +1,222 @@
 
 
-# Fix: Complete Solution for 1000-Row Limit Issues
+# Complete Fix: Production Map Issues
 
-## Root Cause Analysis
+## Issues Identified
 
-Both issues stem from Supabase's **default 1000-row limit** on queries.
+### Issue 1: City Counts Still Wrong (e.g., Göteborg shows 313 instead of 1,113)
 
-### Issue 1: Wrong City Counts (Tags show wrong numbers)
+**Root Cause**: The pagination code was added, but either:
+- The build hasn't refreshed with the new code, OR
+- There's a logic bug where the first page returns exactly 1000 rows (triggering the `break` condition prematurely)
 
-| City | Displayed | Actual | Why? |
-|------|-----------|--------|------|
-| Göteborg | 313 | 1,113 | First 1000 rows only contain 313 Göteborg areas |
-| Oslo | 310 | 573 | Same - incomplete sample |
-| Stockholm | 78 | 508 | Same - incomplete sample |
-| **Tab Total** | **1000** | **4,898** | Sum of incomplete counts |
+**Database Verification** (confirmed via SQL):
+| City | Expected | Displayed |
+|------|----------|-----------|
+| Göteborg | 1,113 | 313 |
+| Oslo | 573 | 310 |
+| Stockholm | 508 | 78 |
 
-**Location**: `useCitiesWithCounts()` at line 222-225 fetches `city_id` from all areas but only gets 1000 rows.
+### Issue 2: Map Shows "1000 areas" Instead of Correct Count
 
-### Issue 2: Missing Göteborg Polygons
+**Root Cause**: Same pagination issue - `useProduction` is only fetching the first 1000 rows instead of all ~2,194 for selected cities.
 
-When you select Göteborg + Oslo + Stockholm, there are **2,194 areas** total. But the `useProduction()` query at line 260 returns only the first 1000 rows (no pagination).
+### Issue 3: Solid Filled Polygons (One per City)
 
-The query returns areas in default database order, which happens to be mostly Oslo and Stockholm rows first - **Göteborg areas come later and get cut off**.
+**Root Cause**: React-Leaflet's GeoJSON component has a known behavior where it doesn't properly re-render when data changes. When switching between tabs or cities, old GeoJSON layers can persist with incorrect styling, causing visual artifacts like solid fills.
+
+**Technical Detail**: The GeoJSON component creates a Leaflet layer when mounted. If the `key` doesn't change but the underlying `data` does, the layer may not update correctly.
 
 ---
 
 ## Solution
 
-### Part 1: Fix City Counts with Pagination
+### Part 1: Verify Pagination Logic Works Correctly
 
-Replace the single query with paginated fetching to count ALL 4,898 areas:
+The current code at lines 226-244 and 274-310 has a potential issue: if the first batch returns exactly 1000 rows, the loop continues. But if it returns fewer (like 999), it breaks early. The logic seems correct, but let me trace through:
 
 ```typescript
-function useCitiesWithCounts() {
-  return useQuery({
-    queryKey: ["cities-with-geofence-counts"],
-    queryFn: async () => {
-      // Fetch all cities first
-      const { data: citiesData, error } = await supabase
-        .from("cities")
-        .select("id, name, country_code")
-        .order("name");
-      
-      if (error) throw error;
-      
-      // Paginate through ALL areas to get accurate counts
-      const countMap = new Map<string, number>();
-      let from = 0;
-      const pageSize = 1000;
-      
-      while (true) {
-        const { data: areaPage, error: areaError } = await supabase
-          .from("areas")
-          .select("city_id")
-          .not("geofence_json", "is", null)
-          .range(from, from + pageSize - 1);
-        
-        if (areaError) throw areaError;
-        if (!areaPage || areaPage.length === 0) break;
-        
-        for (const row of areaPage) {
-          if (row.city_id) {
-            countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
-          }
-        }
-        
-        if (areaPage.length < pageSize) break;
-        from += pageSize;
-      }
-      
-      // Build city list with accurate counts
-      const citiesWithCounts: CityWithCount[] = (citiesData || [])
-        .map(city => ({
-          ...city,
-          area_count: countMap.get(city.id) || 0
-        }))
-        .filter(city => city.area_count > 0)
-        .sort((a, b) => b.area_count - a.area_count);
-      
-      return citiesWithCounts;
-    },
-    staleTime: 60000,
-  });
-}
+// Current logic:
+if (!areaPage || areaPage.length === 0) break;  // Exit if no data
+// ... process data ...
+if (areaPage.length < pageSize) break;  // Exit if partial page
+from += pageSize;  // Continue to next page
 ```
 
-### Part 2: Fix Production Areas Fetch with Pagination
+This logic is correct. The issue might be that the Supabase query is somehow being limited. Let me check if there's an implicit `.order()` that might help ensure consistent pagination.
 
-Add pagination to `useProduction()` to fetch all areas for selected cities:
+**Fix**: Add explicit ordering to ensure consistent pagination results:
 
 ```typescript
-function useProduction(selectedCityIds: string[]) {
-  return useQuery({
-    queryKey: ["production-geofences", selectedCityIds],
-    enabled: selectedCityIds.length > 0,
-    queryFn: async () => {
-      const allAreas: AreaWithGeo[] = [];
-      const cityNames = new Set<string>();
-      
-      // Paginate to get ALL areas for selected cities
-      let from = 0;
-      const pageSize = 1000;
-      
-      while (true) {
-        const { data, error } = await supabase
-          .from("areas")
-          .select(`
-            id, 
-            name, 
-            geofence_json,
-            city:cities!areas_city_id_fkey(id, name, country_code)
-          `)
-          .in("city_id", selectedCityIds)
-          .not("geofence_json", "is", null)
-          .range(from, from + pageSize - 1);
-        
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-        
-        for (const entry of data) {
-          const city = entry.city as { id: string; name: string; country_code: string } | null;
-          const cityName = city?.name || "Unknown";
-          cityNames.add(cityName);
-          
-          const geofence = extractGeometry(entry.geofence_json, true);
-          if (geofence) {
-            allAreas.push({
-              id: entry.id,
-              name: entry.name,
-              city: cityName,
-              countryCode: city?.country_code || "XX",
-              geofence,
-            });
-          }
-        }
-        
-        if (data.length < pageSize) break;
-        from += pageSize;
-      }
-      
-      return {
-        areas: allAreas,
-        cities: Array.from(cityNames),
-      };
-    },
-  });
-}
+// Line 227-231: Add .order('id') to ensure consistent pagination
+const { data: areaPage, error: areaError } = await supabase
+  .from("areas")
+  .select("city_id")
+  .not("geofence_json", "is", null)
+  .order("id")  // ADD THIS
+  .range(from, from + pageSize - 1);
+```
+
+Same for `useProduction`:
+
+```typescript
+// Line 275-285: Add .order('id')
+const { data, error } = await supabase
+  .from("areas")
+  .select(`...`)
+  .in("city_id", selectedCityIds)
+  .not("geofence_json", "is", null)
+  .order("id")  // ADD THIS
+  .range(from, from + pageSize - 1);
+```
+
+### Part 2: Fix Solid Fill Issue (React-Leaflet GeoJSON Re-render Bug)
+
+The solid fill is caused by React-Leaflet's GeoJSON component not properly cleaning up when data changes. 
+
+**Solution Options**:
+
+A) **Force remount by including data source in key** (Simplest):
+```tsx
+// Line 425: Add unique prefix to force remount on source change
+<GeoJSON
+  key={`${activeSource}-${area.id}`}  // Include source in key
+  data={{...}}
+  style={{...}}
+/>
+```
+
+B) **Use a wrapper key on the entire MapContainer** to force remount when cities change:
+```tsx
+// Wrap map in a keyed div that changes when selection changes
+<div key={selectedCityIds.sort().join(',')}>
+  <MapContainer>...</MapContainer>
+</div>
+```
+
+C) **Clear and recreate GeoJSON layers manually** (More complex, not recommended)
+
+**Recommended**: Option A is cleanest - but the key needs to be even more unique since we're seeing issues within the same source. The real fix is to ensure the MapContainer remounts when the data set changes significantly.
+
+**Best Fix**: Use a combined approach - unique key per area AND force remount when selected cities change:
+
+```tsx
+// In StagingAreaMap component, create a stable key based on selection
+const mapKey = useMemo(() => 
+  `${activeSource}-${selectedCityIds.sort().join('-')}`, 
+  [activeSource, selectedCityIds]
+);
+
+// Use this key on the map container wrapper
+<div key={mapKey} className="h-[500px] rounded-lg overflow-hidden border">
+  <MapContainer>...</MapContainer>
+</div>
 ```
 
 ---
 
-## File to Modify
+## Files to Modify
 
-| File | Changes |
-|------|---------|
-| `src/components/map/StagingAreaMap.tsx` | Add pagination to `useCitiesWithCounts` and `useProduction` |
+| File | Change |
+|------|--------|
+| `src/components/map/StagingAreaMap.tsx` | Add `.order('id')` to both pagination queries, add unique map key |
 
 ---
 
-## Expected Results After Fix
+## Implementation Details
 
-### City Tags (Correct Counts)
-| City | Before | After |
-|------|--------|-------|
-| Göteborg | 313 | **1,113** |
-| München | 28 | **962** |
-| Oslo | 310 | **573** |
-| Stockholm | 78 | **508** |
-| Bergen | 58 | **379** |
-| ... | | |
-| **Tab Total** | 1000 | **4,898** |
+### Change 1: Add Ordering to useCitiesWithCounts Pagination
 
-### Map Display
-- Selecting Göteborg will show all 1,113 polygons (not cut off)
-- Selecting all 3 top cities will show all 2,194 polygons
-- Performance warning still triggers at 2,000+ areas
+**Location**: Lines 227-231
+
+```typescript
+const { data: areaPage, error: areaError } = await supabase
+  .from("areas")
+  .select("city_id")
+  .not("geofence_json", "is", null)
+  .order("id")  // Ensures consistent pagination
+  .range(from, from + pageSize - 1);
+```
+
+### Change 2: Add Ordering to useProduction Pagination
+
+**Location**: Lines 275-285
+
+```typescript
+const { data, error } = await supabase
+  .from("areas")
+  .select(`
+    id, 
+    name, 
+    geofence_json,
+    city:cities!areas_city_id_fkey(id, name, country_code)
+  `)
+  .in("city_id", selectedCityIds)
+  .not("geofence_json", "is", null)
+  .order("id")  // Ensures consistent pagination
+  .range(from, from + pageSize - 1);
+```
+
+### Change 3: Fix React-Leaflet GeoJSON Re-render Issue
+
+**Location**: MapContent component (around line 411-451)
+
+Pass a unique key based on the current selection to the parent, and use it on the map container:
+
+```tsx
+// In StagingAreaMap, before return statement:
+const mapKey = useMemo(() => 
+  `map-${activeSource}-${selectedCityIds.sort().join('-')}`, 
+  [activeSource, selectedCityIds]
+);
+
+// Pass to MapContent
+<MapContent 
+  mapKey={mapKey}  // NEW PROP
+  areas={currentQuery.data?.areas ?? []}
+  cities={currentQuery.data?.cities ?? []}
+  isLoading={currentQuery.isLoading}
+/>
+
+// In MapContent, wrap the map container:
+<div key={mapKey} className="h-[500px] rounded-lg overflow-hidden border">
+  <MapContainer ...>
+    ...
+  </MapContainer>
+</div>
+```
+
+---
+
+## Expected Outcomes
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Göteborg tag count | 313 | 1,113 |
+| Oslo tag count | 310 | 573 |
+| Stockholm tag count | 78 | 508 |
+| Areas displayed (3 cities) | 1,000 (limited) | 2,194 (all) |
+| Solid fill polygons | 1-2 visible | None (transparent 0.2 fill) |
 
 ---
 
 ## Technical Notes
 
-### Why Pagination is Required
+### Why Pagination Needs Ordering
 
-Supabase/PostgREST has a **default row limit of 1000**. This is a silent truncation - no error is thrown. The solution uses `.range(from, to)` to fetch data in batches until all rows are retrieved.
+Without explicit `.order()`, Postgres may return rows in different orders across paginated requests, especially when the data is large. This can cause:
+- Duplicate rows across pages
+- Missing rows between pages
+- Inconsistent counts
 
-### Performance Consideration
+Adding `.order('id')` ensures deterministic ordering across pagination.
 
-The paginated count query will make ~5 round trips (4898 areas / 1000 per page = 5 pages). This adds ~200ms to initial load but ensures accurate data. The result is cached for 1 minute.
+### Why React-Leaflet GeoJSON Needs Key Reset
+
+React-Leaflet's GeoJSON component internally creates a Leaflet layer when mounted. When React reconciles the component tree:
+- If the `key` stays the same, React tries to update the existing component
+- Leaflet's layer update logic may not handle style/data changes correctly
+- This can leave "ghost" layers with old styles
+
+By changing the key when the dataset changes significantly, we force React to unmount the old component and mount a fresh one, ensuring clean layer creation.
 
