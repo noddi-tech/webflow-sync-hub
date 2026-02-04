@@ -1,89 +1,92 @@
 
+# Fix: UI Not Updating After Geo Sync
 
-# Fix: Stale "Approved" Cities Already Committed
+## Problem Summary
 
-## What's Happening
+The Geo Sync completed successfully (4,710 production areas updated, as shown in the toast), but the Production tab still shows 0% geofences. The database confirms all 4,898 areas now have geofence data.
 
-The 10 cities showing as "approved (ready to commit)" have **already been committed** to production. This is proven by the database showing:
+**Root cause**: Query cache invalidation doesn't force an immediate refetch when the component isn't mounted.
 
-| Staging City | Status | committed_city_id | Production City Exists |
-|--------------|--------|-------------------|------------------------|
-| Stockholm | approved | 78f372c8-... | Yes |
-| Oslo | approved | 06eafe56-... | Yes |
-| München | approved | da62ccea-... | Yes |
-| (7 more...) | approved | (all populated) | Yes |
+| Issue | Explanation |
+|-------|-------------|
+| `invalidateQueries` behavior | Marks queries as stale, but doesn't refetch if no component is subscribed |
+| Tab-based rendering | ProductionDataPanel only mounts when Production tab is active |
+| `staleTime: 30000` | Even after visiting the tab, cached data may be shown for 30 seconds |
 
-The `committed_city_id` being populated means the commit process **did run** - but the status update from "approved" → "committed" failed or was interrupted (network issue, page refresh, timeout).
+## Solution
 
-## Will Clicking Commit Duplicate Data?
+### 1. Force refetch for `navio-pipeline-status` (always visible)
 
-**No** - the commit logic is idempotent:
-1. It checks for existing cities by name before creating
-2. It reuses existing IDs if found
-3. Same deduplication applies to districts and areas
+The pipeline status banner is always visible, so we should **refetch** it immediately (not just invalidate):
 
-So clicking "Commit" again would just re-link to existing records and finally update the status to "committed".
-
-## Solution: Clean Up Stale Staging Status
-
-We should update the staging records to reflect reality - they've already been committed:
-
-### Option A: One-Time Database Cleanup (Recommended)
-
-Run a single query to mark these as committed:
-
-```sql
-UPDATE navio_staging_cities
-SET status = 'committed'
-WHERE status = 'approved' 
-  AND committed_city_id IS NOT NULL;
-
-UPDATE navio_staging_districts
-SET status = 'committed'
-WHERE status IN ('approved', 'pending')
-  AND committed_district_id IS NOT NULL;
-
-UPDATE navio_staging_areas
-SET status = 'committed'
-WHERE status IN ('approved', 'pending')
-  AND committed_area_id IS NOT NULL;
-```
-
-This instantly fixes the UI - the "10 approved" badge disappears.
-
-### Option B: Improve Commit Logic to Self-Heal
-
-Modify the `commit_city` handler to detect and fix this scenario automatically:
+**File: `src/hooks/useNavioImport.ts`**
 
 ```typescript
-// At the start of commit_city case
-// First, fix any stale approved cities that are already committed
-await supabase
-  .from("navio_staging_cities")
-  .update({ status: "committed" })
-  .eq("status", "approved")
-  .not("committed_city_id", "is", null);
+// In geoSyncMutation onSuccess:
+onSuccess: (data) => {
+  // Force immediate refetch for always-visible queries
+  queryClient.refetchQueries({ queryKey: ["navio-pipeline-status"] });
+  
+  // Invalidate (mark stale) for tab-based queries - they'll refetch when visited
+  queryClient.invalidateQueries({ queryKey: ["production-data"] });
+  queryClient.invalidateQueries({ queryKey: ["production-geofences"] });
+  // ... toast
+},
 ```
 
-### Option C: Let User Click Commit (Safe but Wasteful)
+### 2. Reduce `staleTime` on `useProductionData`
 
-Clicking "Commit" would work without duplication, but it's unnecessary work since the data is already there.
+Lower the stale time so the query refetches more quickly when switching tabs:
 
-## Recommended Approach
+**File: `src/hooks/useProductionData.ts`**
 
-1. **Apply Option A** (one-time cleanup) to fix the current state
-2. **Apply Option B** (self-healing logic) to prevent this from happening again in future interrupted commits
+```typescript
+return useQuery({
+  queryKey: ["production-data"],
+  queryFn: async () => { /* ... */ },
+  staleTime: 5000, // Was 30000, now refetch after 5 seconds
+});
+```
+
+### 3. Add a manual refresh button to Production tab (optional enhancement)
+
+Add a refresh button to the ProductionDataPanel header that forces a refetch:
+
+**File: `src/components/navio/ProductionDataPanel.tsx`**
+
+```tsx
+import { useQueryClient } from "@tanstack/react-query";
+
+// In component:
+const queryClient = useQueryClient();
+
+const handleRefresh = () => {
+  queryClient.refetchQueries({ queryKey: ["production-data"] });
+};
+
+// In header:
+<Button variant="ghost" size="sm" onClick={handleRefresh}>
+  <RefreshCw className="h-4 w-4" />
+</Button>
+```
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| Database (one-time query) | Fix stale staging records |
-| `supabase/functions/navio-import/index.ts` | Add self-healing check at start of `commit_city` |
+| `src/hooks/useNavioImport.ts` | Use `refetchQueries` instead of `invalidateQueries` for pipeline status |
+| `src/hooks/useProductionData.ts` | Reduce `staleTime` from 30000 to 5000 |
+| `src/components/navio/ProductionDataPanel.tsx` | Add refresh button (optional) |
 
 ## Expected Outcome
 
-- "10 approved" badge disappears immediately
-- Future interrupted commits will self-heal on next run
-- No duplicate data created
+After these changes:
+1. Pipeline status banner updates immediately after Geo Sync (showing correct geofence count)
+2. Production tab shows fresh data within 5 seconds of switching to it
+3. User can manually refresh if needed
 
+## Immediate Workaround
+
+Until the fix is deployed, the user can:
+- **Refresh the page** (F5) to see the updated data
+- The database already has all 4,898 areas with geofences populated
