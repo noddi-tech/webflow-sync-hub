@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
@@ -412,6 +412,8 @@ export function useNavioImport() {
   }, [clearSavedBatch, resetProgress, navioIncrementalImport]);
 
   // Geo-only sync mutation (no AI, just polygons)
+  const queryClient = useQueryClient();
+  
   const geoSyncMutation = useMutation({
     mutationFn: async () => {
       const response = await supabase.functions.invoke("navio-import", {
@@ -424,12 +426,23 @@ export function useNavioImport() {
       return response.data;
     },
     onSuccess: (data) => {
+      // Invalidate queries so UI updates immediately
+      queryClient.invalidateQueries({ queryKey: ["production-data"] });
+      queryClient.invalidateQueries({ queryKey: ["production-geofences"] });
+      queryClient.invalidateQueries({ queryKey: ["navio-pipeline-status"] });
+      
+      const productionUpdated = data.result?.production_areas_updated || 0;
+      const polygonsSynced = data.result?.polygons_synced || 0;
+      
       toast({
         title: "Geo Sync Complete",
-        description: data.message || `Synced ${data.result?.polygons_synced || 0} delivery polygons.`,
+        description: `${productionUpdated.toLocaleString()} production areas updated, ${polygonsSynced} polygons synced`,
       });
     },
     onError: (error: Error) => {
+      // Also invalidate on error to reset UI state
+      queryClient.invalidateQueries({ queryKey: ["navio-pipeline-status"] });
+      
       toast({
         title: "Geo Sync Failed",
         description: error.message,
