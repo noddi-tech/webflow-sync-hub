@@ -1961,6 +1961,7 @@ async function syncGeoAreas(
 
     // Upsert areas with geofences
     for (const areaData of cityData.areas) {
+      // First try: match by navio_service_area_id
       const { data: existingArea } = await supabase
         .from("areas")
         .select("id")
@@ -1978,17 +1979,40 @@ async function syncGeoAreas(
         }).eq("id", existingArea.id);
         result.areas_updated++;
       } else {
-        await supabase.from("areas").insert({
-          name: areaData.displayName || areaData.name,
-          slug: slugify(areaData.displayName || areaData.name),
-          district_id: districtId,
-          city_id: cityId,
-          is_delivery: true,
-          navio_service_area_id: String(areaData.navioId),
-          navio_imported_at: new Date().toISOString(),
-          geofence_json: areaData.geofence,
-        });
-        result.areas_created++;
+        // Fallback: match by name + city to link discovered areas to real Navio IDs
+        const areaName = areaData.displayName || areaData.name;
+        const { data: matchByName } = await supabase
+          .from("areas")
+          .select("id, navio_service_area_id")
+          .eq("city_id", cityId)
+          .ilike("name", areaName)
+          .maybeSingle();
+        
+        if (matchByName) {
+          // Found by name - update with real Navio ID and geofence
+          await supabase.from("areas").update({
+            navio_service_area_id: String(areaData.navioId),
+            is_delivery: true,
+            geofence_json: areaData.geofence,
+            navio_imported_at: new Date().toISOString(),
+            district_id: districtId,
+          }).eq("id", matchByName.id);
+          result.areas_updated++;
+          console.log(`Linked area "${areaName}" to Navio ID ${areaData.navioId} (was: ${matchByName.navio_service_area_id})`);
+        } else {
+          // No match found - create new area
+          await supabase.from("areas").insert({
+            name: areaName,
+            slug: slugify(areaName),
+            district_id: districtId,
+            city_id: cityId,
+            is_delivery: true,
+            navio_service_area_id: String(areaData.navioId),
+            navio_imported_at: new Date().toISOString(),
+            geofence_json: areaData.geofence,
+          });
+          result.areas_created++;
+        }
       }
 
       if (areaData.geofence) {
