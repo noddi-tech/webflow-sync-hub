@@ -1,88 +1,124 @@
 
 
-# Fix: Missing Production Data and Table Alignment
+# Fix: Table Alignment with shadcn Table Component
 
-## Summary of Issues
+## Current Problem
 
-### Issue 1: Most Cities Showing 0 Areas (1000-Row Limit)
+The table columns are misaligned because the `<Collapsible>` component wraps table rows with a `<div>`, which is invalid HTML inside a `<tbody>`. Browsers attempt to fix this invalid structure, causing the column misalignment you see.
 
-**Root Cause**: Supabase has a default limit of 1000 rows per query. The `useProductionData` hook fetches areas without pagination, so only the first 1,000 of 4,898 areas are returned.
+## Two Options
 
-| City | Cumulative Row Count | Status |
-|------|---------------------|--------|
-| Asker | 47 | Included |
-| Bergen | 478 | Included |
-| Göteborg | 1,614 | Partially cut off |
-| Kristiansand | 2,079 | Missing |
-| München | 3,193 | Missing |
-| Oslo | 3,766 | Missing |
-| Ski | 3,801 | Missing |
-| Tønsberg | 4,362 | Missing |
-| Toronto | 4,629 | Missing |
-| Trondheim | 4,898 | Missing |
+### Option A: Quick Fix (Recommended)
 
-**Why summary shows 1,000 areas**: The query `supabase.from("areas").select(...)` without `.range()` returns max 1,000 rows.
+Remove the `Collapsible` wrapper and use plain React state with a Fragment. This fixes the alignment immediately without adding new dependencies.
 
-### Issue 2: Table Column Alignment Offset
+**Pros:**
+- No new dependencies
+- Minimal code changes
+- Fixes the issue immediately
 
-**Root Cause**: The table header has 6 columns but the data rows appear misaligned because:
-1. First column (expand chevron) has `w-8` width
-2. City column content includes flag + name + badge, making it wider
-3. District/Area columns use `text-center` but the header widths don't match
+**Cons:**
+- Less sophisticated than TanStack Table
+
+### Option B: Full TanStack Data Table
+
+Install `@tanstack/react-table` and refactor to use the shadcn Data Table pattern with column definitions.
+
+**Pros:**
+- More powerful (built-in sorting, filtering, pagination)
+- Industry standard for complex tables
+- Better for future expansion
+
+**Cons:**
+- Requires new dependency (`@tanstack/react-table`)
+- More code to write (column definitions, DataTable component)
+- Overkill for a simple expandable list
 
 ---
 
-## Solution
+## Recommended: Option A - Quick Fix
 
-### Fix 1: Paginate Area Queries to Fetch All 4,898 Rows
+Since your table is relatively simple (just expandable rows showing districts), I recommend the quick fix approach.
 
-Use Supabase's pagination with `.range()` to fetch all areas in batches:
+### Changes Required
 
-```typescript
-// Helper to fetch all rows (handles 1000-row limit)
-async function fetchAllAreas() {
-  const allAreas: Area[] = [];
-  let from = 0;
-  const pageSize = 1000;
-  
-  while (true) {
-    const { data, error } = await supabase
-      .from("areas")
-      .select("id, district_id, city_id")
-      .range(from, from + pageSize - 1);
-    
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-    
-    allAreas.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  
-  return allAreas;
+**File: `src/components/navio/ProductionDataPanel.tsx`**
+
+| Section | Change |
+|---------|--------|
+| Imports (lines 17-21) | Remove `Collapsible` imports |
+| CityRow (lines 98-165) | Replace `<Collapsible>` with Fragment + state |
+
+### Refactored CityRow Component
+
+```tsx
+function CityRow({ city }: { city: ProductionCity }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const geoPercent = city.area_count > 0 
+    ? Math.round((city.areas_with_geofence / city.area_count) * 100) 
+    : 0;
+
+  return (
+    <>
+      <TableRow className="cursor-pointer hover:bg-muted/50">
+        <TableCell className="w-10">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 w-6 p-0"
+            onClick={() => setIsOpen(!isOpen)}
+          >
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </Button>
+        </TableCell>
+        <TableCell className="min-w-[200px]">
+          <span className="mr-2">{getCountryFlag(city.country_code)}</span>
+          <span className="font-medium">{city.name}</span>
+          {city.is_delivery && (
+            <Badge variant="secondary" className="ml-2 text-xs">
+              <MapPin className="h-3 w-3 mr-1" />
+              Delivery
+            </Badge>
+          )}
+        </TableCell>
+        <TableCell className="w-24 text-center">{city.district_count}</TableCell>
+        <TableCell className="w-24 text-center">{city.area_count}</TableCell>
+        <TableCell className="w-36">
+          <div className="flex items-center gap-2">
+            <Progress value={geoPercent} className={cn("h-2 w-20", geoPercent === 0 && "bg-amber-100")} />
+            <span className={cn("text-xs", geoPercent === 0 && "text-amber-600 font-medium", geoPercent === 100 && "text-green-600")}>
+              {city.areas_with_geofence}/{city.area_count}
+            </span>
+          </div>
+        </TableCell>
+        <TableCell className="w-10">
+          <Link to="/cities">
+            <Button variant="ghost" size="sm" className="h-7">
+              <ExternalLink className="h-3 w-3" />
+            </Button>
+          </Link>
+        </TableCell>
+      </TableRow>
+      {isOpen && (
+        <TableRow className="bg-muted/30 hover:bg-muted/30">
+          <TableCell colSpan={6} className="p-0">
+            <DistrictsList cityId={city.id} />
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
 }
 ```
 
-This ensures all 4,898 areas are fetched for accurate aggregation.
+### Key Differences
 
-### Fix 2: Improve Table Column Alignment
-
-Add explicit widths and alignment to table headers and cells:
-
-```tsx
-<TableHeader>
-  <TableRow>
-    <TableHead className="w-10"></TableHead>           {/* Chevron */}
-    <TableHead className="min-w-[200px]">City</TableHead>
-    <TableHead className="w-24 text-center">Districts</TableHead>
-    <TableHead className="w-24 text-center">Areas</TableHead>
-    <TableHead className="w-36">Geofences</TableHead>
-    <TableHead className="w-10"></TableHead>           {/* Link */}
-  </TableRow>
-</TableHeader>
-```
-
-Also update the corresponding `TableCell` components to match.
+| Before (broken) | After (fixed) |
+|-----------------|---------------|
+| `<Collapsible>` wraps rows | `<>` (Fragment) wraps rows |
+| `<CollapsibleTrigger>` on button | `onClick` handler on button |
+| `<CollapsibleContent asChild>` | Conditional rendering with `{isOpen && ...}` |
+| Invalid HTML structure | Valid HTML (only `<tr>` inside `<tbody>`) |
 
 ---
 
@@ -90,83 +126,40 @@ Also update the corresponding `TableCell` components to match.
 
 | File | Changes |
 |------|---------|
-| `src/hooks/useProductionData.ts` | Add pagination helper to fetch all areas beyond 1000-row limit |
-| `src/components/navio/ProductionDataPanel.tsx` | Fix table column widths for proper alignment |
+| `src/components/navio/ProductionDataPanel.tsx` | Remove Collapsible, use Fragment + onClick |
 
 ---
 
 ## Technical Details
 
-### `useProductionData.ts` Changes
+### Why This Fixes Alignment
 
-```typescript
-// Add helper function at top of file
-async function fetchAllRows<T>(
-  query: () => Promise<{ data: T[] | null; error: any }>
-): Promise<T[]> {
-  // For tables that might exceed 1000 rows, paginate
-  const allRows: T[] = [];
-  let from = 0;
-  const pageSize = 1000;
-  
-  while (true) {
-    const { data, error } = await supabase
-      .from("areas")
-      .select("id, district_id, city_id")
-      .range(from, from + pageSize - 1);
-    
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-    
-    allRows.push(...(data as T[]));
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  
-  return allRows;
-}
+```text
+Before (invalid HTML):
+<tbody>
+  <div>           <- Collapsible renders a div
+    <tr>...</tr>
+    <tr>...</tr>
+  </div>
+</tbody>
 
-// Update queryFn to use pagination for areas:
-const [citiesResult, districtsResult] = await Promise.all([
-  supabase.from("cities").select("id, name, country_code, is_delivery").order("name"),
-  supabase.from("districts").select("id, city_id"),
-]);
-
-// Fetch all areas with pagination (handles 4,898+ rows)
-const areas = await fetchAllAreas();
-const areasWithGeo = await fetchAllAreasWithGeofence();
+After (valid HTML):
+<tbody>
+  <tr>...</tr>    <- Direct children of tbody
+  <tr>...</tr>
+</tbody>
 ```
 
-### `ProductionDataPanel.tsx` Table Alignment
-
-Update header widths to match cell content:
-- Chevron column: `w-10` (consistent)
-- City column: `min-w-[200px]` (accommodate flag + name + badge)
-- Districts/Areas: `w-24 text-center` (match header and cells)
-- Geofences: `w-36` (progress bar + count)
-- Link column: `w-10`
+The browser no longer needs to "fix" the DOM structure, so columns align correctly with headers.
 
 ---
 
-## Expected Outcome
+## Expected Result
 
-After these changes:
-1. **Summary Stats**: Will show correct totals (18 cities, 128 districts, 4,898 areas, 100% geofences)
-2. **City Table**: All cities will show correct district and area counts
-3. **Column Alignment**: Headers will align with data cells
-4. **Cities like Kristiansand, Toronto**: Will show their correct 338 and 267 areas respectively
-
----
-
-## Database Verification (Already Correct)
-
-The database has the correct data - this is purely a frontend query/display issue:
-
-| City | Districts | Areas | Geofences |
-|------|-----------|-------|-----------|
-| Drammen | 1 | 23 | 23 |
-| Kristiansand | 8 | 338 | 338 |
-| Ski | 1 | 35 | 35 |
-| Tønsberg | 1 | 53 | 53 |
-| Toronto | 7 | 267 | 267 |
+After this fix:
+- Headers align perfectly with their data columns
+- Districts, Areas, and Geofences columns are centered correctly
+- Expand/collapse functionality still works
+- shadcn Table styling applies correctly with proper borders and hover states
+- Summary stats show correct totals (18 cities, 128 districts, 4,898 areas, 100% geofences)
 
