@@ -1805,6 +1805,7 @@ interface GeoSyncResult {
   areas_created: number;
   areas_updated: number;
   polygons_synced: number;
+  production_areas_updated: number;
 }
 
 async function syncGeoAreas(
@@ -1892,6 +1893,7 @@ async function syncGeoAreas(
     areas_created: 0,
     areas_updated: 0,
     polygons_synced: 0,
+    production_areas_updated: 0,
   };
 
   for (const [, cityData] of cityMap) {
@@ -2037,10 +2039,62 @@ async function syncGeoAreas(
     }
   }
 
-  // 4. Update snapshot
+  // 4. Propagate geofences to AI-discovered areas that don't have one yet
+  console.log("Propagating geofences to AI-discovered areas...");
+  let productionAreasUpdated = 0;
+  
+  for (const [, cityData] of cityMap) {
+    // Skip invalid cities
+    if (!cityData.name || cityData.name === 'Unknown' || cityData.name.trim() === '') {
+      continue;
+    }
+    
+    // Find the city ID
+    const { data: city } = await supabase
+      .from("cities")
+      .select("id")
+      .eq("name", cityData.name)
+      .maybeSingle();
+    
+    if (!city) continue;
+    
+    // Get the first valid geofence from this city's Navio data
+    const firstGeofence = cityData.areas.find(a => a.geofence)?.geofence;
+    if (!firstGeofence) continue;
+    
+    // Count areas that need geofences
+    const { count: areasWithoutGeo } = await supabase
+      .from("areas")
+      .select("id", { count: "exact", head: true })
+      .eq("city_id", city.id)
+      .is("geofence_json", null);
+    
+    if (!areasWithoutGeo || areasWithoutGeo === 0) continue;
+    
+    // Apply the geofence to all areas in this city that have none
+    const { error } = await supabase
+      .from("areas")
+      .update({
+        geofence_json: firstGeofence,
+        navio_imported_at: new Date().toISOString(),
+      })
+      .eq("city_id", city.id)
+      .is("geofence_json", null);
+    
+    if (!error) {
+      productionAreasUpdated += areasWithoutGeo;
+      console.log(`Applied geofence to ${areasWithoutGeo} AI-discovered areas in ${cityData.name}`);
+    } else {
+      console.error(`Failed to apply geofence to areas in ${cityData.name}:`, error);
+    }
+  }
+  
+  result.production_areas_updated = productionAreasUpdated;
+
+  // 5. Update snapshot
   await updateSnapshot(supabase, navioToken);
 
-  console.log(`Geo sync complete: ${result.cities_created} cities created, ${result.areas_created} areas created, ${result.polygons_synced} polygons synced`);
+  console.log(`Geo sync complete: ${result.cities_created} cities created, ${result.areas_created} areas created, ${result.polygons_synced} polygons synced, ${productionAreasUpdated} production areas received geofences`);
 
   return result;
 }
