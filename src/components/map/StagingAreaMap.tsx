@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { MapContainer, TileLayer, GeoJSON, Popup, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, GeoJSON, useMap } from "react-leaflet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -314,7 +314,7 @@ function MapContent({
               key={`${area.id}`}
               data={{
                 type: "Feature",
-                properties: { name: area.name, city: area.city },
+                properties: { name: area.name, city: area.city, countryCode: area.countryCode },
                 geometry: area.geofence,
               } as GeoJSON.Feature}
               style={{
@@ -323,14 +323,16 @@ function MapContent({
                 fillOpacity: 0.2,
                 opacity: 0.8,
               }}
-            >
-              <Popup>
-                <div className="font-medium">{area.name}</div>
-                <div className="text-sm text-muted-foreground">
-                  {area.city} ({area.countryCode})
-                </div>
-              </Popup>
-            </GeoJSON>
+              onEachFeature={(feature, layer) => {
+                const props = feature.properties || {};
+                layer.bindPopup(`
+                  <div style="font-weight: 500;">${props.name || "Unknown"}</div>
+                  <div style="font-size: 0.875rem; color: #6b7280;">
+                    ${props.city || "Unknown"} (${props.countryCode || "XX"})
+                  </div>
+                `);
+              }}
+            />
           ))}
           
           <FitBounds bounds={bounds} />
