@@ -72,7 +72,7 @@ const StageCard = forwardRef<HTMLDivElement, StageCardProps>(
 );
 StageCard.displayName = "StageCard";
 
-export const PipelineStatusBanner = forwardRef<HTMLDivElement>((_, ref) => {
+export const PipelineStatusBanner = forwardRef<HTMLDivElement, object>((_, ref) => {
   const { data: status, isLoading } = useNavioPipelineStatus();
 
   if (isLoading) {

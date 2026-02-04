@@ -28,7 +28,7 @@ import { useNavioPipelineStatus } from "@/hooks/useNavioPipelineStatus";
 import { ProductionDataPanel } from "@/components/navio/ProductionDataPanel";
 import NavioStagingTab from "@/components/navio/NavioStagingTab";
 
-const NavioDashboard = forwardRef<HTMLDivElement>((_, ref) => {
+const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
   const queryClient = useQueryClient();
   const [progressOpen, setProgressOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
