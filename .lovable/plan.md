@@ -1,196 +1,105 @@
 
+# Plan: Fix Map Not Displaying Geofences
 
-# Plan: Reorganize Navio Navigation with Delivery Map Sub-Page
+## Root Cause
 
-This plan reorganizes the Navio sidebar menu to follow a clear 3-step workflow UX and adds a dedicated Delivery Map page.
-
----
-
-## Current Structure
-
-```text
-Navio (collapsible)
-  ├── Operations (/navio)     → Configuration, Geo Sync, AI Import
-  └── Preview (/navio-preview) → Staging review, approval, commit + map tabs
+The map component filters geofences by checking:
+```javascript
+if (geofence.type === "Polygon" || geofence.type === "MultiPolygon")
 ```
 
-## Proposed Structure
-
-```text
-Navio (collapsible)
-  ├── Operations (/navio)          → Step 1: Configure & run imports
-  ├── Staging (/navio-staging)     → Step 2: Review & approve pending data  
-  └── Delivery Map (/navio-map)    → Step 3: View production areas & test coverage
-```
-
----
-
-## UX Flow
-
-| Step | Page | Purpose |
-|------|------|---------|
-| 1 | Operations | Run Geo Sync, AI Import, check for changes |
-| 2 | Staging | Review pending imports, approve/reject cities, commit to production |
-| 3 | Delivery Map | View approved production areas on map, test delivery coverage |
-
----
-
-## Technical Changes
-
-### 1. Create New Delivery Map Page
-**File:** `src/pages/NavioDeliveryMap.tsx`
-
-A new page combining:
-- The `StagingAreaMap` component (defaulting to "production" source)
-- The `DeliveryChecker` component
-
-This separates the "view results" functionality from the "approve/commit" workflow.
-
-```text
-Layout:
-┌─────────────────────────────────────────────┐
-│ Delivery Map                                │
-│ View production delivery areas and test     │
-│ coverage                                    │
-├─────────────────────────────────────────────┤
-│ ┌─────────────────┐ ┌─────────────────────┐ │
-│ │                 │ │                     │ │
-│ │   Map View      │ │  Delivery Checker   │ │
-│ │   (Production)  │ │                     │ │
-│ │                 │ │  - Address input    │ │
-│ │   + Source tabs │ │  - Coordinates      │ │
-│ │   (snapshot,    │ │  - Check button     │ │
-│ │    staging,     │ │  - Results          │ │
-│ │    production)  │ │                     │ │
-│ │                 │ │                     │ │
-│ └─────────────────┘ └─────────────────────┘ │
-└─────────────────────────────────────────────┘
-```
-
-### 2. Simplify NavioPreview (Rename to Staging)
-**File:** `src/pages/NavioPreview.tsx`
-
-- Rename page to "Navio Staging" (keeping component name for simplicity)
-- Remove the "Map View" and "Delivery Check" tabs (moved to Delivery Map page)
-- Focus purely on: Table View → Hierarchy View → Approve/Reject/Commit
-
-### 3. Update Sidebar Navigation
-**File:** `src/components/layout/Sidebar.tsx`
-
-Update the Navio collapsible section:
-```typescript
+But the actual data in `navio_snapshot` is stored as a **GeoJSON Feature**:
+```json
 {
-  type: "collapsible",
-  section: {
-    name: "Navio",
-    icon: MapPinned,
-    items: [
-      { name: "Operations", href: "/navio", icon: Settings },
-      { name: "Staging", href: "/navio-staging", icon: Eye },
-      { name: "Delivery Map", href: "/navio-map", icon: Map },
-    ],
-  },
-},
+  "type": "Feature",
+  "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [...]
+  }
+}
 ```
 
-### 4. Update Routes
-**File:** `src/App.tsx`
-
-Add new route and rename existing one:
-```typescript
-<Route path="/navio" element={<NavioOperations />} />
-<Route path="/navio-staging" element={<NavioPreview />} />
-<Route path="/navio-map" element={<NavioDeliveryMap />} />
-
-// Keep old route for backwards compatibility (redirect)
-<Route path="/navio-preview" element={<Navigate to="/navio-staging" replace />} />
-```
-
-### 5. Update Operations Page Link
-**File:** `src/pages/NavioOperations.tsx`
-
-Change the "Go to Preview" link to point to `/navio-staging`:
-```typescript
-<Link to="/navio-staging">
-  Go to Staging
-  <ArrowRight className="ml-2 h-4 w-4" />
-</Link>
-```
+The code expects a raw Geometry but receives a Feature wrapper, so all 215 areas fail the type check and are skipped.
 
 ---
 
-## Files Summary
+## Database State
 
-| File | Action | Changes |
-|------|--------|---------|
-| `src/pages/NavioDeliveryMap.tsx` | **Create** | New page with map + delivery checker side by side |
-| `src/pages/NavioPreview.tsx` | Modify | Remove map/delivery tabs, rename title to "Staging" |
-| `src/components/layout/Sidebar.tsx` | Modify | Update Navio menu to 3 items |
-| `src/App.tsx` | Modify | Add new route, add redirect for old URL |
-| `src/pages/NavioOperations.tsx` | Modify | Update link text/URL to staging |
+| Source | Total | With Geofence | Geofence Format |
+|--------|-------|---------------|-----------------|
+| Snapshot | 215 | 215 | Feature → geometry.MultiPolygon |
+| Production | 4,865 | 0 | No geofences yet |
+| Staging | 0 | - | Empty |
 
 ---
 
-## New NavioDeliveryMap Page Structure
+## Solution
+
+Update the `useSnapshot()` and `useProduction()` query handlers to extract the geometry from Feature-wrapped geofences.
+
+### Changes to `src/components/map/StagingAreaMap.tsx`
+
+**In `useSnapshot()` (lines 127-139):**
 
 ```typescript
-// src/pages/NavioDeliveryMap.tsx
-export default function NavioDeliveryMap() {
-  return (
-    <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Delivery Map</h1>
-        <p className="text-muted-foreground">
-          View production delivery areas and test coverage
-        </p>
-      </div>
+// Current (broken):
+const geofence = entry.geofence_json as unknown as GeoJSON.Geometry | null;
+if (geofence && geofence.type && (geofence.type === "Polygon" || geofence.type === "MultiPolygon")) {
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Map - takes 2/3 width on large screens */}
-        <div className="lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Delivery Areas</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <StagingAreaMap defaultSource="production" />
-            </CardContent>
-          </Card>
-        </div>
+// Fixed:
+let geofence = entry.geofence_json as unknown as GeoJSON.Geometry | GeoJSON.Feature | null;
 
-        {/* Delivery Checker - takes 1/3 width */}
-        <div>
-          <DeliveryChecker />
-        </div>
-      </div>
-    </div>
-  );
+// Extract geometry if it's a Feature wrapper
+if (geofence && geofence.type === "Feature" && (geofence as GeoJSON.Feature).geometry) {
+  geofence = (geofence as GeoJSON.Feature).geometry;
+}
+
+if (geofence && (geofence.type === "Polygon" || geofence.type === "MultiPolygon")) {
+```
+
+**In `useProduction()` (lines 172-185):**
+
+Apply the same fix to handle production areas once they have geofences.
+
+### Create a Helper Function
+
+To avoid code duplication, extract a reusable helper:
+
+```typescript
+function extractGeometry(geofenceData: unknown): GeoJSON.Geometry | null {
+  if (!geofenceData || typeof geofenceData !== 'object') return null;
+  
+  const geo = geofenceData as { type?: string; geometry?: GeoJSON.Geometry };
+  
+  // Handle Feature wrapper
+  if (geo.type === "Feature" && geo.geometry) {
+    return geo.geometry;
+  }
+  
+  // Handle direct Geometry
+  if (geo.type === "Polygon" || geo.type === "MultiPolygon") {
+    return geo as GeoJSON.Geometry;
+  }
+  
+  return null;
 }
 ```
 
 ---
 
-## NavioPreview Tab Simplification
+## Files to Modify
 
-Current tabs (4):
-- Table View
-- Hierarchy View
-- Map View
-- Delivery Check
-
-New tabs (2):
-- Table View (list of cities with status)
-- Hierarchy View (expandable tree of city → district → area)
-
-The Map View and Delivery Check move to the new Delivery Map page.
+| File | Changes |
+|------|---------|
+| `src/components/map/StagingAreaMap.tsx` | Add `extractGeometry` helper, update snapshot and production query handlers |
 
 ---
 
-## Summary
+## Expected Result
 
-1. **Create** `NavioDeliveryMap` page with production map + delivery checker
-2. **Simplify** `NavioPreview` to focus only on staging review/approval
-3. **Update** sidebar to show 3 clear menu items matching the workflow
-4. **Update** routes with new path and backwards-compatible redirect
-5. **Update** Operations page link text
+After this fix:
+- **Snapshot tab**: Will show 215 areas with geofences
+- **Staging tab**: Will remain at 0 (no queue data)
+- **Production tab**: Will remain at 0 until geofences are synced to production `areas` table
 
+The map will render the 215 geofence polygons from the snapshot data with city-based color coding.
