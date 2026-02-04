@@ -14,11 +14,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { 
   ChevronDown, 
   ChevronRight, 
@@ -102,18 +97,21 @@ function CityRow({ city }: { city: ProductionCity }) {
     : 0;
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+    <>
       <TableRow className="cursor-pointer hover:bg-muted/50">
         <TableCell className="w-10">
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-              {isOpen ? (
-                <ChevronDown className="h-4 w-4" />
-              ) : (
-                <ChevronRight className="h-4 w-4" />
-              )}
-            </Button>
-          </CollapsibleTrigger>
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="h-6 w-6 p-0"
+            onClick={() => setIsOpen(!isOpen)}
+          >
+            {isOpen ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </Button>
         </TableCell>
         <TableCell className="min-w-[200px]">
           <span className="mr-2">{getCountryFlag(city.country_code)}</span>
@@ -153,14 +151,14 @@ function CityRow({ city }: { city: ProductionCity }) {
           </Link>
         </TableCell>
       </TableRow>
-      <CollapsibleContent asChild>
-        <tr>
-          <td colSpan={6} className="p-0 bg-muted/30">
+      {isOpen && (
+        <TableRow className="bg-muted/30 hover:bg-muted/30">
+          <TableCell colSpan={6} className="p-0">
             <DistrictsList cityId={city.id} />
-          </td>
-        </tr>
-      </CollapsibleContent>
-    </Collapsible>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
 
