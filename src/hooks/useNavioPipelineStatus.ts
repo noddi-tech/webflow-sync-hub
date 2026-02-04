@@ -15,6 +15,7 @@ export interface NavioPipelineStatus {
   productionCities: number;
   productionDistricts: number;
   productionAreas: number;
+  productionAreasWithGeo: number;
   stagingPending: number;
   stagingApproved: number;
   stagingCommitted: number;
@@ -29,7 +30,7 @@ export interface NavioPipelineStatus {
   
   // Contextual guidance
   nextAction: {
-    type: "import" | "review" | "commit" | "sync" | "none";
+    type: "import" | "review" | "commit" | "sync" | "geo_sync" | "none";
     message: string;
     urgency: "low" | "medium" | "high";
   };
@@ -44,12 +45,14 @@ export function useNavioPipelineStatus() {
         citiesResult,
         districtsResult,
         areasResult,
+        areasWithGeoResult,
         stagingCitiesResult,
       ] = await Promise.all([
         supabase.from("navio_snapshot").select("snapshot_at", { count: "exact", head: false }).limit(1).order("snapshot_at", { ascending: false }),
         supabase.from("cities").select("id", { count: "exact", head: true }),
         supabase.from("districts").select("id", { count: "exact", head: true }),
         supabase.from("areas").select("id", { count: "exact", head: true }),
+        supabase.from("areas").select("id", { count: "exact", head: true }).not("geofence_json", "is", null),
         supabase.from("navio_staging_cities").select("status"),
       ]);
 
@@ -62,6 +65,7 @@ export function useNavioPipelineStatus() {
       const productionCities = citiesResult.count || 0;
       const productionDistricts = districtsResult.count || 0;
       const productionAreas = areasResult.count || 0;
+      const productionAreasWithGeo = areasWithGeoResult.count || 0;
       const lastSnapshotUpdate = snapshotResult.data?.[0]?.snapshot_at || null;
 
       // Compute pipeline stages
@@ -87,13 +91,13 @@ export function useNavioPipelineStatus() {
         production: {
           label: "Production",
           count: productionAreas,
-          secondaryCount: productionCities,
-          secondaryLabel: "cities",
+          secondaryCount: productionAreasWithGeo,
+          secondaryLabel: "with geofence",
           status: productionAreas > 0 ? "has-data" : "empty",
         },
       };
 
-      // Determine next action
+      // Determine next action with geo-sync awareness
       let nextAction: NavioPipelineStatus["nextAction"];
       
       if (stagingApproved > 0) {
@@ -107,6 +111,13 @@ export function useNavioPipelineStatus() {
           type: "review",
           message: `${stagingPending} ${stagingPending === 1 ? "city needs" : "cities need"} review. Approve or reject them before committing.`,
           urgency: "medium",
+        };
+      } else if (productionAreas > 0 && productionAreasWithGeo === 0) {
+        // Production areas exist but none have geofences - need geo sync
+        nextAction = {
+          type: "sync",
+          message: `${productionAreas.toLocaleString()} production areas have no geofence data. Run Geo Sync to populate polygons.`,
+          urgency: "high",
         };
       } else if (snapshotCount === 0 && productionAreas === 0) {
         nextAction = {
@@ -133,6 +144,7 @@ export function useNavioPipelineStatus() {
         productionCities,
         productionDistricts,
         productionAreas,
+        productionAreasWithGeo,
         stagingPending,
         stagingApproved,
         stagingCommitted,
