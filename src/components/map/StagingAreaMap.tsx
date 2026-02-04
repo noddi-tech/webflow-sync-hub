@@ -228,6 +228,7 @@ function useCitiesWithCounts() {
           .from("areas")
           .select("city_id")
           .not("geofence_json", "is", null)
+          .order("id")
           .range(from, from + pageSize - 1);
         
         if (areaError) throw areaError;
@@ -282,6 +283,7 @@ function useProduction(selectedCityIds: string[]) {
           `)
           .in("city_id", selectedCityIds)
           .not("geofence_json", "is", null)
+          .order("id")
           .range(from, from + pageSize - 1);
         
         if (error) throw error;
@@ -320,11 +322,13 @@ function useProduction(selectedCityIds: string[]) {
 function MapContent({ 
   areas, 
   cities, 
-  isLoading 
+  isLoading,
+  mapKey,
 }: { 
   areas: AreaWithGeo[]; 
   cities: string[]; 
   isLoading: boolean;
+  mapKey: string;
 }) {
   // Calculate bounds for all polygons
   const bounds = useMemo(() => {
@@ -409,7 +413,7 @@ function MapContent({
       </div>
 
       {/* Map */}
-      <div className="h-[500px] rounded-lg overflow-hidden border">
+      <div key={mapKey} className="h-[500px] rounded-lg overflow-hidden border">
         <MapContainer
           center={[59.9, 10.75]}
           zoom={5}
@@ -584,6 +588,12 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
     activeSource === "snapshot" ? snapshotQuery :
     productionQuery;
 
+  // Create a unique key to force map remount when data changes
+  const mapKey = useMemo(() => 
+    `map-${activeSource}-${selectedCityIds.sort().join('-')}`, 
+    [activeSource, selectedCityIds]
+  );
+
   return (
     <div className="space-y-4">
       <Tabs value={activeSource} onValueChange={(v) => setActiveSource(v as MapSource)}>
@@ -615,6 +625,7 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
         areas={currentQuery.data?.areas ?? []}
         cities={currentQuery.data?.cities ?? []}
         isLoading={currentQuery.isLoading}
+        mapKey={mapKey}
       />
     </div>
   );
