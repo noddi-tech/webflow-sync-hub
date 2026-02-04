@@ -34,9 +34,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Check, X, Trash2, ChevronRight, ChevronDown, Globe, AlertTriangle, MapPin, Navigation } from "lucide-react";
-import { StagingAreaMap } from "@/components/map/StagingAreaMap";
-import { DeliveryChecker } from "@/components/delivery/DeliveryChecker";
+import { Check, X, Trash2, ChevronRight, ChevronDown, Globe, AlertTriangle } from "lucide-react";
 import { StagingActionBar } from "@/components/navio/StagingActionBar";
 import {
   Tooltip,
@@ -522,9 +520,9 @@ export default function NavioPreview() {
   return (
     <div className="p-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground">Navio Import Preview</h1>
+        <h1 className="text-3xl font-bold text-foreground">Navio Staging</h1>
         <p className="text-muted-foreground mt-1">
-          Review AI classification before committing to database
+          Review and approve staged data before committing to production
         </p>
       </div>
 
@@ -604,14 +602,6 @@ export default function NavioPreview() {
         <TabsList className="mb-4">
           <TabsTrigger value="table">Table View</TabsTrigger>
           <TabsTrigger value="hierarchy">Hierarchy View</TabsTrigger>
-          <TabsTrigger value="map">
-            <MapPin className="h-4 w-4 mr-2" />
-            Map View
-          </TabsTrigger>
-          <TabsTrigger value="delivery">
-            <Navigation className="h-4 w-4 mr-2" />
-            Delivery Check
-          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="table">
@@ -787,23 +777,6 @@ export default function NavioPreview() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="map">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MapPin className="h-5 w-5" />
-                Staging Geofences
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <StagingAreaMap batchId={selectedBatch} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="delivery">
-          <DeliveryChecker />
-        </TabsContent>
       </Tabs>
 
       {/* Floating Action Bar */}
