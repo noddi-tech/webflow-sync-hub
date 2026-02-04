@@ -1,75 +1,88 @@
 
-# Fix: Database Query Timeouts in Production Data
 
-## Problem Summary
+# Fix: Missing Production Data and Table Alignment
 
-After the Geo Sync successfully populated 4,898 areas with geofence data, the Production tab stopped loading. The database queries are timing out because they're fetching the full `geofence_json` JSONB field for thousands of areas.
+## Summary of Issues
 
-| Query | Issue |
-|-------|-------|
-| `useProductionData` | Fetches `geofence_json` via nested join for ALL 4,898 areas just to check if it's not null |
-| `useProduction` (Map) | Fetches `geofence_json` for display but still times out with 1000 limit |
+### Issue 1: Most Cities Showing 0 Areas (1000-Row Limit)
 
-Error: `code: 57014` - "canceling statement due to statement timeout"
+**Root Cause**: Supabase has a default limit of 1000 rows per query. The `useProductionData` hook fetches areas without pagination, so only the first 1,000 of 4,898 areas are returned.
 
-## Root Cause
+| City | Cumulative Row Count | Status |
+|------|---------------------|--------|
+| Asker | 47 | Included |
+| Bergen | 478 | Included |
+| Göteborg | 1,614 | Partially cut off |
+| Kristiansand | 2,079 | Missing |
+| München | 3,193 | Missing |
+| Oslo | 3,766 | Missing |
+| Ski | 3,801 | Missing |
+| Tønsberg | 4,362 | Missing |
+| Toronto | 4,629 | Missing |
+| Trondheim | 4,898 | Missing |
 
-The `geofence_json` field contains large polygon data (hundreds of coordinates per area). A single area's geofence can be 50-100KB of JSON. Fetching 4,898 of them in one query exceeds the database's statement timeout.
+**Why summary shows 1,000 areas**: The query `supabase.from("areas").select(...)` without `.range()` returns max 1,000 rows.
+
+### Issue 2: Table Column Alignment Offset
+
+**Root Cause**: The table header has 6 columns but the data rows appear misaligned because:
+1. First column (expand chevron) has `w-8` width
+2. City column content includes flag + name + badge, making it wider
+3. District/Area columns use `text-center` but the header widths don't match
+
+---
 
 ## Solution
 
-### 1. Optimize `useProductionData` - Don't fetch geofence_json at all
+### Fix 1: Paginate Area Queries to Fetch All 4,898 Rows
 
-For the Production tab's city/district/area counts, we only need to know IF geofence exists, not the actual data. Change the query to use separate count queries:
-
-**File: `src/hooks/useProductionData.ts`**
+Use Supabase's pagination with `.range()` to fetch all areas in batches:
 
 ```typescript
-// Instead of nested join with geofence_json, use separate efficient queries:
-const [citiesResult, districtsResult, areasResult, areasWithGeoResult] = await Promise.all([
-  supabase.from("cities").select("id, name, country_code, is_delivery").order("name"),
-  supabase.from("districts").select("id, city_id"),
-  supabase.from("areas").select("id, district_id"),
-  supabase.from("areas").select("id", { count: "exact", head: true }).not("geofence_json", "is", null),
-]);
-
-// Then aggregate counts in JavaScript
+// Helper to fetch all rows (handles 1000-row limit)
+async function fetchAllAreas() {
+  const allAreas: Area[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from("areas")
+      .select("id, district_id, city_id")
+      .range(from, from + pageSize - 1);
+    
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    
+    allAreas.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  
+  return allAreas;
+}
 ```
 
-This avoids fetching any geofence data - just counts.
+This ensures all 4,898 areas are fetched for accurate aggregation.
 
-### 2. Optimize `useProduction` (Map) - Paginate or use server-side aggregation
+### Fix 2: Improve Table Column Alignment
 
-For the map, we need actual geofence data but should paginate or limit more strictly:
+Add explicit widths and alignment to table headers and cells:
 
-**File: `src/components/map/StagingAreaMap.tsx`**
-
-Option A: Reduce limit to 200-300 areas (enough for visualization without timeout)
-Option B: Add city-based filtering so users load one city at a time
-
-```typescript
-// Reduce limit to avoid timeout
-.limit(300)
-
-// Or add city filter
-.eq("city_id", selectedCityId)
+```tsx
+<TableHeader>
+  <TableRow>
+    <TableHead className="w-10"></TableHead>           {/* Chevron */}
+    <TableHead className="min-w-[200px]">City</TableHead>
+    <TableHead className="w-24 text-center">Districts</TableHead>
+    <TableHead className="w-24 text-center">Areas</TableHead>
+    <TableHead className="w-36">Geofences</TableHead>
+    <TableHead className="w-10"></TableHead>           {/* Link */}
+  </TableRow>
+</TableHeader>
 ```
 
-### 3. Create a database view for area counts (most robust)
-
-Create a materialized view or simple view that pre-aggregates counts without loading geofence data:
-
-```sql
-CREATE VIEW area_geofence_stats AS
-SELECT 
-  district_id,
-  COUNT(*) as total_areas,
-  COUNT(*) FILTER (WHERE geofence_json IS NOT NULL) as areas_with_geofence
-FROM areas
-GROUP BY district_id;
-```
-
-Then join this lightweight view instead of loading all area data.
+Also update the corresponding `TableCell` components to match.
 
 ---
 
@@ -77,76 +90,83 @@ Then join this lightweight view instead of loading all area data.
 
 | File | Changes |
 |------|---------|
-| `src/hooks/useProductionData.ts` | Replace nested join with separate count queries |
-| `src/components/map/StagingAreaMap.tsx` | Reduce limit from 1000 to 300, or add city filter |
-| Database migration (optional) | Create aggregation view for performance |
+| `src/hooks/useProductionData.ts` | Add pagination helper to fetch all areas beyond 1000-row limit |
+| `src/components/navio/ProductionDataPanel.tsx` | Fix table column widths for proper alignment |
 
 ---
 
-## Implementation Details
+## Technical Details
 
-### `useProductionData.ts` - New Query Structure
+### `useProductionData.ts` Changes
 
 ```typescript
-export function useProductionData() {
-  return useQuery({
-    queryKey: ["production-data"],
-    queryFn: async () => {
-      // Fetch cities (small table, fast)
-      const { data: cities, error: citiesError } = await supabase
-        .from("cities")
-        .select("id, name, country_code, is_delivery")
-        .order("name");
-      if (citiesError) throw citiesError;
-
-      // Fetch districts with city_id (no nested data)
-      const { data: districts, error: districtsError } = await supabase
-        .from("districts")
-        .select("id, city_id");
-      if (districtsError) throw districtsError;
-
-      // Fetch areas with district_id and just check if geofence exists
-      // Use a boolean expression instead of fetching the actual geofence
-      const { data: areas, error: areasError } = await supabase
-        .from("areas")
-        .select("id, district_id, geofence_json");
-      // NOTE: This still has the same issue!
-      
-      // BETTER: Fetch area counts per district using RPC or aggregation
-    },
-  });
+// Add helper function at top of file
+async function fetchAllRows<T>(
+  query: () => Promise<{ data: T[] | null; error: any }>
+): Promise<T[]> {
+  // For tables that might exceed 1000 rows, paginate
+  const allRows: T[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from("areas")
+      .select("id, district_id, city_id")
+      .range(from, from + pageSize - 1);
+    
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    
+    allRows.push(...(data as T[]));
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  
+  return allRows;
 }
+
+// Update queryFn to use pagination for areas:
+const [citiesResult, districtsResult] = await Promise.all([
+  supabase.from("cities").select("id, name, country_code, is_delivery").order("name"),
+  supabase.from("districts").select("id, city_id"),
+]);
+
+// Fetch all areas with pagination (handles 4,898+ rows)
+const areas = await fetchAllAreas();
+const areasWithGeo = await fetchAllAreasWithGeofence();
 ```
 
-### Even Better Approach - Use HEAD requests for counts
+### `ProductionDataPanel.tsx` Table Alignment
 
-```typescript
-// Count areas with geofence using HEAD request (no data transfer)
-const { count: areasWithGeoCount } = await supabase
-  .from("areas")
-  .select("id", { count: "exact", head: true })
-  .not("geofence_json", "is", null);
-
-// Count all areas per district
-const { data: districtCounts } = await supabase
-  .rpc("get_district_area_counts"); // Create this function
-```
+Update header widths to match cell content:
+- Chevron column: `w-10` (consistent)
+- City column: `min-w-[200px]` (accommodate flag + name + badge)
+- Districts/Areas: `w-24 text-center` (match header and cells)
+- Geofences: `w-36` (progress bar + count)
+- Link column: `w-10`
 
 ---
 
 ## Expected Outcome
 
 After these changes:
-1. Production tab loads in under 1 second (no large data transfer)
-2. Map loads a reasonable subset of polygons without timeout
-3. Geofence coverage percentages are calculated efficiently via COUNT queries
-4. No more 500 errors
+1. **Summary Stats**: Will show correct totals (18 cities, 128 districts, 4,898 areas, 100% geofences)
+2. **City Table**: All cities will show correct district and area counts
+3. **Column Alignment**: Headers will align with data cells
+4. **Cities like Kristiansand, Toronto**: Will show their correct 338 and 267 areas respectively
 
 ---
 
-## Technical Notes
+## Database Verification (Already Correct)
 
-- The `geofence_json` field is now populated for all 4,898 areas (confirmed in earlier query)
-- PostgREST has a default statement timeout of 8-10 seconds
-- Large JSONB fields should be fetched individually, not in bulk queries
-- Using `{ count: "exact", head: true }` is the most efficient way to count rows
+The database has the correct data - this is purely a frontend query/display issue:
+
+| City | Districts | Areas | Geofences |
+|------|-----------|-------|-----------|
+| Drammen | 1 | 23 | 23 |
+| Kristiansand | 8 | 338 | 338 |
+| Ski | 1 | 35 | 35 |
+| Tønsberg | 1 | 53 | 53 |
+| Toronto | 7 | 267 | 267 |
+
