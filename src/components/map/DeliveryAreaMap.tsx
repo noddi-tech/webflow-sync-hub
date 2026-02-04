@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { MapContainer, TileLayer, GeoJSON, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, GeoJSON } from "react-leaflet";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -165,16 +165,17 @@ export function DeliveryAreaMap() {
                 properties: { city: area.city_name }, 
                 geometry: area.geofence_json as Polygon | MultiPolygon 
               })}
-            >
-              <Popup>
-                <div className="text-sm">
-                  <p className="font-semibold">{area.name}</p>
-                  <p className="text-muted-foreground">
-                    {area.district_name}, {area.city_name}
-                  </p>
-                </div>
-              </Popup>
-            </GeoJSON>
+              onEachFeature={(feature, layer) => {
+                layer.bindPopup(`
+                  <div style="font-size: 0.875rem;">
+                    <p style="font-weight: 600;">${area.name}</p>
+                    <p style="color: #6b7280;">
+                      ${area.district_name}, ${area.city_name}
+                    </p>
+                  </div>
+                `);
+              }}
+            />
           )
         ))}
       </MapContainer>
