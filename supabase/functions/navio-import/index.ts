@@ -35,7 +35,9 @@ interface GeoJSONPolygon {
 
 // Helper to create MD5-like hash for geofence comparison
 function hashGeofence(geofence: GeoJSONPolygon | null | undefined): string | null {
-  if (!geofence) return null;
+  if (!geofence || !geofence.coordinates || !Array.isArray(geofence.coordinates)) {
+    return null;
+  }
   // Simple hash based on stringified coordinates - sufficient for change detection
   const str = JSON.stringify(geofence.coordinates);
   let hash = 0;
