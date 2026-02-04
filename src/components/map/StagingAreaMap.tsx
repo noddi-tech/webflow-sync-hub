@@ -206,34 +206,45 @@ function useSnapshot() {
   });
 }
 
-// Fetch all cities with their geofence counts
+// Fetch all cities with their geofence counts (with pagination to bypass 1000-row limit)
 function useCitiesWithCounts() {
   return useQuery({
     queryKey: ["cities-with-geofence-counts"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data: citiesData, error } = await supabase
         .from("cities")
         .select("id, name, country_code")
         .order("name");
       
       if (error) throw error;
       
-      // Get area counts per city (separate lightweight query)
-      const { data: counts } = await supabase
-        .from("areas")
-        .select("city_id")
-        .not("geofence_json", "is", null);
-      
-      // Build count map
+      // Paginate through ALL areas to get accurate counts
       const countMap = new Map<string, number>();
-      for (const row of counts || []) {
-        if (row.city_id) {
-          countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
+      let from = 0;
+      const pageSize = 1000;
+      
+      while (true) {
+        const { data: areaPage, error: areaError } = await supabase
+          .from("areas")
+          .select("city_id")
+          .not("geofence_json", "is", null)
+          .range(from, from + pageSize - 1);
+        
+        if (areaError) throw areaError;
+        if (!areaPage || areaPage.length === 0) break;
+        
+        for (const row of areaPage) {
+          if (row.city_id) {
+            countMap.set(row.city_id, (countMap.get(row.city_id) || 0) + 1);
+          }
         }
+        
+        if (areaPage.length < pageSize) break;
+        from += pageSize;
       }
       
       // Filter to cities that have geofenced areas and sort by count
-      const citiesWithCounts: CityWithCount[] = (data || [])
+      const citiesWithCounts: CityWithCount[] = (citiesData || [])
         .map(city => ({
           ...city,
           area_count: countMap.get(city.id) || 0
@@ -247,7 +258,7 @@ function useCitiesWithCounts() {
   });
 }
 
-// Extract areas from production areas table with multi-city filter
+// Extract areas from production areas table with multi-city filter (with pagination)
 function useProduction(selectedCityIds: string[]) {
   return useQuery({
     queryKey: ["production-geofences", selectedCityIds],
@@ -256,36 +267,46 @@ function useProduction(selectedCityIds: string[]) {
       const allAreas: AreaWithGeo[] = [];
       const cityNames = new Set<string>();
       
-      // Fetch areas for all selected cities in one query using .in()
-      const { data, error } = await supabase
-        .from("areas")
-        .select(`
-          id, 
-          name, 
-          geofence_json,
-          city:cities!areas_city_id_fkey(id, name, country_code)
-        `)
-        .in("city_id", selectedCityIds)
-        .not("geofence_json", "is", null);
+      // Paginate to get ALL areas for selected cities
+      let from = 0;
+      const pageSize = 1000;
       
-      if (error) throw error;
-      
-      for (const entry of data || []) {
-        const city = entry.city as { id: string; name: string; country_code: string } | null;
-        const cityName = city?.name || "Unknown";
-        cityNames.add(cityName);
+      while (true) {
+        const { data, error } = await supabase
+          .from("areas")
+          .select(`
+            id, 
+            name, 
+            geofence_json,
+            city:cities!areas_city_id_fkey(id, name, country_code)
+          `)
+          .in("city_id", selectedCityIds)
+          .not("geofence_json", "is", null)
+          .range(from, from + pageSize - 1);
         
-        // Production data IS in [lat, lng] format - NEEDS swap
-        const geofence = extractGeometry(entry.geofence_json, true);
-        if (geofence) {
-          allAreas.push({
-            id: entry.id,
-            name: entry.name,
-            city: cityName,
-            countryCode: city?.country_code || "XX",
-            geofence,
-          });
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        
+        for (const entry of data) {
+          const city = entry.city as { id: string; name: string; country_code: string } | null;
+          const cityName = city?.name || "Unknown";
+          cityNames.add(cityName);
+          
+          // Production data IS in [lat, lng] format - NEEDS swap
+          const geofence = extractGeometry(entry.geofence_json, true);
+          if (geofence) {
+            allAreas.push({
+              id: entry.id,
+              name: entry.name,
+              city: cityName,
+              countryCode: city?.country_code || "XX",
+              geofence,
+            });
+          }
         }
+        
+        if (data.length < pageSize) break;
+        from += pageSize;
       }
       
       return {
