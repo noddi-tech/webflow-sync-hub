@@ -1,140 +1,89 @@
 
-# Fix: Geo Sync Not Updating Production Areas
 
-## Problem Summary
+# Fix: Stale "Approved" Cities Already Committed
 
-The Geo Sync completes successfully for Navio's own records (188 polygons synced), but **fails silently** when trying to apply geofences to your ~4,800 AI-discovered production areas.
+## What's Happening
 
-Every city fails with:
-```
-Failed to apply geofence to areas in [city]: invalid GeoJson representation
-```
+The 10 cities showing as "approved (ready to commit)" have **already been committed** to production. This is proven by the database showing:
 
-## Root Cause
+| Staging City | Status | committed_city_id | Production City Exists |
+|--------------|--------|-------------------|------------------------|
+| Stockholm | approved | 78f372c8-... | Yes |
+| Oslo | approved | 06eafe56-... | Yes |
+| München | approved | da62ccea-... | Yes |
+| (7 more...) | approved | (all populated) | Yes |
 
-The database has a trigger (`sync_geofence_geometry`) that converts `geofence_json` to PostGIS geometry. It fails because:
+The `committed_city_id` being populated means the commit process **did run** - but the status update from "approved" → "committed" failed or was interrupted (network issue, page refresh, timeout).
 
-| Issue | Expected | Received from Navio |
-|-------|----------|---------------------|
-| GeoJSON type | Geometry object | Feature object |
-| Polygon type | Polygon | MultiPolygon |
+## Will Clicking Commit Duplicate Data?
 
-The trigger calls:
+**No** - the commit logic is idempotent:
+1. It checks for existing cities by name before creating
+2. It reuses existing IDs if found
+3. Same deduplication applies to districts and areas
+
+So clicking "Commit" again would just re-link to existing records and finally update the status to "committed".
+
+## Solution: Clean Up Stale Staging Status
+
+We should update the staging records to reflect reality - they've already been committed:
+
+### Option A: One-Time Database Cleanup (Recommended)
+
+Run a single query to mark these as committed:
+
 ```sql
-ST_GeomFromGeoJSON(NEW.geofence_json::text)
+UPDATE navio_staging_cities
+SET status = 'committed'
+WHERE status = 'approved' 
+  AND committed_city_id IS NOT NULL;
+
+UPDATE navio_staging_districts
+SET status = 'committed'
+WHERE status IN ('approved', 'pending')
+  AND committed_district_id IS NOT NULL;
+
+UPDATE navio_staging_areas
+SET status = 'committed'
+WHERE status IN ('approved', 'pending')
+  AND committed_area_id IS NOT NULL;
 ```
 
-This fails because:
-- `ST_GeomFromGeoJSON` expects `{type: "Polygon", coordinates: [...]}` 
-- Navio sends `{type: "Feature", geometry: {type: "MultiPolygon", ...}}`
+This instantly fixes the UI - the "10 approved" badge disappears.
 
-## Solution
+### Option B: Improve Commit Logic to Self-Heal
 
-### 1. Database Migration
-
-**Alter the geometry column type:**
-```sql
-ALTER TABLE public.areas 
-  ALTER COLUMN geofence TYPE geometry(MultiPolygon, 4326)
-  USING ST_Multi(geofence);
-```
-
-**Update the trigger function to handle Feature objects:**
-```sql
-CREATE OR REPLACE FUNCTION public.sync_geofence_geometry()
-RETURNS TRIGGER AS $$
-DECLARE
-  geom_json jsonb;
-BEGIN
-  IF NEW.geofence_json IS NULL THEN
-    NEW.geofence := NULL;
-    NEW.geofence_center := NULL;
-    RETURN NEW;
-  END IF;
-
-  -- Extract geometry from Feature/FeatureCollection if needed
-  IF NEW.geofence_json->>'type' = 'Feature' THEN
-    geom_json := NEW.geofence_json->'geometry';
-  ELSIF NEW.geofence_json->>'type' = 'FeatureCollection' THEN
-    geom_json := NEW.geofence_json->'features'->0->'geometry';
-  ELSE
-    geom_json := NEW.geofence_json;
-  END IF;
-
-  -- Convert to MultiPolygon geometry
-  NEW.geofence := ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(geom_json::text), 4326));
-  NEW.geofence_center := ST_PointOnSurface(NEW.geofence);
-  
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  -- Log but don't block the update
-  RAISE WARNING 'Failed to convert geofence_json: %', SQLERRM;
-  NEW.geofence := NULL;
-  NEW.geofence_center := NULL;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-```
-
-### 2. UI Fix: Show production_areas_updated in toast
-
-**File: `src/hooks/useNavioImport.ts`**
-
-Update the toast message to include the production areas count:
+Modify the `commit_city` handler to detect and fix this scenario automatically:
 
 ```typescript
-toast({
-  title: "Geo Sync Complete",
-  description: `${result.production_areas_updated?.toLocaleString() || 0} production areas updated, ${result.polygons_synced} polygons synced`,
-});
+// At the start of commit_city case
+// First, fix any stale approved cities that are already committed
+await supabase
+  .from("navio_staging_cities")
+  .update({ status: "committed" })
+  .eq("status", "approved")
+  .not("committed_city_id", "is", null);
 ```
 
-### 3. UI Fix: Invalidate queries after sync
+### Option C: Let User Click Commit (Safe but Wasteful)
 
-**File: `src/hooks/useNavioImport.ts`**
+Clicking "Commit" would work without duplication, but it's unnecessary work since the data is already there.
 
-Add query invalidation in `onSuccess` for `geoSyncMutation`:
+## Recommended Approach
 
-```typescript
-onSuccess: (result) => {
-  queryClient.invalidateQueries({ queryKey: ["production-data"] });
-  queryClient.invalidateQueries({ queryKey: ["production-geofences"] });
-  queryClient.invalidateQueries({ queryKey: ["navio-pipeline-status"] });
-  // ... existing toast
-},
-```
-
-This ensures the Production tab and pipeline banner update immediately without manual refresh.
-
----
+1. **Apply Option A** (one-time cleanup) to fix the current state
+2. **Apply Option B** (self-healing logic) to prevent this from happening again in future interrupted commits
 
 ## Files to Modify
 
 | File | Changes |
 |------|---------|
-| Database migration (new) | Alter geofence column type, update trigger function |
-| `src/hooks/useNavioImport.ts` | Add query invalidation, improve toast message |
-
----
+| Database (one-time query) | Fix stale staging records |
+| `supabase/functions/navio-import/index.ts` | Add self-healing check at start of `commit_city` |
 
 ## Expected Outcome
 
-After this fix:
-1. Geo Sync will successfully write geofences to all ~4,800 production areas
-2. Toast will show: "4,800+ production areas updated, 188 polygons synced"
-3. Production tab will show ~100% geofence coverage
-4. Map will display all production areas with polygons
-5. Delivery checker will work (valid geometry for ST_Contains queries)
+- "10 approved" badge disappears immediately
+- Future interrupted commits will self-heal on next run
+- No duplicate data created
 
----
-
-## Technical Details
-
-**Why ST_PointOnSurface instead of ST_Centroid?**
-For concave polygons, the centroid can fall outside the polygon. `ST_PointOnSurface` guarantees a point inside the polygon, which is better for display/queries.
-
-**Why wrap in EXCEPTION handler?**
-If any geofence has malformed data, we don't want to block the entire row update. The handler logs a warning and leaves the geometry columns null.
-
-**Why ST_Multi?**
-This ensures all geometries are stored as MultiPolygon, even if Navio sends a simple Polygon. This makes querying consistent.
