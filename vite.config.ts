@@ -13,11 +13,29 @@ export default defineConfig(({ mode }) => ({
     },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  optimizeDeps: {
+    // Ensure a single pre-bundled instance of these packages
+    include: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "leaflet",
+      "react-leaflet",
+      "@react-leaflet/core",
+    ],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
     // Prevent duplicate React instances (can break Context.Consumer in libraries)
-    dedupe: ["react", "react-dom", "react/jsx-runtime"],
+    dedupe: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "leaflet",
+      "react-leaflet",
+      "@react-leaflet/core",
+    ],
   },
 }));
