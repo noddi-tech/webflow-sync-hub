@@ -14,6 +14,8 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   optimizeDeps: {
+    // Force re-bundling when deps/config change to avoid stale cached chunks in dev
+    force: true,
     // Ensure a single pre-bundled instance of these packages
     include: [
       "react",
