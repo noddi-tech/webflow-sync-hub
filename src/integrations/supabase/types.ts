@@ -367,6 +367,42 @@ export type Database = {
         }
         Relationships: []
       }
+      navio_operation_log: {
+        Row: {
+          batch_id: string | null
+          completed_at: string | null
+          created_at: string
+          details: Json | null
+          id: string
+          operation_type: string
+          started_at: string
+          status: string
+          user_id: string | null
+        }
+        Insert: {
+          batch_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          details?: Json | null
+          id?: string
+          operation_type: string
+          started_at?: string
+          status?: string
+          user_id?: string | null
+        }
+        Update: {
+          batch_id?: string | null
+          completed_at?: string | null
+          created_at?: string
+          details?: Json | null
+          id?: string
+          operation_type?: string
+          started_at?: string
+          status?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       navio_snapshot: {
         Row: {
           city_name: string | null
