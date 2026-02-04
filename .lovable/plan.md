@@ -1,161 +1,196 @@
 
 
-# Plan: Fix Map Visibility and Geo Sync Matching Issue
+# Plan: Reorganize Navio Navigation with Delivery Map Sub-Page
 
-## Current Situation
-
-### Where is the map?
-The map is located at: **Navio Preview page → "Map View" tab** (accessible via "Go to Preview" button)
-
-### Why it shows empty
-1. **StagingAreaMap** reads from `navio_import_queue` table - only populated during **AI Import**, not Geo Sync
-2. **Geo Sync ran but polygons weren't applied** because of ID mismatch:
-   - Existing areas have: `navio_service_area_id = 'discovered_6c55c8e7-...'` (AI-generated UUIDs)
-   - Geo Sync looks for: `navio_service_area_id = '210'` (real Navio API IDs)
-   - No matches found → no geofences updated
+This plan reorganizes the Navio sidebar menu to follow a clear 3-step workflow UX and adds a dedicated Delivery Map page.
 
 ---
 
-## Data State Summary
-
-| Metric | Value |
-|--------|-------|
-| Total production areas | 4,865 |
-| Areas with `discovered_*` IDs | 4,677 |
-| Areas with real Navio IDs | 188 |
-| Areas with geofence polygons | 0 |
-| Snapshot areas | 215 |
-| `navio_import_queue` rows | 18 (from AI Import) |
-
----
-
-## Solution Options
-
-### Option A: Add Production Map Tab (Quick Fix)
-Add a second map option that shows production data from the `areas` table directly, even if geofences are missing.
-
-### Option B: Fix Geo Sync Matching (Proper Fix)
-Update the Geo Sync function to match areas by **name + city** instead of just `navio_service_area_id`, then update the `navio_service_area_id` to the real Navio ID while adding the geofence.
-
-### Option C: Run AI Import First, Then Geo Sync (Workflow Fix)
-The `navio_import_queue` table HAS geofence data from the last AI Import. The StagingAreaMap already reads from this. The issue is just that:
-1. AI Import runs → populates `navio_import_queue` with geofences 
-2. Commit creates areas but with `discovered_*` IDs and NO geofences (geofence wasn't carried over during commit)
-3. Geo Sync can't match because IDs don't match
-
----
-
-## Recommended Approach: Fix Both Issues
-
-### Fix 1: Make StagingAreaMap also read from Snapshot
-Since Geo Sync updates the snapshot with all current Navio areas including geofences, the Map View should also be able to read from `navio_snapshot` (not just `navio_import_queue`).
+## Current Structure
 
 ```text
-File: src/components/map/StagingAreaMap.tsx
-
-Add option to read from:
-- navio_import_queue (current - for AI Import preview)
-- navio_snapshot (new - for Geo Sync preview)
-- Or both combined
+Navio (collapsible)
+  ├── Operations (/navio)     → Configuration, Geo Sync, AI Import
+  └── Preview (/navio-preview) → Staging review, approval, commit + map tabs
 ```
 
-### Fix 2: Fix Geo Sync Area Matching
-Update the Geo Sync function to match areas by name+city+country when `navio_service_area_id` lookup fails, then update the ID.
+## Proposed Structure
 
 ```text
-File: supabase/functions/navio-import/index.ts
-
-In syncGeoAreas function:
-1. First try: match by navio_service_area_id
-2. Fallback: match by name + district_id + city_id
-3. If fallback match found, update the navio_service_area_id to real Navio ID
-4. Then apply the geofence
+Navio (collapsible)
+  ├── Operations (/navio)          → Step 1: Configure & run imports
+  ├── Staging (/navio-staging)     → Step 2: Review & approve pending data  
+  └── Delivery Map (/navio-map)    → Step 3: View production areas & test coverage
 ```
-
-### Fix 3: Carry Geofence During Commit
-The commit function should retrieve geofences from `navio_import_queue` and apply them when creating areas.
 
 ---
 
-## Implementation Plan
+## UX Flow
 
-### Task 1: Add Snapshot-Based Map Source
-**File:** `src/components/map/StagingAreaMap.tsx`
+| Step | Page | Purpose |
+|------|------|---------|
+| 1 | Operations | Run Geo Sync, AI Import, check for changes |
+| 2 | Staging | Review pending imports, approve/reject cities, commit to production |
+| 3 | Delivery Map | View approved production areas on map, test delivery coverage |
 
-Add a `source` prop that can be:
-- `"staging"` - reads from `navio_import_queue` (current behavior)
-- `"snapshot"` - reads from `navio_snapshot` (new)
-- `"production"` - reads from `areas` table (for committed data)
+---
 
-The map on NavioPreview should show snapshot data after Geo Sync since that's what was just fetched.
+## Technical Changes
 
-### Task 2: Fix Geo Sync Area Matching
-**File:** `supabase/functions/navio-import/index.ts`
+### 1. Create New Delivery Map Page
+**File:** `src/pages/NavioDeliveryMap.tsx`
 
-In `syncGeoAreas()` function around line 1964:
+A new page combining:
+- The `StagingAreaMap` component (defaulting to "production" source)
+- The `DeliveryChecker` component
+
+This separates the "view results" functionality from the "approve/commit" workflow.
+
+```text
+Layout:
+┌─────────────────────────────────────────────┐
+│ Delivery Map                                │
+│ View production delivery areas and test     │
+│ coverage                                    │
+├─────────────────────────────────────────────┤
+│ ┌─────────────────┐ ┌─────────────────────┐ │
+│ │                 │ │                     │ │
+│ │   Map View      │ │  Delivery Checker   │ │
+│ │   (Production)  │ │                     │ │
+│ │                 │ │  - Address input    │ │
+│ │   + Source tabs │ │  - Coordinates      │ │
+│ │   (snapshot,    │ │  - Check button     │ │
+│ │    staging,     │ │  - Results          │ │
+│ │    production)  │ │                     │ │
+│ │                 │ │                     │ │
+│ └─────────────────┘ └─────────────────────┘ │
+└─────────────────────────────────────────────┘
+```
+
+### 2. Simplify NavioPreview (Rename to Staging)
+**File:** `src/pages/NavioPreview.tsx`
+
+- Rename page to "Navio Staging" (keeping component name for simplicity)
+- Remove the "Map View" and "Delivery Check" tabs (moved to Delivery Map page)
+- Focus purely on: Table View → Hierarchy View → Approve/Reject/Commit
+
+### 3. Update Sidebar Navigation
+**File:** `src/components/layout/Sidebar.tsx`
+
+Update the Navio collapsible section:
 ```typescript
-// Current: Only matches by navio_service_area_id
-const { data: existingArea } = await supabase
-  .from("areas")
-  .select("id")
-  .eq("navio_service_area_id", String(areaData.navioId))
-  .maybeSingle();
+{
+  type: "collapsible",
+  section: {
+    name: "Navio",
+    icon: MapPinned,
+    items: [
+      { name: "Operations", href: "/navio", icon: Settings },
+      { name: "Staging", href: "/navio-staging", icon: Eye },
+      { name: "Delivery Map", href: "/navio-map", icon: Map },
+    ],
+  },
+},
+```
 
-// New: Add fallback matching by name + city
-if (!existingArea) {
-  // Try matching by name in the same city
-  const { data: matchByName } = await supabase
-    .from("areas")
-    .select("id")
-    .eq("city_id", cityId)
-    .ilike("name", areaData.displayName || areaData.name)
-    .maybeSingle();
-  
-  if (matchByName) {
-    // Update with real Navio ID and geofence
-    await supabase.from("areas").update({
-      navio_service_area_id: String(areaData.navioId),
-      geofence_json: areaData.geofence,
-      navio_imported_at: new Date().toISOString(),
-    }).eq("id", matchByName.id);
-    result.areas_updated++;
-    if (areaData.geofence) result.polygons_synced++;
-    continue; // Skip the rest of this iteration
-  }
+### 4. Update Routes
+**File:** `src/App.tsx`
+
+Add new route and rename existing one:
+```typescript
+<Route path="/navio" element={<NavioOperations />} />
+<Route path="/navio-staging" element={<NavioPreview />} />
+<Route path="/navio-map" element={<NavioDeliveryMap />} />
+
+// Keep old route for backwards compatibility (redirect)
+<Route path="/navio-preview" element={<Navigate to="/navio-staging" replace />} />
+```
+
+### 5. Update Operations Page Link
+**File:** `src/pages/NavioOperations.tsx`
+
+Change the "Go to Preview" link to point to `/navio-staging`:
+```typescript
+<Link to="/navio-staging">
+  Go to Staging
+  <ArrowRight className="ml-2 h-4 w-4" />
+</Link>
+```
+
+---
+
+## Files Summary
+
+| File | Action | Changes |
+|------|--------|---------|
+| `src/pages/NavioDeliveryMap.tsx` | **Create** | New page with map + delivery checker side by side |
+| `src/pages/NavioPreview.tsx` | Modify | Remove map/delivery tabs, rename title to "Staging" |
+| `src/components/layout/Sidebar.tsx` | Modify | Update Navio menu to 3 items |
+| `src/App.tsx` | Modify | Add new route, add redirect for old URL |
+| `src/pages/NavioOperations.tsx` | Modify | Update link text/URL to staging |
+
+---
+
+## New NavioDeliveryMap Page Structure
+
+```typescript
+// src/pages/NavioDeliveryMap.tsx
+export default function NavioDeliveryMap() {
+  return (
+    <div className="p-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold">Delivery Map</h1>
+        <p className="text-muted-foreground">
+          View production delivery areas and test coverage
+        </p>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Map - takes 2/3 width on large screens */}
+        <div className="lg:col-span-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Delivery Areas</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <StagingAreaMap defaultSource="production" />
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Delivery Checker - takes 1/3 width */}
+        <div>
+          <DeliveryChecker />
+        </div>
+      </div>
+    </div>
+  );
 }
 ```
 
-### Task 3: Show Map Based on Last Operation
-**File:** `src/pages/NavioPreview.tsx`
+---
 
-After Geo Sync, pass the appropriate source to StagingAreaMap:
-```typescript
-<StagingAreaMap 
-  batchId={selectedBatch} 
-  source={lastOperation === 'geo_sync' ? 'snapshot' : 'staging'}
-/>
-```
+## NavioPreview Tab Simplification
+
+Current tabs (4):
+- Table View
+- Hierarchy View
+- Map View
+- Delivery Check
+
+New tabs (2):
+- Table View (list of cities with status)
+- Hierarchy View (expandable tree of city → district → area)
+
+The Map View and Delivery Check move to the new Delivery Map page.
 
 ---
 
-## Files to Modify
+## Summary
 
-| File | Changes |
-|------|---------|
-| `src/components/map/StagingAreaMap.tsx` | Add `source` prop, support reading from snapshot |
-| `src/pages/NavioPreview.tsx` | Pass source based on operation type |
-| `supabase/functions/navio-import/index.ts` | Add fallback name+city matching in Geo Sync |
-| `src/pages/NavioOperations.tsx` | Track last operation type |
-
----
-
-## Immediate Workaround
-
-While these fixes are being implemented, you can see the map with geofences by:
-1. Going to **Navio Preview** page
-2. The 18 entries in `navio_import_queue` from the AI Import HAVE geofence data
-3. Select the batch from the dropdown
-4. Click "Map View" tab
-
-The AI Import batch should show polygons if there are any areas with `geofence_geojson` in the queue data.
+1. **Create** `NavioDeliveryMap` page with production map + delivery checker
+2. **Simplify** `NavioPreview` to focus only on staging review/approval
+3. **Update** sidebar to show 3 clear menu items matching the workflow
+4. **Update** routes with new path and backwards-compatible redirect
+5. **Update** Operations page link text
 
