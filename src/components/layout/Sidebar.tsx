@@ -63,7 +63,8 @@ const navigation: NavItem[] = [
       icon: MapPinned,
       items: [
         { name: "Operations", href: "/navio", icon: Settings },
-        { name: "Preview", href: "/navio-preview", icon: Eye },
+        { name: "Staging", href: "/navio-staging", icon: Eye },
+        { name: "Delivery Map", href: "/navio-map", icon: Map },
       ],
     },
   },

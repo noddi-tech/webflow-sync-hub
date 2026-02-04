@@ -156,8 +156,8 @@ export default function NavioOperations() {
             </CardHeader>
             <CardContent>
               <Button asChild variant="outline" className="w-full">
-                <Link to="/navio-preview">
-                  Go to Preview
+                <Link to="/navio-staging">
+                  Go to Staging
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>

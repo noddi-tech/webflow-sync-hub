@@ -18,6 +18,7 @@ import SyncHistory from "./pages/SyncHistory";
 import Settings from "./pages/Settings";
 import NavioPreview from "./pages/NavioPreview";
 import NavioOperations from "./pages/NavioOperations";
+import NavioDeliveryMap from "./pages/NavioDeliveryMap";
 import WebflowImport from "./pages/WebflowImport";
 import WebflowSync from "./pages/WebflowSync";
 import NotFound from "./pages/NotFound";
@@ -45,7 +46,9 @@ const App = () => (
             <Route path="/webflow/import" element={<WebflowImport />} />
             <Route path="/webflow/sync" element={<WebflowSync />} />
             <Route path="/navio" element={<NavioOperations />} />
-            <Route path="/navio-preview" element={<NavioPreview />} />
+            <Route path="/navio-staging" element={<NavioPreview />} />
+            <Route path="/navio-map" element={<NavioDeliveryMap />} />
+            <Route path="/navio-preview" element={<Navigate to="/navio-staging" replace />} />
             <Route path="/sync-history" element={<SyncHistory />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
