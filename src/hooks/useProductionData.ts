@@ -29,44 +29,78 @@ export interface ProductionSummary {
   geofenceCoverage: number; // 0-100 percentage
 }
 
+// Helper to fetch all rows with pagination (handles Supabase 1000-row limit)
+async function fetchAllAreas(): Promise<{ id: string; district_id: string; city_id: string | null }[]> {
+  const allAreas: { id: string; district_id: string; city_id: string | null }[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from("areas")
+      .select("id, district_id, city_id")
+      .range(from, from + pageSize - 1);
+    
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    
+    allAreas.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  
+  return allAreas;
+}
+
+async function fetchAllAreasWithGeofence(): Promise<{ id: string; district_id: string; city_id: string | null }[]> {
+  const allAreas: { id: string; district_id: string; city_id: string | null }[] = [];
+  let from = 0;
+  const pageSize = 1000;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from("areas")
+      .select("id, district_id, city_id")
+      .not("geofence_json", "is", null)
+      .range(from, from + pageSize - 1);
+    
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    
+    allAreas.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  
+  return allAreas;
+}
+
 export function useProductionData() {
   return useQuery({
     queryKey: ["production-data"],
     queryFn: async () => {
-      // Run all lightweight queries in parallel - NO geofence_json fetching!
-      const [citiesResult, districtsResult, areasResult, areasWithGeoResult] = await Promise.all([
-        // Cities with basic info only
+      // Fetch cities and districts in parallel (small tables, no pagination needed)
+      const [citiesResult, districtsResult] = await Promise.all([
         supabase
           .from("cities")
           .select("id, name, country_code, is_delivery")
           .order("name"),
-        
-        // Districts with just city_id for aggregation
         supabase
           .from("districts")
           .select("id, city_id"),
-        
-        // Areas with just district_id for aggregation (NO geofence_json!)
-        supabase
-          .from("areas")
-          .select("id, district_id, city_id"),
-        
-        // Count of areas WITH geofence using HEAD request (no data transfer)
-        supabase
-          .from("areas")
-          .select("id, district_id, city_id")
-          .not("geofence_json", "is", null),
       ]);
 
       if (citiesResult.error) throw citiesResult.error;
       if (districtsResult.error) throw districtsResult.error;
-      if (areasResult.error) throw areasResult.error;
-      if (areasWithGeoResult.error) throw areasWithGeoResult.error;
+
+      // Fetch all areas with pagination (handles 4,898+ rows)
+      const [areas, areasWithGeo] = await Promise.all([
+        fetchAllAreas(),
+        fetchAllAreasWithGeofence(),
+      ]);
 
       const cities = citiesResult.data || [];
       const districts = districtsResult.data || [];
-      const areas = areasResult.data || [];
-      const areasWithGeo = areasWithGeoResult.data || [];
 
       // Build lookup maps for efficient aggregation
       const districtsByCity = new Map<string, string[]>();

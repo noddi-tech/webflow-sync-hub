@@ -104,7 +104,7 @@ function CityRow({ city }: { city: ProductionCity }) {
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <TableRow className="cursor-pointer hover:bg-muted/50">
-        <TableCell className="w-8">
+        <TableCell className="w-10">
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
               {isOpen ? (
@@ -115,7 +115,7 @@ function CityRow({ city }: { city: ProductionCity }) {
             </Button>
           </CollapsibleTrigger>
         </TableCell>
-        <TableCell>
+        <TableCell className="min-w-[200px]">
           <span className="mr-2">{getCountryFlag(city.country_code)}</span>
           <span className="font-medium">{city.name}</span>
           {city.is_delivery && (
@@ -125,9 +125,9 @@ function CityRow({ city }: { city: ProductionCity }) {
             </Badge>
           )}
         </TableCell>
-        <TableCell className="text-center">{city.district_count}</TableCell>
-        <TableCell className="text-center">{city.area_count}</TableCell>
-        <TableCell>
+        <TableCell className="w-24 text-center">{city.district_count}</TableCell>
+        <TableCell className="w-24 text-center">{city.area_count}</TableCell>
+        <TableCell className="w-36">
           <div className="flex items-center gap-2">
             <Progress 
               value={geoPercent} 
@@ -145,7 +145,7 @@ function CityRow({ city }: { city: ProductionCity }) {
             </span>
           </div>
         </TableCell>
-        <TableCell>
+        <TableCell className="w-10">
           <Link to="/cities">
             <Button variant="ghost" size="sm" className="h-7">
               <ExternalLink className="h-3 w-3" />
@@ -283,12 +283,12 @@ export function ProductionDataPanel({ onGeoSync, isGeoSyncing }: ProductionDataP
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-8"></TableHead>
-                  <TableHead>City</TableHead>
+                  <TableHead className="w-10"></TableHead>
+                  <TableHead className="min-w-[200px]">City</TableHead>
                   <TableHead className="w-24 text-center">Districts</TableHead>
                   <TableHead className="w-24 text-center">Areas</TableHead>
-                  <TableHead className="w-32">Geofences</TableHead>
-                  <TableHead className="w-12"></TableHead>
+                  <TableHead className="w-36">Geofences</TableHead>
+                  <TableHead className="w-10"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
