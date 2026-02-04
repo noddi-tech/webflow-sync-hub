@@ -26,6 +26,31 @@ interface AreaWithGeo {
   geofence: GeoJSON.Geometry;
 }
 
+// Swap coordinates from [lat, lng] to [lng, lat] for GeoJSON compliance
+function swapCoordinates(geometry: GeoJSON.Geometry): GeoJSON.Geometry {
+  const swap = (coords: number[]): number[] => [coords[1], coords[0]];
+  
+  if (geometry.type === "Polygon") {
+    return {
+      ...geometry,
+      coordinates: (geometry as GeoJSON.Polygon).coordinates.map(ring =>
+        ring.map(coord => swap(coord as unknown as number[]) as unknown as GeoJSON.Position)
+      ),
+    };
+  }
+  
+  if (geometry.type === "MultiPolygon") {
+    return {
+      ...geometry,
+      coordinates: (geometry as GeoJSON.MultiPolygon).coordinates.map(polygon =>
+        polygon.map(ring => ring.map(coord => swap(coord as unknown as number[]) as unknown as GeoJSON.Position))
+      ),
+    };
+  }
+  
+  return geometry;
+}
+
 // Helper to extract geometry from Feature-wrapped or raw GeoJSON
 function extractGeometry(geofenceData: unknown): GeoJSON.Geometry | null {
   if (!geofenceData || typeof geofenceData !== 'object') return null;
@@ -34,12 +59,12 @@ function extractGeometry(geofenceData: unknown): GeoJSON.Geometry | null {
   
   // Handle Feature wrapper
   if (geo.type === "Feature" && geo.geometry) {
-    return geo.geometry;
+    return swapCoordinates(geo.geometry);
   }
   
   // Handle direct Geometry
   if (geo.type === "Polygon" || geo.type === "MultiPolygon") {
-    return geo as GeoJSON.Geometry;
+    return swapCoordinates(geo as GeoJSON.Geometry);
   }
   
   return null;
@@ -108,13 +133,16 @@ function useStaging(batchId?: string) {
         
         for (const area of areas || []) {
           if (area.geofence_geojson) {
-            areasWithGeo.push({
-              id: area.id,
-              name: area.display_name || area.name,
-              city: entry.city_name,
-              countryCode: entry.country_code,
-              geofence: area.geofence_geojson as GeoJSON.Geometry,
-            });
+            const geofence = extractGeometry(area.geofence_geojson);
+            if (geofence) {
+              areasWithGeo.push({
+                id: area.id,
+                name: area.display_name || area.name,
+                city: entry.city_name,
+                countryCode: entry.country_code,
+                geofence,
+              });
+            }
           }
         }
       }
