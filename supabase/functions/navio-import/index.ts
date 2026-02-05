@@ -2213,6 +2213,10 @@ serve(async (req) => {
       case "coverage_check": {
         console.log("=== COVERAGE CHECK: Validating production vs Navio API ===");
         
+        // Log operation start
+        await logSync(supabase, "navio", "coverage_check", "in_progress", null,
+          "Starting coverage check: validating production data against Navio API...", batchId, 0, 0);
+        
         // 1. Fetch live Navio API data
         const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
         navioUrl.searchParams.set("page_size", "1000");
@@ -2360,6 +2364,10 @@ serve(async (req) => {
           key: "navio_coverage_check",
           value: JSON.stringify(result),
         }, { onConflict: "key" });
+
+        // Log operation completion
+        const coverageSummary = `Coverage check complete: ${navioAreasCovered.length}/${navioAreasWithGeo.length} Navio zones covered, ${orphanedProductionAreas.length} orphaned production areas`;
+        await logSync(supabase, "navio", "coverage_check", "complete", null, coverageSummary, batchId);
 
         return new Response(
           JSON.stringify({

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { toast } from "sonner";
 
 interface CoverageCheckResult {
   snapshotFreshness: {
@@ -73,8 +74,28 @@ export function CoverageHealthCard() {
       
       return response.data as CoverageCheckResult;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+      queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
+      
+      const covered = data.coverageAlignment.navioAreasCovered;
+      const total = data.coverageAlignment.navioAreasTotal;
+      const orphaned = data.coverageAlignment.productionAreasOrphaned;
+      
+      if (data.coverageAlignment.navioAreasUncovered === 0 && orphaned === 0) {
+        toast.success("Coverage check complete", {
+          description: `All ${total} Navio zones are covered in production`,
+        });
+      } else {
+        toast.warning("Coverage gaps detected", {
+          description: `${covered}/${total} zones covered, ${orphaned} orphaned areas`,
+        });
+      }
+    },
+    onError: (error) => {
+      toast.error("Coverage check failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
     },
   });
 
