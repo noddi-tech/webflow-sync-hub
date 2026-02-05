@@ -2103,7 +2103,7 @@ async function syncGeoAreas(
 // MAIN HTTP HANDLER
 // =============================================================================
 
-type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "commit_city" | "preview" | "direct" | "delta_check" | "sync_geo";
+type ImportMode = "initialize" | "process_city" | "finalize" | "commit" | "commit_city" | "preview" | "direct" | "delta_check" | "sync_geo" | "coverage_check";
 
 serve(async (req) => {
   // Enhanced CORS preflight handling
@@ -2200,6 +2200,166 @@ serve(async (req) => {
 
       case "delta_check": {
         const result = await deltaCheck(supabase, NAVIO_API_TOKEN);
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            ...result,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      case "coverage_check": {
+        console.log("=== COVERAGE CHECK: Validating production vs Navio API ===");
+        
+        // 1. Fetch live Navio API data
+        const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
+        navioUrl.searchParams.set("page_size", "1000");
+        navioUrl.searchParams.set("page_index", "0");
+
+        const navioResponse = await fetch(navioUrl.toString(), {
+          headers: {
+            Authorization: `Token ${NAVIO_API_TOKEN}`,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+        });
+
+        if (!navioResponse.ok) {
+          throw new Error(`Navio API error: ${navioResponse.status}`);
+        }
+
+        const navioData = await navioResponse.json();
+        let liveAreas: NavioServiceArea[] = [];
+        if (navioData.results && Array.isArray(navioData.results)) {
+          liveAreas = navioData.results;
+        } else if (Array.isArray(navioData)) {
+          liveAreas = navioData;
+        }
+        
+        // Filter out test data
+        liveAreas = liveAreas.filter(a => !isTestDataOrStreetAddress(a.name || ""));
+        
+        console.log(`Fetched ${liveAreas.length} live areas from Navio API`);
+
+        // 2. Fetch snapshot for freshness comparison
+        const { data: snapshotData } = await supabase
+          .from("navio_snapshot")
+          .select("navio_service_area_id, name, city_name, is_active")
+          .eq("is_active", true);
+
+        const snapshotCount = snapshotData?.length || 0;
+        const snapshotIds = new Set(snapshotData?.map(s => s.navio_service_area_id) || []);
+        const apiIds = new Set(liveAreas.map(a => a.id));
+        
+        const missingFromSnapshot = liveAreas.filter(a => !snapshotIds.has(a.id)).length;
+        const removedFromApi = snapshotData?.filter(s => !apiIds.has(s.navio_service_area_id)).length || 0;
+        
+        const snapshotFreshness = {
+          isUpToDate: missingFromSnapshot === 0 && removedFromApi === 0,
+          apiCount: liveAreas.length,
+          snapshotCount,
+          missingFromSnapshot,
+          removedFromApi,
+        };
+        
+        console.log(`Snapshot freshness: API=${liveAreas.length}, Snapshot=${snapshotCount}, Missing=${missingFromSnapshot}, Removed=${removedFromApi}`);
+
+        // 3. Build a map of Navio areas with geofences for spatial check
+        const navioAreasWithGeo = liveAreas
+          .filter(a => a.geofence_geojson)
+          .map(a => {
+            const parsed = parseNavioName(a.name || "");
+            return {
+              id: a.id,
+              name: a.name || "",
+              city: parsed.city || "Unknown",
+              geofence: a.geofence_geojson!,
+            };
+          });
+        
+        console.log(`${navioAreasWithGeo.length} Navio areas have geofences`);
+
+        // 4. Fetch production areas with geofences (use geofence_json since it's stored as JSON)
+        // We'll do a client-side spatial check since we can't easily use PostGIS from here
+        const { data: productionAreas, error: prodError } = await supabase
+          .from("areas")
+          .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)")
+          .not("geofence_json", "is", null);
+        
+        if (prodError) {
+          console.error("Error fetching production areas:", prodError);
+          throw prodError;
+        }
+        
+        console.log(`Fetched ${productionAreas?.length || 0} production areas with geofences`);
+
+        // 5. Check coverage: Which Navio areas have matching production areas by navio_service_area_id
+        const productionNavioIds = new Set(
+          productionAreas
+            ?.filter(a => a.navio_service_area_id)
+            .map(a => parseInt(a.navio_service_area_id!, 10))
+            .filter(id => !isNaN(id)) || []
+        );
+        
+        const navioAreasCovered = navioAreasWithGeo.filter(na => productionNavioIds.has(na.id));
+        const uncoveredNavioAreas = navioAreasWithGeo
+          .filter(na => !productionNavioIds.has(na.id))
+          .map(a => ({ id: a.id, name: a.name, city: a.city }));
+
+        // 6. Check for orphaned production areas (have geofence but no matching navio_service_area_id in active areas)
+        const activeNavioIds = new Set(liveAreas.map(a => a.id));
+        
+        const orphanedProductionAreas = (productionAreas || [])
+          .filter(pa => {
+            if (!pa.navio_service_area_id) return true; // No link = orphaned
+            const navioId = parseInt(pa.navio_service_area_id, 10);
+            return isNaN(navioId) || !activeNavioIds.has(navioId);
+          })
+          .slice(0, 100) // Limit to first 100 for response size
+          .map(a => {
+            // Type-safe city extraction - the join returns an object or null
+            const cityData = a.city as { name: string } | { name: string }[] | null;
+            let cityName = "Unknown";
+            if (cityData) {
+              if (Array.isArray(cityData)) {
+                cityName = cityData[0]?.name || "Unknown";
+              } else {
+                cityName = cityData.name || "Unknown";
+              }
+            }
+            return {
+              id: a.id,
+              name: a.name,
+              city: cityName,
+            };
+          });
+
+        const coverageAlignment = {
+          navioAreasTotal: navioAreasWithGeo.length,
+          navioAreasCovered: navioAreasCovered.length,
+          navioAreasUncovered: uncoveredNavioAreas.length,
+          productionAreasTotal: productionAreas?.length || 0,
+          productionAreasAligned: (productionAreas?.length || 0) - orphanedProductionAreas.length,
+          productionAreasOrphaned: orphanedProductionAreas.length,
+        };
+
+        console.log(`Coverage: ${navioAreasCovered.length}/${navioAreasWithGeo.length} Navio zones covered`);
+        console.log(`Production: ${coverageAlignment.productionAreasAligned}/${productionAreas?.length || 0} aligned, ${orphanedProductionAreas.length} orphaned`);
+
+        const result = {
+          snapshotFreshness,
+          coverageAlignment,
+          uncoveredNavioAreas: uncoveredNavioAreas.slice(0, 50), // Limit for response size
+          orphanedProductionAreas,
+        };
+
+        // Save result to settings for persistence
+        await supabase.from("settings").upsert({
+          key: "navio_coverage_check",
+          value: JSON.stringify(result),
+        }, { onConflict: "key" });
 
         return new Response(
           JSON.stringify({
