@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { GeoJSON as GeoJSONType } from "leaflet";
@@ -323,13 +323,22 @@ function MapContent({
   areas, 
   cities, 
   isLoading,
-  mapKey,
+  activeSource,
+  selectedCityIds,
 }: { 
   areas: AreaWithGeo[]; 
   cities: string[]; 
   isLoading: boolean;
-  mapKey: string;
+  activeSource: MapSource;
+  selectedCityIds: string[];
 }) {
+  // Compute key inside MapContent to force remount when data changes
+  // Use slice() to avoid mutating the array with sort()
+  const mapKey = useMemo(() => 
+    `map-${activeSource}-${selectedCityIds.slice().sort().join('-')}-${areas.length}`, 
+    [activeSource, selectedCityIds, areas.length]
+  );
+
   // Calculate bounds for all polygons
   const bounds = useMemo(() => {
     if (!areas.length) return null;
@@ -365,11 +374,20 @@ function MapContent({
     return L.latLngBounds(allCoords);
   }, [areas]);
 
-  if (isLoading) {
-    return <Skeleton className="h-[500px] w-full rounded-lg" />;
-  }
-
   if (!areas.length) {
+    if (isLoading) {
+      return (
+        <div className="h-[500px] w-full rounded-lg border relative bg-muted/20">
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <span className="text-sm text-muted-foreground">Loading delivery areas...</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="py-12 text-center text-muted-foreground border rounded-lg bg-muted/20">
         <div className="max-w-md mx-auto space-y-2">
@@ -413,8 +431,17 @@ function MapContent({
       </div>
 
       {/* Map */}
-      <div key={mapKey} className="h-[500px] rounded-lg overflow-hidden border">
+      <div className="h-[500px] rounded-lg overflow-hidden border relative">
+        {isLoading && (
+          <div className="absolute inset-0 bg-background/80 z-[1000] flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <span className="text-sm text-muted-foreground">Loading delivery areas...</span>
+            </div>
+          </div>
+        )}
         <MapContainer
+          key={mapKey}
           center={[59.9, 10.75]}
           zoom={5}
           className="h-full w-full"
@@ -424,9 +451,9 @@ function MapContent({
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           />
           
-          {areas.map((area) => (
+          {!isLoading && areas.map((area) => (
             <GeoJSON
-              key={`${area.id}`}
+              key={`${activeSource}-${area.id}`}
               data={{
                 type: "Feature",
                 properties: { name: area.name, city: area.city, countryCode: area.countryCode },
@@ -588,12 +615,6 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
     activeSource === "snapshot" ? snapshotQuery :
     productionQuery;
 
-  // Create a unique key to force map remount when data changes
-  const mapKey = useMemo(() => 
-    `map-${activeSource}-${selectedCityIds.sort().join('-')}`, 
-    [activeSource, selectedCityIds]
-  );
-
   return (
     <div className="space-y-4">
       <Tabs value={activeSource} onValueChange={(v) => setActiveSource(v as MapSource)}>
@@ -625,7 +646,8 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
         areas={currentQuery.data?.areas ?? []}
         cities={currentQuery.data?.cities ?? []}
         isLoading={currentQuery.isLoading}
-        mapKey={mapKey}
+        activeSource={activeSource}
+        selectedCityIds={selectedCityIds}
       />
     </div>
   );
