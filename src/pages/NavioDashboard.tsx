@@ -27,6 +27,7 @@ import { EnhancedSourceToggle, type MapSource } from "@/components/navio/Enhance
 import { useNavioPipelineStatus } from "@/hooks/useNavioPipelineStatus";
 import { ProductionDataPanel } from "@/components/navio/ProductionDataPanel";
 import NavioStagingTab from "@/components/navio/NavioStagingTab";
+import { CoverageHealthCard } from "@/components/navio/CoverageHealthCard";
 
 const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
   const queryClient = useQueryClient();
@@ -142,7 +143,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
           )}
 
           {/* Quick Actions Grid */}
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
@@ -224,6 +225,9 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Coverage Health Card */}
+            <CoverageHealthCard />
           </div>
 
           {/* Recent Operations */}

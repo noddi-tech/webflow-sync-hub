@@ -413,6 +413,34 @@ export function useNavioImport() {
 
   // Geo-only sync mutation (no AI, just polygons)
   const queryClient = useQueryClient();
+
+  // Coverage check mutation
+  const coverageCheckMutation = useMutation({
+    mutationFn: async () => {
+      const response = await supabase.functions.invoke("navio-import", {
+        body: { mode: "coverage_check" },
+      });
+      
+      if (response.error) throw response.error;
+      if (response.data?.error) throw new Error(response.data.error);
+      
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+      toast({
+        title: "Coverage Check Complete",
+        description: "See the Coverage Health card for results.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Coverage Check Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
   
   const geoSyncMutation = useMutation({
     mutationFn: async () => {
@@ -475,5 +503,10 @@ export function useNavioImport() {
     geoSyncMutation,
     isGeoSyncing: geoSyncMutation.isPending,
     startGeoSync: geoSyncMutation.mutate,
+    // Coverage check
+    coverageCheckMutation,
+    isCheckingCoverage: coverageCheckMutation.isPending,
+    checkCoverage: coverageCheckMutation.mutate,
+    coverageResult: coverageCheckMutation.data,
   };
 }
