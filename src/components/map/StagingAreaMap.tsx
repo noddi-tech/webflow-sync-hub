@@ -27,6 +27,7 @@ interface AreaWithGeo {
   city: string;
   countryCode: string;
   geofence: GeoJSON.Geometry;
+  sharedWith?: string[];
 }
 
 interface CityWithCount {
@@ -259,13 +260,13 @@ function useCitiesWithCounts() {
   });
 }
 
-// Extract areas from production areas table with multi-city filter (with pagination)
+// Extract areas from production areas table with multi-city filter (with pagination + deduplication)
 function useProduction(selectedCityIds: string[]) {
   return useQuery({
     queryKey: ["production-geofences", selectedCityIds],
     enabled: selectedCityIds.length > 0,
     queryFn: async () => {
-      const allAreas: AreaWithGeo[] = [];
+      const allAreas: (AreaWithGeo & { _geoHash: string })[] = [];
       const cityNames = new Set<string>();
       
       // Paginate to get ALL areas for selected cities
@@ -303,6 +304,8 @@ function useProduction(selectedCityIds: string[]) {
               city: cityName,
               countryCode: city?.country_code || "XX",
               geofence,
+              // Store serialized geofence for deduplication
+              _geoHash: JSON.stringify(entry.geofence_json),
             });
           }
         }
@@ -311,9 +314,32 @@ function useProduction(selectedCityIds: string[]) {
         from += pageSize;
       }
       
+      // DEDUPLICATE: Group by polygon hash, keep first, track all names
+      const uniquePolygons = new Map<string, AreaWithGeo & { sharedWith: string[] }>();
+      
+      for (const area of allAreas) {
+        const hash = area._geoHash;
+        if (!uniquePolygons.has(hash)) {
+          uniquePolygons.set(hash, { 
+            id: area.id,
+            name: area.name,
+            city: area.city,
+            countryCode: area.countryCode,
+            geofence: area.geofence,
+            sharedWith: [area.name],
+          });
+        } else {
+          uniquePolygons.get(hash)!.sharedWith!.push(area.name);
+        }
+      }
+      
+      // Convert back to array
+      const dedupedAreas = Array.from(uniquePolygons.values());
+      
       return {
-        areas: allAreas,
+        areas: dedupedAreas,
         cities: Array.from(cityNames),
+        totalBeforeDedup: allAreas.length,
       };
     },
   });
@@ -325,10 +351,12 @@ function MapContent({
   isLoading,
   activeSource,
   selectedCityIds,
+  totalBeforeDedup,
 }: { 
   areas: AreaWithGeo[]; 
   cities: string[]; 
   isLoading: boolean;
+  totalBeforeDedup?: number;
   activeSource: MapSource;
   selectedCityIds: string[];
 }) {
@@ -456,7 +484,7 @@ function MapContent({
               key={`${activeSource}-${area.id}`}
               data={{
                 type: "Feature",
-                properties: { name: area.name, city: area.city, countryCode: area.countryCode },
+                properties: { name: area.name, city: area.city, countryCode: area.countryCode, sharedWith: area.sharedWith },
                 geometry: area.geofence,
               } as GeoJSON.Feature}
               style={{
@@ -467,12 +495,24 @@ function MapContent({
               }}
               onEachFeature={(feature, layer) => {
                 const props = feature.properties || {};
-                layer.bindPopup(`
-                  <div style="font-weight: 500;">${props.name || "Unknown"}</div>
-                  <div style="font-size: 0.875rem; color: #6b7280;">
-                    ${props.city || "Unknown"} (${props.countryCode || "XX"})
-                  </div>
-                `);
+                const shared = props.sharedWith || [];
+                
+                let popupContent = `<div style="font-weight: 500;">${props.name || "Unknown"}</div>`;
+                
+                if (shared.length > 1) {
+                  popupContent += `
+                    <div style="font-size: 0.75rem; color: #f59e0b; margin-top: 4px;">
+                      ⚠️ Shared by ${shared.length} areas
+                    </div>
+                    <div style="font-size: 0.75rem; color: #6b7280; max-height: 100px; overflow: auto;">
+                      ${shared.slice(0, 10).join(", ")}${shared.length > 10 ? `, +${shared.length - 10} more` : ""}
+                    </div>
+                  `;
+                }
+                
+                popupContent += `<div style="font-size: 0.875rem; color: #6b7280;">${props.city || "Unknown"} (${props.countryCode || "XX"})</div>`;
+                
+                layer.bindPopup(popupContent);
               }}
             />
           ))}
@@ -482,7 +522,10 @@ function MapContent({
       </div>
       
       <p className="text-xs text-muted-foreground text-center">
-        Showing {areas.length} delivery areas with polygon data
+        Showing {areas.length} unique polygon{areas.length !== 1 ? "s" : ""}
+        {totalBeforeDedup && totalBeforeDedup > areas.length && (
+          <span className="text-amber-500"> (from {totalBeforeDedup.toLocaleString()} areas)</span>
+        )}
       </p>
     </div>
   );
@@ -648,6 +691,7 @@ export function StagingAreaMap({ batchId, defaultSource = "snapshot" }: StagingA
         isLoading={currentQuery.isLoading}
         activeSource={activeSource}
         selectedCityIds={selectedCityIds}
+        totalBeforeDedup={activeSource === "production" ? productionQuery.data?.totalBeforeDedup : undefined}
       />
     </div>
   );
