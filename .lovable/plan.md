@@ -1,183 +1,209 @@
 
 
-# Fix: Solid-Fill Duplicate Polygons + Preserve All Areas
+# Data Alignment Check: Production vs Navio API
 
-## Root Cause (Confirmed via Database Analysis)
+## Overview
 
-The `geo-sync` propagation logic (lines 2061-2090 of `navio-import/index.ts`) copies the first valid geofence to all areas in a city that lack polygon data. This results in:
+Create a new feature to validate that your production delivery data accurately reflects what the Navio API reports. This will help identify:
 
-| City | Total Areas | Unique Polygons | Duplicates (same hash) |
-|------|-------------|-----------------|------------------------|
-| Oslo | 573 | 27 | 547 (all identical) |
-| Stockholm | 508 | 30 | 479 (all identical) |
-
-**What you see**: The 500+ identical polygons stack at the exact same position. With `fillOpacity: 0.2`, stacking 500 layers creates a solid-looking fill.
-
-**What you want**: Keep all 573 Oslo areas in the database, but only show unique polygons on the map.
+1. **Coverage gaps** - Areas in Navio not covered in production
+2. **Over-coverage** - Production polygons covering areas Navio doesn't serve
+3. **Polygon mismatches** - Same area with different boundaries
 
 ---
 
-## Solution: Deduplicate at Render Time (No Data Deletion)
+## Current Data Structure
 
-We won't remove any areas from the database. Instead, we'll deduplicate polygons before rendering.
+| Source | Records | Description |
+|--------|---------|-------------|
+| **navio_snapshot** | 215 | Official Navio service areas with real polygons |
+| **areas (production)** | 4,898 | AI-discovered neighborhoods + 188 matched Navio areas |
+| **Navio API (live)** | ~215 | Real-time service area data |
 
-### Strategy
+The key insight is that **Navio defines ~215 delivery zones**, but your production database has **4,898 granular neighborhoods** that should be contained within those zones.
 
-1. **Group areas by their polygon hash** (MD5 of `geofence_json::text`)
-2. **Render only ONE polygon per unique hash**
-3. **Display a popup showing all areas that share that boundary**
+---
 
-### Implementation
+## Solution: Two-Level Alignment Check
 
-**File**: `src/components/map/StagingAreaMap.tsx`
+### Level 1: Snapshot vs Live API (Quick Check)
+Compare the stored snapshot with the live Navio API to ensure your reference data is current.
 
-#### Change 1: Add Polygon Deduplication in `useProduction`
+### Level 2: Production Coverage vs Snapshot (Spatial Check)
+Verify that production area polygons properly align with the authoritative Navio polygons.
+
+---
+
+## Implementation Plan
+
+### Step 1: Add New "coverage_check" Mode to Edge Function
+
+Add a new mode to `navio-import` that:
+1. Fetches live Navio API data (215 service areas)
+2. Fetches production areas with geofences
+3. Performs spatial analysis:
+   - For each Navio polygon, check if production has coverage
+   - Identify Navio areas with no matching production polygon
+   - Identify production polygons outside any Navio zone
+
+```text
+File: supabase/functions/navio-import/index.ts
+
+New mode: "coverage_check"
+
+Logic:
+1. Fetch Navio API service areas (with geofence_geojson)
+2. Fetch snapshot for comparison
+3. Fetch production areas with geofence (deduplicated by polygon hash)
+4. Compare:
+   a. Snapshot freshness: Is snapshot up-to-date with API?
+   b. Coverage alignment: Do production polygons match Navio boundaries?
+   c. Orphaned production: Areas with polygons not in any Navio zone?
+```
+
+### Step 2: Create Coverage Check Results Interface
 
 ```typescript
-function useProduction(selectedCityIds: string[]) {
-  return useQuery({
-    queryKey: ["production-geofences", selectedCityIds],
-    enabled: selectedCityIds.length > 0,
-    queryFn: async () => {
-      const allAreas: AreaWithGeo[] = [];
-      const cityNames = new Set<string>();
-      
-      // Paginate to get all areas
-      let from = 0;
-      const pageSize = 1000;
-      
-      while (true) {
-        const { data, error } = await supabase
-          .from("areas")
-          .select(`
-            id, name, geofence_json,
-            city:cities!areas_city_id_fkey(id, name, country_code)
-          `)
-          .in("city_id", selectedCityIds)
-          .not("geofence_json", "is", null)
-          .order("id")
-          .range(from, from + pageSize - 1);
-        
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-        
-        for (const entry of data) {
-          const city = entry.city as { id: string; name: string; country_code: string } | null;
-          const cityName = city?.name || "Unknown";
-          cityNames.add(cityName);
-          
-          const geofence = extractGeometry(entry.geofence_json, true);
-          if (geofence) {
-            allAreas.push({
-              id: entry.id,
-              name: entry.name,
-              city: cityName,
-              countryCode: city?.country_code || "XX",
-              geofence,
-              // Store serialized geofence for deduplication
-              _geoHash: JSON.stringify(entry.geofence_json),
-            });
-          }
-        }
-        
-        if (data.length < pageSize) break;
-        from += pageSize;
-      }
-      
-      // DEDUPLICATE: Group by polygon hash, keep first, track all names
-      const uniquePolygons = new Map<string, AreaWithGeo & { sharedWith: string[] }>();
-      
-      for (const area of allAreas) {
-        const hash = area._geoHash;
-        if (!uniquePolygons.has(hash)) {
-          uniquePolygons.set(hash, { 
-            ...area, 
-            sharedWith: [area.name],
-          });
-        } else {
-          uniquePolygons.get(hash)!.sharedWith.push(area.name);
-        }
-      }
-      
-      // Convert back to array
-      const dedupedAreas = Array.from(uniquePolygons.values());
-      
-      return {
-        areas: dedupedAreas,
-        cities: Array.from(cityNames),
-        totalBeforeDedup: allAreas.length,
-      };
-    },
-  });
+interface CoverageCheckResult {
+  // Snapshot vs API freshness
+  snapshotFreshness: {
+    isUpToDate: boolean;
+    apiCount: number;
+    snapshotCount: number;
+    missingFromSnapshot: number;
+    removedFromApi: number;
+  };
+  
+  // Production vs Navio alignment
+  coverageAlignment: {
+    navioAreasTotal: number;
+    navioAreasCovered: number;        // Have matching production polygons
+    navioAreasUncovered: number;      // No production coverage
+    productionAreasTotal: number;
+    productionAreasAligned: number;   // Inside Navio zones
+    productionAreasOrphaned: number;  // Outside all Navio zones
+  };
+  
+  // Detailed lists for review
+  uncoveredNavioAreas: Array<{ id: number; name: string; city: string }>;
+  orphanedProductionAreas: Array<{ id: string; name: string; city: string }>;
 }
 ```
 
-#### Change 2: Update Popup to Show All Shared Areas
+### Step 3: Add UI Component for Coverage Check
 
-```tsx
-onEachFeature={(feature, layer) => {
-  const props = feature.properties || {};
-  const shared = props.sharedWith || [];
-  
-  let popupContent = `<div style="font-weight: 500;">${props.name || "Unknown"}</div>`;
-  
-  if (shared.length > 1) {
-    popupContent += `
-      <div style="font-size: 0.75rem; color: #f59e0b; margin-top: 4px;">
-        ⚠️ Shared by ${shared.length} areas
-      </div>
-      <div style="font-size: 0.75rem; color: #6b7280; max-height: 100px; overflow: auto;">
-        ${shared.slice(0, 10).join(", ")}${shared.length > 10 ? `, +${shared.length - 10} more` : ""}
-      </div>
-    `;
-  }
-  
-  popupContent += `<div style="font-size: 0.875rem; color: #6b7280;">${props.city || "Unknown"}</div>`;
-  
-  layer.bindPopup(popupContent);
-}}
+Create a new card on the Navio Dashboard showing coverage health:
+
+```text
+File: src/components/navio/CoverageHealthCard.tsx
+
+Display:
+- Snapshot freshness indicator (green/amber/red)
+- Coverage percentage (e.g., "98% of Navio zones covered")
+- List of uncovered Navio areas
+- List of orphaned production areas
+- "Check Now" button to run coverage check
 ```
 
-#### Change 3: Show Deduplication Stats in UI
+### Step 4: Add to Dashboard
 
-```tsx
-<p className="text-xs text-muted-foreground text-center">
-  Showing {areas.length} unique polygon{areas.length !== 1 ? "s" : ""} 
-  {totalBeforeDedup > areas.length && (
-    <span className="text-amber-500"> (from {totalBeforeDedup} areas)</span>
-  )}
-</p>
+Add the coverage check to the Overview tab:
+
+```text
+File: src/pages/NavioDashboard.tsx
+
+Add new action card:
+- "Coverage Check" - Verify production aligns with Navio API
+- Shows coverage health status
+- Links to detailed results
 ```
 
 ---
 
-## Visual Result
+## Spatial Analysis Logic
 
-| Before | After |
-|--------|-------|
-| 573 overlapping polygons → solid blue fill | 27 unique polygons with 0.2 opacity |
-| Popup: "Aker Brygge (Oslo)" | Popup: "Aker Brygge ⚠️ Shared by 547 areas" |
+The core comparison uses PostGIS spatial functions:
+
+### Check if Production Covers Navio Zones
+
+```sql
+-- For each Navio snapshot polygon, check if any production area intersects
+SELECT 
+  s.navio_service_area_id,
+  s.name,
+  s.city_name,
+  EXISTS (
+    SELECT 1 FROM areas a
+    WHERE ST_Intersects(
+      ST_GeomFromGeoJSON(s.geofence_json::text),
+      a.geofence
+    )
+  ) as has_production_coverage
+FROM navio_snapshot s
+WHERE s.geofence_json IS NOT NULL
+```
+
+### Check for Orphaned Production Areas
+
+```sql
+-- Production areas not intersecting any Navio snapshot polygon
+SELECT a.id, a.name, c.name as city
+FROM areas a
+JOIN cities c ON a.city_id = c.id
+WHERE a.geofence IS NOT NULL
+AND NOT EXISTS (
+  SELECT 1 FROM navio_snapshot s
+  WHERE s.geofence_json IS NOT NULL
+  AND ST_Intersects(
+    a.geofence,
+    ST_GeomFromGeoJSON(s.geofence_json::text)
+  )
+)
+```
+
+---
+
+## File Changes Summary
+
+| File | Changes |
+|------|---------|
+| `supabase/functions/navio-import/index.ts` | Add `coverage_check` mode with spatial analysis |
+| `src/components/navio/CoverageHealthCard.tsx` | New component showing coverage status |
+| `src/hooks/useNavioImport.ts` | Add `checkCoverage` mutation |
+| `src/pages/NavioDashboard.tsx` | Add coverage check card to Overview tab |
+
+---
+
+## User Flow
+
+1. User clicks "Check Coverage" on Navio Dashboard
+2. Edge function fetches Navio API and compares with production
+3. Results show:
+   - "215/215 Navio zones have production coverage"
+   - "4,523/4,898 production areas are within Navio zones"
+   - List of any gaps or orphaned areas
+4. User can then run Geo Sync to fix any misalignments
 
 ---
 
 ## Technical Notes
 
-### Why This Works
-- All areas remain in the database for proper hierarchy and delivery checks
-- The map only renders unique boundaries, eliminating visual stacking
-- Popups clearly indicate when a polygon is shared by multiple areas
-- Performance improves dramatically (27 layers vs 573 layers)
+### Why Spatial Comparison?
 
-### No Data Deletion
-- Areas are NOT removed from `public.areas`
-- The deduplication happens purely at render time
-- Future geo-sync can still update individual area polygons
+Simply counting records doesn't verify coverage because:
+- 215 Navio zones expand into 4,898 neighborhoods
+- The same Navio polygon may be shared by many production areas (as we saw with the duplicates)
+- What matters is whether the **boundaries align**, not the counts
 
----
+### Performance Considerations
 
-## Files to Modify
+- Spatial queries can be slow with many polygons
+- We'll use `ST_Intersects` which is optimized with spatial indexes
+- The `geofence` column in `areas` already has a spatial index
 
-| File | Changes |
-|------|---------|
-| `src/components/map/StagingAreaMap.tsx` | Add deduplication logic, update popup content, show stats |
+### Edge Cases
+
+- Navio zones without polygons (null geofence) are skipped
+- Production areas without polygons are not checked
+- Very small overlaps (< 1%) could be flagged as potential issues
 
