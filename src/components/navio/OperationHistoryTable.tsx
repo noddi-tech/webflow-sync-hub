@@ -128,12 +128,47 @@ export const OperationHistoryTable = forwardRef<HTMLDivElement, OperationHistory
           <div className="space-y-3">
             {logs.map(log => {
               const details = log.details as Record<string, unknown> | null;
-              const detailsText = details 
-                ? Object.entries(details)
-                    .filter(([key]) => !key.startsWith("_"))
-                    .map(([key, value]) => `${key}: ${value}`)
-                    .join(", ")
-                : null;
+              
+              // Format details based on operation type for better readability
+              const formatDetails = () => {
+                if (!details) return null;
+                
+                // Coverage check - show the main message
+                if (log.operation_type === "coverage_check" && details.message) {
+                  return String(details.message);
+                }
+                
+                // For other operations, show key metrics
+                const keyMetrics: string[] = [];
+                
+                if (details.coveragePercent !== undefined) {
+                  keyMetrics.push(`${details.coveragePercent}% coverage`);
+                }
+                if (details.realNavioIds !== undefined && details.aiDiscoveredIds !== undefined) {
+                  keyMetrics.push(`${details.realNavioIds} linked, ${details.aiDiscoveredIds} AI-discovered`);
+                }
+                if (details.cities !== undefined) {
+                  keyMetrics.push(`${details.cities} cities`);
+                }
+                if (details.areas_created !== undefined) {
+                  keyMetrics.push(`${details.areas_created} areas created`);
+                }
+                
+                if (keyMetrics.length > 0) {
+                  return keyMetrics.join(" • ");
+                }
+                
+                // Fallback: show message or first few non-internal fields
+                if (details.message) return String(details.message);
+                
+                return Object.entries(details)
+                  .filter(([key]) => !key.startsWith("_") && key !== "message")
+                  .slice(0, 3)
+                  .map(([key, value]) => `${key}: ${value}`)
+                  .join(", ");
+              };
+              
+              const detailsText = formatDetails();
 
               return (
                 <div 

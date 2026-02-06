@@ -2211,7 +2211,7 @@ serve(async (req) => {
       }
 
       case "coverage_check": {
-        console.log("=== COVERAGE CHECK: Validating production vs Navio API ===");
+        console.log("=== COVERAGE CHECK: Validating production data alignment ===");
         
         // Log operation start to navio_operation_log (the table the UI reads from)
         const { data: opLog, error: opLogError } = await supabase
@@ -2220,7 +2220,7 @@ serve(async (req) => {
             operation_type: "coverage_check",
             status: "started",
             batch_id: batchId,
-            details: { message: "Starting coverage check: validating production data against Navio API..." },
+            details: { message: "Starting coverage check: analyzing geofence coverage and data linkage..." },
           })
           .select("id")
           .single();
@@ -2259,9 +2259,9 @@ serve(async (req) => {
           // Filter out test data
           liveAreas = liveAreas.filter(a => !isTestDataOrStreetAddress(a.name || ""));
           
-          console.log(`Fetched ${liveAreas.length} live areas from Navio API`);
+          console.log(`Fetched ${liveAreas.length} live zones from Navio API`);
 
-          // 2. Fetch snapshot for freshness comparison
+          // 2. Fetch snapshot for API status comparison
           const { data: snapshotData } = await supabase
             .from("navio_snapshot")
             .select("navio_service_area_id, name, city_name, is_active")
@@ -2273,71 +2273,86 @@ serve(async (req) => {
           
           const missingFromSnapshot = liveAreas.filter(a => !snapshotIds.has(a.id)).length;
           const removedFromApi = snapshotData?.filter(s => !apiIds.has(s.navio_service_area_id)).length || 0;
+          const zonesWithGeofence = liveAreas.filter(a => a.geofence_geojson).length;
           
-          const snapshotFreshness = {
-            isUpToDate: missingFromSnapshot === 0 && removedFromApi === 0,
-            apiCount: liveAreas.length,
+          const apiStatus = {
+            liveZoneCount: liveAreas.length,
+            zonesWithGeofence,
             snapshotCount,
+            snapshotStale: missingFromSnapshot > 0 || removedFromApi > 0,
             missingFromSnapshot,
             removedFromApi,
           };
           
-          console.log(`Snapshot freshness: API=${liveAreas.length}, Snapshot=${snapshotCount}, Missing=${missingFromSnapshot}, Removed=${removedFromApi}`);
+          console.log(`API Status: ${liveAreas.length} zones, ${snapshotCount} in snapshot, ${missingFromSnapshot} new, ${removedFromApi} removed`);
 
-          // 3. Build a map of Navio areas with geofences for spatial check
-          const navioAreasWithGeo = liveAreas
-            .filter(a => a.geofence_geojson)
-            .map(a => {
-              const parsed = parseNavioName(a.name || "");
-              return {
-                id: a.id,
-                name: a.name || "",
-                city: parsed.city || "Unknown",
-                geofence: a.geofence_geojson!,
-              };
-            });
-          
-          console.log(`${navioAreasWithGeo.length} Navio areas have geofences`);
-
-          // 4. Fetch production areas with geofences (use geofence_json since it's stored as JSON)
-          // We'll do a client-side spatial check since we can't easily use PostGIS from here
-          const { data: productionAreas, error: prodError } = await supabase
+          // 3. Fetch ALL production areas (not just those with geofences)
+          const { data: allProductionAreas, error: prodError } = await supabase
             .from("areas")
-            .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)")
-            .not("geofence_json", "is", null);
+            .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)");
           
           if (prodError) {
             console.error("Error fetching production areas:", prodError);
             throw prodError;
           }
           
-          console.log(`Fetched ${productionAreas?.length || 0} production areas with geofences`);
+          const totalAreas = allProductionAreas?.length || 0;
+          console.log(`Fetched ${totalAreas} total production areas`);
 
-          // 5. Check coverage: Which Navio areas have matching production areas by navio_service_area_id
-          const productionNavioIds = new Set(
-            productionAreas
-              ?.filter(a => a.navio_service_area_id)
-              .map(a => parseInt(a.navio_service_area_id!, 10))
-              .filter(id => !isNaN(id)) || []
-          );
+          // 4. Analyze geofence coverage
+          const areasWithGeofence = allProductionAreas?.filter(a => a.geofence_json) || [];
+          const areasMissingGeofence = allProductionAreas?.filter(a => !a.geofence_json) || [];
           
-          const navioAreasCovered = navioAreasWithGeo.filter(na => productionNavioIds.has(na.id));
-          const uncoveredNavioAreas = navioAreasWithGeo
-            .filter(na => !productionNavioIds.has(na.id))
-            .map(a => ({ id: a.id, name: a.name, city: a.city }));
+          // Count unique geofences by hashing them
+          const geofenceHashes = new Set<string>();
+          for (const area of areasWithGeofence) {
+            if (area.geofence_json) {
+              const hash = hashGeofence(area.geofence_json as GeoJSONPolygon);
+              if (hash) geofenceHashes.add(hash);
+            }
+          }
+          
+          const coveragePercent = totalAreas > 0 
+            ? Math.round((areasWithGeofence.length / totalAreas) * 100) 
+            : 0;
+          
+          const geofenceCoverage = {
+            totalAreas,
+            withGeofence: areasWithGeofence.length,
+            missingGeofence: areasMissingGeofence.length,
+            coveragePercent,
+            uniquePolygons: geofenceHashes.size,
+          };
+          
+          console.log(`Geofence Coverage: ${areasWithGeofence.length}/${totalAreas} (${coveragePercent}%), ${geofenceHashes.size} unique polygons`);
 
-          // 6. Check for orphaned production areas (have geofence but no matching navio_service_area_id in active areas)
-          const activeNavioIds = new Set(liveAreas.map(a => a.id));
+          // 5. Analyze Navio ID linkage
+          // Real Navio IDs are numeric (like "123")
+          // AI-discovered IDs start with "discovered_"
+          const areasWithRealNavioId = allProductionAreas?.filter(a => {
+            if (!a.navio_service_area_id) return false;
+            return /^\d+$/.test(a.navio_service_area_id);
+          }) || [];
           
-          const orphanedProductionAreas = (productionAreas || [])
-            .filter(pa => {
-              if (!pa.navio_service_area_id) return true; // No link = orphaned
-              const navioId = parseInt(pa.navio_service_area_id, 10);
-              return isNaN(navioId) || !activeNavioIds.has(navioId);
-            })
-            .slice(0, 100) // Limit to first 100 for response size
+          const areasWithAiDiscoveredId = allProductionAreas?.filter(a => {
+            if (!a.navio_service_area_id) return false;
+            return a.navio_service_area_id.startsWith("discovered_");
+          }) || [];
+          
+          const areasWithNoNavioId = allProductionAreas?.filter(a => !a.navio_service_area_id) || [];
+          
+          const navioLinkage = {
+            realNavioIds: areasWithRealNavioId.length,
+            aiDiscoveredIds: areasWithAiDiscoveredId.length,
+            noNavioId: areasWithNoNavioId.length,
+          };
+          
+          console.log(`Navio Linkage: ${navioLinkage.realNavioIds} real IDs, ${navioLinkage.aiDiscoveredIds} AI-discovered, ${navioLinkage.noNavioId} no ID`);
+
+          // 6. Identify areas that actually need attention (missing geofence or no ID at all)
+          const areasNeedingAttention = areasMissingGeofence
+            .slice(0, 50)
             .map(a => {
-              // Type-safe city extraction - the join returns an object or null
               const cityData = a.city as { name: string } | { name: string }[] | null;
               let cityName = "Unknown";
               if (cityData) {
@@ -2351,26 +2366,42 @@ serve(async (req) => {
                 id: a.id,
                 name: a.name,
                 city: cityName,
+                issue: "missing_geofence",
               };
             });
 
-          const coverageAlignment = {
-            navioAreasTotal: navioAreasWithGeo.length,
-            navioAreasCovered: navioAreasCovered.length,
-            navioAreasUncovered: uncoveredNavioAreas.length,
-            productionAreasTotal: productionAreas?.length || 0,
-            productionAreasAligned: (productionAreas?.length || 0) - orphanedProductionAreas.length,
-            productionAreasOrphaned: orphanedProductionAreas.length,
-          };
-
-          console.log(`Coverage: ${navioAreasCovered.length}/${navioAreasWithGeo.length} Navio zones covered`);
-          console.log(`Production: ${coverageAlignment.productionAreasAligned}/${productionAreas?.length || 0} aligned, ${orphanedProductionAreas.length} orphaned`);
+          // Determine overall health status
+          let healthStatus: "healthy" | "warning" | "needs_attention" = "healthy";
+          if (coveragePercent < 80 || apiStatus.snapshotStale) {
+            healthStatus = "needs_attention";
+          } else if (coveragePercent < 95 || areasMissingGeofence.length > 100) {
+            healthStatus = "warning";
+          }
 
           const result = {
-            snapshotFreshness,
-            coverageAlignment,
-            uncoveredNavioAreas: uncoveredNavioAreas.slice(0, 50), // Limit for response size
-            orphanedProductionAreas,
+            apiStatus,
+            geofenceCoverage,
+            navioLinkage,
+            healthStatus,
+            areasNeedingAttention,
+            // Keep legacy fields for backward compatibility during transition
+            snapshotFreshness: {
+              isUpToDate: !apiStatus.snapshotStale,
+              apiCount: apiStatus.liveZoneCount,
+              snapshotCount: apiStatus.snapshotCount,
+              missingFromSnapshot: apiStatus.missingFromSnapshot,
+              removedFromApi: apiStatus.removedFromApi,
+            },
+            coverageAlignment: {
+              navioAreasTotal: zonesWithGeofence,
+              navioAreasCovered: navioLinkage.realNavioIds,
+              navioAreasUncovered: zonesWithGeofence - navioLinkage.realNavioIds,
+              productionAreasTotal: totalAreas,
+              productionAreasAligned: areasWithGeofence.length,
+              productionAreasOrphaned: navioLinkage.aiDiscoveredIds,
+            },
+            uncoveredNavioAreas: [],
+            orphanedProductionAreas: [],
           };
 
           // Save result to settings for persistence
@@ -2379,7 +2410,7 @@ serve(async (req) => {
             value: JSON.stringify(result),
           }, { onConflict: "key" });
 
-          // Update operation log to success
+          // Update operation log with clear success message
           if (opLogId) {
             await supabase
               .from("navio_operation_log")
@@ -2387,10 +2418,15 @@ serve(async (req) => {
                 status: "success",
                 completed_at: new Date().toISOString(),
                 details: {
-                  message: `Coverage check complete: ${navioAreasCovered.length}/${navioAreasWithGeo.length} Navio zones covered`,
-                  covered: navioAreasCovered.length,
-                  total: navioAreasWithGeo.length,
-                  orphaned: orphanedProductionAreas.length,
+                  message: `${coveragePercent}% geofence coverage (${areasWithGeofence.length}/${totalAreas} areas)`,
+                  geofenceCoverage: `${areasWithGeofence.length}/${totalAreas}`,
+                  coveragePercent,
+                  uniquePolygons: geofenceHashes.size,
+                  realNavioIds: navioLinkage.realNavioIds,
+                  aiDiscoveredIds: navioLinkage.aiDiscoveredIds,
+                  missingGeofence: areasMissingGeofence.length,
+                  apiZones: apiStatus.liveZoneCount,
+                  snapshotStale: apiStatus.snapshotStale,
                 },
               })
               .eq("id", opLogId);
