@@ -14,6 +14,7 @@ import {
   XCircle,
   Clock,
   History,
+  Shield,
 } from "lucide-react";
 import { useNavioOperationLog, type OperationType, type OperationStatus } from "@/hooks/useNavioOperationLog";
 import { formatDistanceToNow } from "date-fns";
@@ -26,6 +27,7 @@ const operationIcons: Record<OperationType, React.ReactNode> = {
   commit: <Upload className="h-4 w-4" />,
   approve: <Check className="h-4 w-4" />,
   reject: <X className="h-4 w-4" />,
+  coverage_check: <Shield className="h-4 w-4" />,
 };
 
 const operationLabels: Record<OperationType, string> = {
@@ -35,6 +37,7 @@ const operationLabels: Record<OperationType, string> = {
   commit: "Commit",
   approve: "Approve",
   reject: "Reject",
+  coverage_check: "Coverage Check",
 };
 
 const statusStyles: Record<OperationStatus, { badge: string; icon: React.ReactNode }> = {
