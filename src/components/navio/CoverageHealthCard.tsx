@@ -66,7 +66,7 @@ export function CoverageHealthCard() {
   const checkCoverageMutation = useMutation({
     mutationFn: async () => {
       const response = await supabase.functions.invoke("navio-import", {
-        body: { mode: "coverage_check" },
+        body: { mode: "coverage_check", batch_id: crypto.randomUUID() },
       });
       
       if (response.error) throw response.error;
