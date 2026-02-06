@@ -144,7 +144,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
 
           {/* Quick Actions Grid */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Search className="h-4 w-4" />
@@ -154,7 +154,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
                   Detect new, changed, or removed areas
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="mt-auto">
                 <Button
                   onClick={() => checkDelta()}
                   disabled={isBusy}
@@ -171,7 +171,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <MapPinned className="h-4 w-4" />
@@ -181,7 +181,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
                   Fast polygon-only sync
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="mt-auto">
                 <Button
                   onClick={() => startGeoSync()}
                   disabled={isBusy}
@@ -199,7 +199,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Brain className="h-4 w-4" />
@@ -209,7 +209,7 @@ const NavioDashboard = forwardRef<HTMLDivElement, object>((_, ref) => {
                   Full discovery with AI classification
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="mt-auto">
                 <Button
                   onClick={handleStartImport}
                   disabled={isBusy}

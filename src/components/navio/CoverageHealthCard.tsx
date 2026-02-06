@@ -126,7 +126,7 @@ export function CoverageHealthCard() {
     : 0;
 
   return (
-    <Card>
+    <Card className="flex flex-col">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -146,7 +146,7 @@ export function CoverageHealthCard() {
           Verify production data matches Navio API
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="flex flex-col flex-1 space-y-3">
         {result ? (
           <>
             {/* Snapshot Freshness */}
@@ -261,6 +261,7 @@ export function CoverageHealthCard() {
           </div>
         )}
 
+        <div className="flex-1" />
         <Button
           onClick={() => checkCoverageMutation.mutate()}
           disabled={isLoading}
