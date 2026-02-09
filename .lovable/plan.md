@@ -1,141 +1,134 @@
 
 
-# Make Coverage Check Actually Useful
+# Make Coverage Check Detect & Surface Delivery Zone Removals
 
-## The Real Problem
+## The Gap Today
 
-The current check says "100% geofence coverage" which is technically true but meaningless:
-- All 4,898 areas have a `geofence_json` field -- but only because **geo-sync copies the parent Navio zone polygon** to every child area
-- Hoksund has 84 areas that all share the exact same polygon (1 Navio zone)
-- There are only **188 unique polygons** across 4,898 areas
-- The check doesn't validate whether areas actually fall within correct delivery zones
+When Navio stops delivering to a zone:
+1. The snapshot correctly marks it `is_active: false`
+2. But production areas keep `is_delivery: true` and their old polygon
+3. The delivery checker still returns "yes, we deliver here"
+4. The coverage card shows no warning about this
 
-**What the check SHOULD tell you:**
-1. Per-city breakdown: "Oslo: 573 neighborhoods covered by 27 Navio zones"
-2. Whether the Navio API has new zones we haven't imported yet
-3. Which cities have the fewest zones relative to their area count (potential coverage gaps)
-4. Whether any areas lack geofences entirely (currently 0, but good to verify)
+The card needs to answer: **"Are we still delivering everywhere we claim to?"**
 
----
+## Changes
 
-## Solution: City-Level Coverage Breakdown
+### 1. Edge Function: Detect orphaned production areas (`supabase/functions/navio-import/index.ts`)
 
-Replace the single "100%" metric with a per-city summary that gives real context.
+In the `coverage_check` mode, add a new check:
 
-### New Coverage Card Layout
+- Query all production areas that have a `navio_service_area_id` linked to a snapshot entry where `is_active = false` (or where the ID no longer exists in the live API at all)
+- These are "orphaned" areas -- production says we deliver there, but Navio no longer does
+- Include them in the response as a new `orphanedAreas` array with city, area name, and the removed zone ID
+- Update health status: any orphaned areas = "needs_attention"
+- Also surface `removedFromApi` count prominently in the `apiStatus` section
 
-```text
-+------------------------------------------+
-|  Data Alignment Check          [Healthy]  |
-|  Verify production data completeness      |
-+------------------------------------------+
-|  Navio API: 215 zones (in sync)          |
-|                                           |
-|  City Coverage (18 cities):               |
-|  Oslo       573 areas / 27 zones         |
-|  Bergen     379 areas / 10 zones         |
-|  Munchen    962 areas / 44 zones         |
-|  Goteborg  1113 areas / 19 zones         |
-|  Stockholm  508 areas / 30 zones         |
-|  ...expand to see all                     |
-|                                           |
-|  188 unique geofences across 4,898 areas  |
-|  All areas inherit parent zone polygons   |
-|                                           |
-|  [Recheck Coverage]                       |
-+------------------------------------------+
+### 2. UI: Surface orphaned zones prominently (`src/components/navio/CoverageHealthCard.tsx`)
+
+Add a new section to the card between "Navio API" and "City Coverage":
+
+```
+  Removed Zones              3 zones removed
+  12 production areas still marked as delivery
+  [Deactivate These Areas]
 ```
 
----
+- Show a red/amber warning when `removedFromApi > 0` or orphaned areas exist
+- Add a "Deactivate" button that calls a new edge function mode to set `is_delivery = false` on those areas
+- When no orphaned areas exist, show a green checkmark: "All delivery zones active"
 
-## Technical Changes
+### 3. Edge Function: Add `deactivate_orphans` mode (`supabase/functions/navio-import/index.ts`)
 
-### File: `supabase/functions/navio-import/index.ts`
+New mode that:
+- Finds all areas where `navio_service_area_id` matches a deactivated snapshot zone
+- Sets `is_delivery = false` on those areas (and optionally their parent districts/cities if all children are deactivated)
+- Logs the operation to `navio_operation_log`
+- Returns count of deactivated areas
 
-**In the `coverage_check` mode, add city-level breakdown:**
-
-1. Query areas grouped by city with distinct geofence count per city
-2. Compare each city's zone count against snapshot zones for that city
-3. Add a `cityBreakdown` array to the response:
-
-```typescript
-cityBreakdown: [
-  { city: "Oslo", areas: 573, uniqueZones: 27, snapshotZones: 27, synced: true },
-  { city: "Goteborg", areas: 1113, uniqueZones: 19, snapshotZones: 19, synced: true },
-  ...
-]
-```
-
-4. Also populate `geofence_hash` in snapshot (currently all null) using `md5(geofence_json::text)` so we can cross-reference
-
-5. Health status logic update:
-   - "Healthy" = all cities have zones matching snapshot, no stale data
-   - "Warning" = snapshot is stale (new zones in API not imported)
-   - "Needs Attention" = cities with 0 zones or areas with no geofence
-
-### File: `src/components/navio/CoverageHealthCard.tsx`
-
-**Redesign the display with city breakdown:**
-
-1. Keep the API status row (zones count, stale indicator)
-2. Replace the meaningless "100% progress bar" with a collapsible city-level table
-3. Each city row shows: name, area count, unique zones, and a visual indicator
-4. Bottom summary: "188 unique geofences across 4,898 areas -- all neighborhoods inherit their parent Navio zone polygon"
-5. Remove the misleading "All areas have geofence coverage" success message
-
-**Updated interface:**
+### 4. Updated Coverage Card interface
 
 ```typescript
 interface CoverageCheckResult {
-  apiStatus: { ... };  // keep as-is
-  geofenceCoverage: {
-    totalAreas: number;
-    withGeofence: number;
-    missingGeofence: number;
-    coveragePercent: number;
-    uniquePolygons: number;
+  apiStatus: {
+    liveZoneCount: number;
+    zonesWithGeofence: number;
+    snapshotCount: number;
+    snapshotStale: boolean;
+    missingFromSnapshot: number;
+    removedFromApi: number;
   };
-  navioLinkage: { ... };  // keep as-is
-  cityBreakdown: Array<{
+  geofenceCoverage: { ... };  // unchanged
+  navioLinkage: { ... };      // unchanged
+  cityBreakdown: CityBreakdownEntry[];  // unchanged
+  orphanedAreas: Array<{
+    areaId: string;
+    areaName: string;
     city: string;
-    areas: number;
-    uniqueZones: number;
-    snapshotZones: number;
-    synced: boolean;
+    removedNavioId: string;
   }>;
   healthStatus: "healthy" | "warning" | "needs_attention";
   areasNeedingAttention: Array<{ ... }>;
 }
 ```
 
-### File: `src/components/navio/OperationHistoryTable.tsx`
+### 5. Updated Health Status Logic
 
-Update the coverage check log message to show city count:
-- "18 cities verified -- 188 unique zones across 4,898 areas"
+| Condition | Status |
+|-----------|--------|
+| All zones active, snapshot fresh | Healthy |
+| Snapshot stale (new zones not imported) | Warning |
+| Removed zones with active production areas | Needs Attention |
+| Areas missing geofences | Needs Attention |
 
----
+## Technical Details
 
-## Database: Populate Snapshot Geofence Hashes
+### Orphan Detection Query (in coverage_check)
+```typescript
+// Find production areas linked to removed Navio zones
+const deactivatedNavioIds = snapshotData
+  .filter(s => !apiIds.has(s.navio_service_area_id))
+  .map(s => String(s.navio_service_area_id));
 
-Currently `geofence_hash` is null for all 215 snapshot records. Add a one-time update and ensure future snapshots populate this field.
+// Also check snapshot entries marked is_active=false
+const { data: inactiveSnapshot } = await supabase
+  .from("navio_snapshot")
+  .select("navio_service_area_id")
+  .eq("is_active", false);
 
-**Migration:**
-```sql
-UPDATE navio_snapshot 
-SET geofence_hash = md5(geofence_json::text) 
-WHERE geofence_json IS NOT NULL AND geofence_hash IS NULL;
+const allRemovedIds = new Set([
+  ...deactivatedNavioIds,
+  ...(inactiveSnapshot || []).map(s => String(s.navio_service_area_id))
+]);
+
+// Find production areas still marked as delivery for these zones
+const orphanedAreas = allProductionAreas.filter(a =>
+  a.navio_service_area_id && 
+  allRemovedIds.has(a.navio_service_area_id) &&
+  a.is_delivery !== false
+);
 ```
 
-This enables cross-referencing production geofences against snapshot zones to verify they match.
+### Deactivate Orphans Mode
+```typescript
+case "deactivate_orphans": {
+  // Set is_delivery = false for areas linked to removed zones
+  // Also update parent districts/cities if all their areas are deactivated
+  // Log operation with count
+}
+```
 
----
-
-## Summary
+### Files to Edit
 
 | File | Change |
 |------|--------|
-| Migration | Populate `geofence_hash` in `navio_snapshot` |
-| `supabase/functions/navio-import/index.ts` | Add city-level breakdown query, update response structure |
-| `src/components/navio/CoverageHealthCard.tsx` | Show per-city table instead of meaningless 100% bar |
-| `src/components/navio/OperationHistoryTable.tsx` | Update log message format |
+| `supabase/functions/navio-import/index.ts` | Add orphan detection in coverage_check, add deactivate_orphans mode |
+| `src/components/navio/CoverageHealthCard.tsx` | Add orphaned areas warning section with deactivate action |
 
+## What This Gives You
+
+After this change, the coverage card will clearly answer:
+- **"Are we delivering everywhere we should?"** -- Yes/No with specifics
+- **"Did Navio remove any zones?"** -- Shows count + affected areas
+- **"What do I do about it?"** -- One-click deactivation button
+- The existing city breakdown remains for structural context
