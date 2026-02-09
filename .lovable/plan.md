@@ -1,172 +1,127 @@
 
-# Improve Coverage Check Clarity and Accuracy
 
-## The Problem
+# Fix: Coverage Check Only Processing 1,000 of 4,898 Areas
 
-The Coverage Check displays confusing numbers that don't match expectations:
-- Shows "14 covered / 89 gaps" for Navio zones
-- Shows "900 aligned / 100 orphaned" for production areas
-- But you have 4,898 production areas total
+## Problem
 
-**Why this happens:**
-
-The check is comparing apples and oranges:
-- **Navio API zones**: ~103 service areas with geofences (broad delivery zones like "NO BRG 6")
-- **Production areas**: 4,898 granular neighborhoods (like "Lierstranda", "Bagaregården")
-
-The current logic:
-1. Only counts areas as "covered" if they have a **numeric** `navio_service_area_id` matching Navio API
-2. 4,710 of your areas have AI-generated IDs like `discovered_xxxxx` - these are treated as "orphaned"
-3. Only 188 areas have real Navio IDs - and only 14 of those match the ~103 zones being checked
-
-**The geofence situation:**
-- All 4,898 areas DO have geofences (verified in DB)
-- But these are **inherited copies** from Navio zones via the propagation logic
-- The map shows the same 103 Navio polygons whether you're on "Snapshot" or "Production" because all areas share the same copied geofences
-
----
-
-## Solution: Redesign the Coverage Check
-
-### New Metrics Structure
-
-Instead of the current confusing metrics, show a clear 3-section breakdown:
-
-```text
-┌─────────────────────────────────────────────────────┐
-│  Data Alignment Check                               │
-├─────────────────────────────────────────────────────┤
-│  📡 Navio API Status                                │
-│  103 delivery zones available, 215 in local cache  │
-│  ⚠️ 112 new zones not in snapshot (run Delta)      │
-├─────────────────────────────────────────────────────┤
-│  🗺️ Geofence Coverage                              │
-│  ████████████████████████████████████░░  97%       │
-│  4,766 / 4,898 areas have polygons                 │
-│  132 areas missing geofence data                   │
-├─────────────────────────────────────────────────────┤
-│  🔗 Navio ID Linkage                               │
-│  Only 188 areas linked to official Navio IDs       │
-│  4,710 AI-discovered (inherit city geofence)       │
-│  ℹ️ AI areas share parent zone's geofence          │
-└─────────────────────────────────────────────────────┘
+The query on line 2290 of the edge function:
+```typescript
+const { data: allProductionAreas } = await supabase
+  .from("areas")
+  .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)");
 ```
 
-### Improved Toast Messages
+...hits the default 1,000-row limit. Supabase silently returns only the first 1,000 rows without any error, which is why the card shows "1000/1000 areas" instead of "4898/4898".
 
-**Current (confusing):**
-> "14/103 zones covered, 100 orphaned"
+The same issue likely affects the `navio_snapshot` query on line 2265.
 
-**Proposed (clear):**
-> "97% geofence coverage (4,766/4,898 areas). 4,710 AI-discovered areas share parent zones."
+## Fix
 
----
-
-## Technical Implementation
+Replace the single query with paginated fetching using `.range()` to retrieve all rows in batches of 1,000.
 
 ### File: `supabase/functions/navio-import/index.ts`
 
-**Changes to `coverage_check` mode (lines ~2213-2410):**
+**1. Add a paginated fetch helper** (near the top of the file, with other helpers):
 
-1. **Restructure the response** with clearer sections:
-   - `apiStatus`: API count, snapshot count, sync delta
-   - `geofenceCoverage`: areas with/without geofence_json
-   - `navioLinkage`: areas with real IDs vs discovered IDs
-   - `inheritanceInfo`: how many areas share which geofences
-
-2. **Add geofence deduplication check**:
-   - Hash geofences to show how many unique polygons exist
-   - Identify that 4,710 areas share ~103 polygons
-
-3. **Separate "orphaned" into meaningful categories**:
-   - AI-discovered (expected, not a problem)
-   - Missing geofence (needs attention)
-   - Invalid Navio ID (data issue)
-
-**New response structure:**
 ```typescript
-{
-  apiStatus: {
-    liveZoneCount: 103,
-    snapshotCount: 215,
-    snapshotStale: true,
-    missingFromSnapshot: 112,
-  },
-  geofenceCoverage: {
-    totalAreas: 4898,
-    withGeofence: 4766,
-    missingGeofence: 132,
-    coveragePercent: 97,
-    uniquePolygons: 103, // distinct geofences
-  },
-  navioLinkage: {
-    realNavioIds: 188,
-    aiDiscoveredIds: 4710,
-    noNavioId: 0,
-  },
-  areasNeedingAttention: [
-    // Only areas that actually need fixing:
-    // - Missing geofence
-    // - No navio_service_area_id at all
-  ]
+async function fetchAllRows<T>(
+  query: () => any,
+  batchSize = 1000
+): Promise<T[]> {
+  const allData: T[] = [];
+  let offset = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const { data, error } = await query()
+      .range(offset, offset + batchSize - 1);
+    if (error) throw error;
+    if (data && data.length > 0) {
+      allData.push(...data);
+      offset += batchSize;
+      hasMore = data.length === batchSize;
+    } else {
+      hasMore = false;
+    }
+  }
+  return allData;
 }
 ```
 
----
+**2. Replace the production areas query** (line ~2290):
 
-### File: `src/components/navio/CoverageHealthCard.tsx`
+Before:
+```typescript
+const { data: allProductionAreas, error: prodError } = await supabase
+  .from("areas")
+  .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)");
+```
 
-**Redesign the display:**
+After:
+```typescript
+const allProductionAreas = await fetchAllRows(() =>
+  supabase
+    .from("areas")
+    .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)")
+    .order("id")
+);
+```
 
-1. **Replace confusing "Navio Zone Coverage" progress bar** with:
-   - "Geofence Coverage" showing actual polygon coverage
-   - Clear percentage of areas with geofences
+**3. Replace the snapshot query** (line ~2265):
 
-2. **Add explanatory text** for AI-discovered areas:
-   - "4,710 AI-discovered neighborhoods inherit geofences from parent Navio zones"
+Before:
+```typescript
+const { data: snapshotData } = await supabase
+  .from("navio_snapshot")
+  .select("navio_service_area_id, name, city_name, is_active")
+  .eq("is_active", true);
+```
 
-3. **Simplify the "View Details" section**:
-   - Only show areas that need action (missing geofence)
-   - Remove "orphaned" terminology for AI-discovered areas
+After:
+```typescript
+const snapshotData = await fetchAllRows(() =>
+  supabase
+    .from("navio_snapshot")
+    .select("navio_service_area_id, name, city_name, is_active")
+    .eq("is_active", true)
+    .order("id")
+);
+```
 
-4. **Update badge logic**:
-   - "Healthy" = 95%+ geofence coverage
-   - "Warning" = snapshot stale or <95% coverage
-   - "Needs Attention" = <80% coverage
+**4. Optimize: exclude large geofence payloads from the hash query**
 
----
+The `geofence_json` column contains large polygon data. Fetching it for 4,898 rows could be slow or cause memory issues. Split into two queries:
 
-### File: `src/hooks/useNavioOperationLog.ts`
+- First query: fetch metadata (id, name, navio_service_area_id) to count linkage -- no geofence needed
+- Second query: fetch only areas with geofence_json for the hash calculation, but use a lightweight check (`geofence_json IS NOT NULL`) via a count query instead of fetching the actual JSON
 
-No changes needed - `coverage_check` already added in previous fix.
+```typescript
+// Count areas with geofence (no need to fetch the actual JSON)
+const { count: withGeofenceCount } = await supabase
+  .from("areas")
+  .select("id", { count: "exact", head: true })
+  .not("geofence_json", "is", null);
 
----
+const { count: totalCount } = await supabase
+  .from("areas")
+  .select("id", { count: "exact", head: true });
+```
 
-### File: `src/components/navio/OperationHistoryTable.tsx`
-
-**Update the operation details display:**
-
-Show the new structured information in the history log:
-- "97% geofence coverage (4,766 areas)"
-- "188 Navio-linked, 4,710 AI-discovered"
-
----
+This avoids fetching 4,898 large polygon objects just to count them.
 
 ## Summary of Changes
 
-| File | Changes |
-|------|---------|
-| `supabase/functions/navio-import/index.ts` | Restructure coverage_check response with clear metrics |
-| `src/components/navio/CoverageHealthCard.tsx` | Redesign UI with 3-section layout and explanatory text |
-| `src/components/navio/OperationHistoryTable.tsx` | Update history details rendering |
-
----
+| What | Change |
+|------|--------|
+| Add `fetchAllRows` helper | Paginated fetch to bypass 1,000-row limit |
+| Production areas query | Use pagination with `.order("id")` |
+| Snapshot query | Use pagination with `.order("id")` |
+| Geofence counting | Use `count: "exact"` HEAD query instead of fetching all JSON |
+| Unique polygon hashing | Fetch geofence_json in batches only for the hash step |
 
 ## Expected Result
 
-After implementation:
+After fix, the coverage check will show the real numbers:
+- "100% geofence coverage (4,898/4,898 areas)" instead of "(1000/1000 areas)"
+- Accurate unique polygon count
+- Correct Navio linkage numbers (188 real, 4,710 AI-discovered)
 
-1. **Clear metrics**: "97% geofence coverage" instead of "14/103 zones covered"
-2. **Explained behavior**: UI explains that AI-discovered areas share parent geofences
-3. **Actionable insights**: Only highlights areas that actually need attention
-4. **No false alarms**: 4,710 AI-discovered areas shown as expected, not "orphaned"
