@@ -55,7 +55,8 @@ export function OperationDetailDialog({ log, open, onOpenChange }: OperationDeta
   if (!log) return null;
 
   const details = log.details as Record<string, unknown> | null;
-  const isCoverageCheck = log.operation_type === "coverage_check";
+  const isDeepVerify = log.operation_type === "coverage_check" && details && ("checked" in details || "mismatches" in details);
+  const isCoverageCheck = log.operation_type === "coverage_check" && !isDeepVerify;
   const isDeactivateOrphans = log.operation_type === "deactivate_orphans";
 
   return (
@@ -79,7 +80,9 @@ export function OperationDetailDialog({ log, open, onOpenChange }: OperationDeta
         </DialogHeader>
 
         <ScrollArea className="max-h-[60vh] pr-2">
-          {isCoverageCheck && details ? (
+          {isDeepVerify && details ? (
+            <DeepVerifyDetails details={details} />
+          ) : isCoverageCheck && details ? (
             <CoverageCheckDetails details={details} log={log} onOpenChange={onOpenChange} />
           ) : isDeactivateOrphans && details ? (
             <DeactivateOrphansDetails details={details} />
@@ -262,6 +265,98 @@ function CoverageCheckDetails({ details, log, onOpenChange }: {
       )}
 
       {/* Error message */}
+      {details.error && (
+        <>
+          <Separator />
+          <div className="text-xs text-destructive bg-destructive/10 rounded p-2">
+            <strong>Error:</strong> {String(details.error)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Deep Verify Details ─────────────────────────────────────
+
+function DeepVerifyDetails({ details }: { details: Record<string, unknown> }) {
+  const checked = (details.checked as number) || 0;
+  const verified = (details.verified as number) || 0;
+  const mismatched = (details.mismatched as number) || 0;
+  const notFound = checked - verified - mismatched;
+  const mismatches = (details.mismatches as Array<{
+    areaName: string;
+    city: string;
+    geocodedLat: number;
+    geocodedLon: number;
+    assignedZone?: string;
+  }>) || [];
+
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-primary" />
+        <span className="text-sm font-medium">
+          {checked} areas geocoded
+        </span>
+      </div>
+
+      {/* Metrics */}
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <MetricItem label="Verified" value={String(verified)} />
+        <MetricItem label="Mismatched" value={String(mismatched)} />
+        <MetricItem label="Not Found" value={String(notFound)} />
+      </div>
+
+      {/* Verified indicator */}
+      {verified > 0 && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+          {verified} area{verified !== 1 ? "s" : ""} confirmed inside their assigned delivery zone
+        </div>
+      )}
+
+      {/* Mismatches */}
+      {mismatches.length > 0 && (
+        <>
+          <Separator />
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              {mismatches.length} area{mismatches.length !== 1 ? "s" : ""} outside assigned zone
+            </div>
+            <p className="text-xs text-muted-foreground">
+              These AI-discovered areas geocode to coordinates outside their assigned Navio delivery zone:
+            </p>
+            <div className="space-y-1.5 max-h-48 overflow-auto">
+              {mismatches.map((m, i) => (
+                <div key={i} className="rounded-md border p-2 text-xs space-y-0.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">{m.areaName}</span>
+                    <Badge variant="outline" className="text-[10px]">{m.city}</Badge>
+                  </div>
+                  <div className="text-muted-foreground text-[10px]">
+                    Geocoded to ({m.geocodedLat?.toFixed(4)}, {m.geocodedLon?.toFixed(4)})
+                    {m.assignedZone && <> — expected in zone "{m.assignedZone}"</>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {mismatched === 0 && verified > 0 && (
+        <>
+          <Separator />
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+            All geocoded areas are correctly placed within their delivery zones
+          </div>
+        </>
+      )}
+
       {details.error && (
         <>
           <Separator />
