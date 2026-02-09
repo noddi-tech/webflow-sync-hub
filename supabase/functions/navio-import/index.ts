@@ -2738,9 +2738,12 @@ serve(async (req) => {
               // The navio_service_area_id for AI-discovered areas is "discovered_XXXX"
               // We need to find which snapshot zone this area's parent district maps to
               // For simplicity, check if the geocoded point falls within ANY active snapshot zone for this city
+              // Swap lat/lng to match the stored polygon coordinate space
+              // Navio polygons are stored with [lat,lon] interpreted as [x,y] by PostGIS
+              // so we pass real lon as lat param (Y) and real lat as lng param (X)
               const { data: containsResult } = await supabase.rpc("find_delivery_areas", {
-                lat,
-                lng: lon,
+                lat: lon,
+                lng: lat,
               });
 
               const isInDeliveryArea = containsResult && containsResult.length > 0;
