@@ -14,6 +14,8 @@ import {
   Brain,
   Link2,
   Database,
+  XCircle,
+  CheckCircle2,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -26,6 +28,13 @@ interface CityBreakdownEntry {
   uniqueZones: number;
   snapshotZones: number;
   synced: boolean;
+}
+
+interface OrphanedArea {
+  areaId: string;
+  areaName: string;
+  city: string;
+  removedNavioId: string;
 }
 
 interface CoverageCheckResult {
@@ -50,6 +59,7 @@ interface CoverageCheckResult {
     noNavioId: number;
   };
   cityBreakdown?: CityBreakdownEntry[];
+  orphanedAreas?: OrphanedArea[];
   healthStatus: "healthy" | "warning" | "needs_attention";
   areasNeedingAttention: Array<{ id: string; name: string; city: string; issue: string }>;
 }
@@ -58,6 +68,7 @@ export function CoverageHealthCard() {
   const queryClient = useQueryClient();
   const [showCities, setShowCities] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [showOrphans, setShowOrphans] = useState(false);
 
   const { data: lastCheck } = useQuery({
     queryKey: ["coverage-check-last"],
@@ -94,10 +105,17 @@ export function CoverageHealthCard() {
       queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
       
       const cities = data.cityBreakdown?.length || 0;
-      const { uniquePolygons, totalAreas } = data.geofenceCoverage;
-      toast.success("Coverage check complete", {
-        description: `${cities} cities verified — ${uniquePolygons} unique zones across ${totalAreas.toLocaleString()} areas`,
-      });
+      const orphans = data.orphanedAreas?.length || 0;
+      if (orphans > 0) {
+        toast.warning("Coverage check complete", {
+          description: `${orphans} areas linked to removed zones need attention`,
+        });
+      } else {
+        const { uniquePolygons, totalAreas } = data.geofenceCoverage;
+        toast.success("Coverage check complete", {
+          description: `${cities} cities verified — ${uniquePolygons} unique zones across ${totalAreas.toLocaleString()} areas`,
+        });
+      }
     },
     onError: (error) => {
       toast.error("Coverage check failed", {
@@ -106,8 +124,36 @@ export function CoverageHealthCard() {
     },
   });
 
+  const deactivateOrphansMutation = useMutation({
+    mutationFn: async () => {
+      const response = await supabase.functions.invoke("navio-import", {
+        body: { mode: "deactivate_orphans", batch_id: crypto.randomUUID() },
+      });
+      if (response.error) throw response.error;
+      if (response.data?.error) throw new Error(response.data.error);
+      return response.data as { deactivatedAreas: number; removedZones: number; message: string };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+      queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
+      toast.success("Areas deactivated", {
+        description: data.message,
+      });
+      // Re-run coverage check to refresh the card
+      checkCoverageMutation.mutate();
+    },
+    onError: (error) => {
+      toast.error("Deactivation failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    },
+  });
+
   const result = checkCoverageMutation.data || lastCheck?.result;
   const isLoading = checkCoverageMutation.isPending;
+  const isDeactivating = deactivateOrphansMutation.isPending;
+  const orphanedAreas = result?.orphanedAreas || [];
+  const orphanedZoneCount = new Set(orphanedAreas.map(a => a.removedNavioId)).size;
 
   const getHealthBadge = () => {
     if (!result) return { label: "Check Needed", variant: "secondary" as const };
@@ -171,6 +217,17 @@ export function CoverageHealthCard() {
                 )}
               </span>
             </div>
+
+            {/* Removed Zones / Orphaned Areas */}
+            <OrphanedZonesSection
+              orphanedAreas={orphanedAreas}
+              orphanedZoneCount={orphanedZoneCount}
+              removedFromApi={result.apiStatus.removedFromApi}
+              showOrphans={showOrphans}
+              setShowOrphans={setShowOrphans}
+              isDeactivating={isDeactivating}
+              onDeactivate={() => deactivateOrphansMutation.mutate()}
+            />
 
             {/* City Coverage - Collapsible Table */}
             <Collapsible open={showCities} onOpenChange={setShowCities}>
@@ -299,6 +356,94 @@ export function CoverageHealthCard() {
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function OrphanedZonesSection({
+  orphanedAreas,
+  orphanedZoneCount,
+  removedFromApi,
+  showOrphans,
+  setShowOrphans,
+  isDeactivating,
+  onDeactivate,
+}: {
+  orphanedAreas: OrphanedArea[];
+  orphanedZoneCount: number;
+  removedFromApi: number;
+  showOrphans: boolean;
+  setShowOrphans: (v: boolean) => void;
+  isDeactivating: boolean;
+  onDeactivate: () => void;
+}) {
+  if (orphanedAreas.length === 0 && removedFromApi === 0) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+        <span>All delivery zones active</span>
+      </div>
+    );
+  }
+
+  if (orphanedAreas.length === 0 && removedFromApi > 0) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+        <span>{removedFromApi} zones removed — no affected production areas</span>
+      </div>
+    );
+  }
+
+  // Group by city for display
+  const byCityMap = new Map<string, OrphanedArea[]>();
+  for (const a of orphanedAreas) {
+    if (!byCityMap.has(a.city)) byCityMap.set(a.city, []);
+    byCityMap.get(a.city)!.push(a);
+  }
+
+  return (
+    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 space-y-2">
+      <Collapsible open={showOrphans} onOpenChange={setShowOrphans}>
+        <CollapsibleTrigger asChild>
+          <button className="w-full flex items-center justify-between text-xs">
+            <span className="flex items-center gap-1.5 font-medium text-destructive">
+              <XCircle className="h-3.5 w-3.5" />
+              {orphanedZoneCount} removed zone{orphanedZoneCount !== 1 ? "s" : ""}
+            </span>
+            <span className="text-muted-foreground">
+              {orphanedAreas.length} area{orphanedAreas.length !== 1 ? "s" : ""} still active
+              {showOrphans ? <ChevronUp className="h-3 w-3 inline ml-1" /> : <ChevronDown className="h-3 w-3 inline ml-1" />}
+            </span>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-1.5">
+          <div className="max-h-28 overflow-auto text-[10px] space-y-0.5 pl-4">
+            {Array.from(byCityMap.entries()).map(([city, areas]) => (
+              <div key={city}>
+                <span className="font-medium">{city}</span>
+                <span className="text-muted-foreground/60"> — {areas.length} area{areas.length !== 1 ? "s" : ""}</span>
+              </div>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <Button
+        size="sm"
+        variant="destructive"
+        className="w-full h-7 text-xs"
+        disabled={isDeactivating}
+        onClick={onDeactivate}
+      >
+        {isDeactivating ? (
+          <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />
+        ) : (
+          <XCircle className="mr-1.5 h-3 w-3" />
+        )}
+        Deactivate {orphanedAreas.length} Area{orphanedAreas.length !== 1 ? "s" : ""}
+      </Button>
+    </div>
   );
 }
 

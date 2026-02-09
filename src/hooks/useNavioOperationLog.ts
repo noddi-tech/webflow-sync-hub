@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 
-export type OperationType = "delta_check" | "ai_import" | "geo_sync" | "commit" | "approve" | "reject" | "coverage_check";
+export type OperationType = "delta_check" | "ai_import" | "geo_sync" | "commit" | "approve" | "reject" | "coverage_check" | "deactivate_orphans";
 export type OperationStatus = "started" | "success" | "failed";
 
 export interface OperationLogEntry {
@@ -127,6 +127,8 @@ export function getOperationDisplayInfo(type: OperationType): { label: string; i
       return { label: "Reject", icon: "X" };
     case "coverage_check":
       return { label: "Coverage Check", icon: "Shield" };
+    case "deactivate_orphans":
+      return { label: "Deactivate Orphans", icon: "X" };
     default:
       return { label: type, icon: "Activity" };
   }

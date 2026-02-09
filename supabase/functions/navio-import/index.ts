@@ -2281,21 +2281,21 @@ serve(async (req) => {
           
           console.log(`Fetched ${liveAreas.length} live zones from Navio API`);
 
-          // 2. Fetch snapshot for API status comparison
+          // 2. Fetch snapshot for API status comparison (include ALL entries, not just active)
           const snapshotData = await fetchAllRows<{ navio_service_area_id: number; name: string; city_name: string | null; is_active: boolean | null }>(() =>
             supabase
               .from("navio_snapshot")
               .select("navio_service_area_id, name, city_name, is_active")
-              .eq("is_active", true)
               .order("id")
           );
+          const activeSnapshotData = snapshotData.filter(s => s.is_active !== false);
 
-          const snapshotCount = snapshotData.length;
-          const snapshotIds = new Set(snapshotData.map(s => s.navio_service_area_id));
+          const snapshotCount = activeSnapshotData.length;
+          const snapshotIds = new Set(activeSnapshotData.map(s => s.navio_service_area_id));
           const apiIds = new Set(liveAreas.map(a => a.id));
           
           const missingFromSnapshot = liveAreas.filter(a => !snapshotIds.has(a.id)).length;
-          const removedFromApi = snapshotData.filter(s => !apiIds.has(s.navio_service_area_id)).length;
+          const removedFromApi = activeSnapshotData.filter(s => !apiIds.has(s.navio_service_area_id)).length;
           const zonesWithGeofence = liveAreas.filter(a => a.geofence_geojson).length;
           
           const apiStatus = {
@@ -2322,10 +2322,10 @@ serve(async (req) => {
           console.log(`Area counts: ${totalAreas} total, ${withGeofenceCount} with geofence, ${missingGeofenceCount} missing`);
 
           // 4. Fetch area metadata (without geofence_json) using pagination for linkage analysis
-          const allProductionAreas = await fetchAllRows<{ id: string; name: string; navio_service_area_id: string | null; geofence_json: null; city: { name: string } | null }>(() =>
+          const allProductionAreas = await fetchAllRows<{ id: string; name: string; navio_service_area_id: string | null; is_delivery: boolean | null; city: { name: string } | null }>(() =>
             supabase
               .from("areas")
-              .select("id, name, navio_service_area_id, city:cities!areas_city_id_fkey(name)")
+              .select("id, name, navio_service_area_id, is_delivery, city:cities!areas_city_id_fkey(name)")
               .order("id")
           );
           
@@ -2427,7 +2427,7 @@ serve(async (req) => {
 
           // Count snapshot zones per city
           const snapshotCityMap = new Map<string, number>();
-          for (const s of snapshotData) {
+          for (const s of activeSnapshotData) {
             const city = s.city_name || "Unknown";
             snapshotCityMap.set(city, (snapshotCityMap.get(city) || 0) + 1);
           }
@@ -2444,12 +2444,59 @@ serve(async (req) => {
 
           console.log(`City breakdown: ${cityBreakdown.length} cities`);
 
+          // 9. Detect orphaned areas -- production areas linked to removed/inactive Navio zones
+          // Collect all removed Navio IDs: those in snapshot but not in live API + those marked inactive
+          const removedNavioIds = new Set<string>();
+          
+          // Snapshot entries no longer in live API
+          for (const s of activeSnapshotData) {
+            if (!apiIds.has(s.navio_service_area_id)) {
+              removedNavioIds.add(String(s.navio_service_area_id));
+            }
+          }
+          
+          // Snapshot entries explicitly marked inactive
+          const inactiveSnapshotEntries = snapshotData.filter(s => s.is_active === false);
+          for (const s of inactiveSnapshotEntries) {
+            removedNavioIds.add(String(s.navio_service_area_id));
+          }
+          
+          console.log(`Found ${removedNavioIds.size} removed/inactive Navio zone IDs`);
+          
+          // Find production areas still marked as delivery for these removed zones
+          const orphanedAreas = allProductionAreas
+            .filter(a => 
+              a.navio_service_area_id && 
+              /^\d+$/.test(a.navio_service_area_id) &&
+              removedNavioIds.has(a.navio_service_area_id) &&
+              a.is_delivery !== false
+            )
+            .map(a => {
+              const cityData = a.city as { name: string } | { name: string }[] | null;
+              let cityName = "Unknown";
+              if (cityData) {
+                if (Array.isArray(cityData)) {
+                  cityName = cityData[0]?.name || "Unknown";
+                } else {
+                  cityName = cityData.name || "Unknown";
+                }
+              }
+              return {
+                areaId: a.id,
+                areaName: a.name,
+                city: cityName,
+                removedNavioId: a.navio_service_area_id!,
+              };
+            });
+          
+          console.log(`Found ${orphanedAreas.length} orphaned production areas still marked as delivery`);
+
           // Determine overall health status
           let healthStatus: "healthy" | "warning" | "needs_attention" = "healthy";
           const unsyncedCities = cityBreakdown.filter(c => !c.synced);
-          if (missingGeofenceCount > 0 || unsyncedCities.length > 0) {
+          if (orphanedAreas.length > 0 || missingGeofenceCount > 0) {
             healthStatus = "needs_attention";
-          } else if (apiStatus.snapshotStale) {
+          } else if (unsyncedCities.length > 0 || apiStatus.snapshotStale) {
             healthStatus = "warning";
           }
 
@@ -2458,6 +2505,7 @@ serve(async (req) => {
             geofenceCoverage,
             navioLinkage,
             cityBreakdown,
+            orphanedAreas,
             healthStatus,
             areasNeedingAttention,
             // Keep legacy fields for backward compatibility during transition
@@ -2494,7 +2542,9 @@ serve(async (req) => {
                 status: "success",
                 completed_at: new Date().toISOString(),
                 details: {
-                  message: `${cityBreakdown.length} cities verified — ${uniquePolygons} unique zones across ${totalAreas.toLocaleString()} areas`,
+                  message: orphanedAreas.length > 0
+                    ? `${cityBreakdown.length} cities verified — ${orphanedAreas.length} orphaned areas need deactivation`
+                    : `${cityBreakdown.length} cities verified — ${uniquePolygons} unique zones across ${totalAreas.toLocaleString()} areas`,
                   cities: cityBreakdown.length,
                   geofenceCoverage: `${withGeofenceCount}/${totalAreas}`,
                   coveragePercent,
@@ -2504,6 +2554,8 @@ serve(async (req) => {
                   missingGeofence: missingGeofenceCount,
                   apiZones: apiStatus.liveZoneCount,
                   snapshotStale: apiStatus.snapshotStale,
+                  orphanedAreas: orphanedAreas.length,
+                  removedZones: removedNavioIds.size,
                 },
               })
               .eq("id", opLogId);
@@ -2530,6 +2582,145 @@ serve(async (req) => {
                 },
               })
               .eq("id", opLogId);
+          }
+          throw error;
+        }
+      }
+
+      case "deactivate_orphans": {
+        // Deactivate production areas linked to removed/inactive Navio zones
+        console.log("Starting deactivate_orphans...");
+        
+        // Log operation start
+        const { data: deactOpLog } = await supabase
+          .from("navio_operation_log")
+          .insert({
+            operation_type: "deactivate_orphans",
+            status: "started",
+            batch_id: batchId,
+          })
+          .select("id")
+          .single();
+        const deactOpLogId = deactOpLog?.id;
+
+        try {
+          // 1. Fetch all snapshot entries to find removed/inactive zones
+          const allSnapshot = await fetchAllRows<{ navio_service_area_id: number; is_active: boolean | null }>(() =>
+            supabase
+              .from("navio_snapshot")
+              .select("navio_service_area_id, is_active")
+              .order("id")
+          );
+          
+          // 2. Fetch live API to compare
+          const navioUrl = new URL("https://api.noddi.co/v1/service-areas/for-landing-pages/");
+          navioUrl.searchParams.set("page_size", "1000");
+          navioUrl.searchParams.set("page_index", "0");
+          const navioResp = await fetch(navioUrl.toString(), {
+            headers: {
+              Authorization: `Token ${NAVIO_API_TOKEN}`,
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+            },
+          });
+          if (!navioResp.ok) throw new Error(`Navio API error: ${navioResp.status}`);
+          const navioJson = await navioResp.json();
+          let liveIds = new Set<number>();
+          const liveResults = navioJson.results || navioJson;
+          if (Array.isArray(liveResults)) {
+            liveIds = new Set(liveResults.map((a: NavioServiceArea) => a.id));
+          }
+
+          // 3. Build set of removed Navio IDs
+          const removedIds = new Set<string>();
+          for (const s of allSnapshot) {
+            if (s.is_active === false || !liveIds.has(s.navio_service_area_id)) {
+              removedIds.add(String(s.navio_service_area_id));
+            }
+          }
+
+          if (removedIds.size === 0) {
+            if (deactOpLogId) {
+              await supabase.from("navio_operation_log").update({
+                status: "success",
+                completed_at: new Date().toISOString(),
+                details: { message: "No removed zones found — nothing to deactivate", deactivatedAreas: 0 },
+              }).eq("id", deactOpLogId);
+            }
+            return new Response(
+              JSON.stringify({ success: true, deactivatedAreas: 0, message: "No removed zones found" }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          // 4. Find and deactivate orphaned areas
+          const orphanAreaIds = await fetchAllRows<{ id: string; navio_service_area_id: string; district_id: string }>(() =>
+            supabase
+              .from("areas")
+              .select("id, navio_service_area_id, district_id")
+              .eq("is_delivery", true)
+              .not("navio_service_area_id", "is", null)
+              .order("id")
+          );
+
+          const toDeactivate = orphanAreaIds.filter(a =>
+            a.navio_service_area_id && removedIds.has(a.navio_service_area_id)
+          );
+
+          let deactivatedCount = 0;
+          // Batch update in chunks of 100
+          for (let i = 0; i < toDeactivate.length; i += 100) {
+            const chunk = toDeactivate.slice(i, i + 100);
+            const ids = chunk.map(a => a.id);
+            const { error } = await supabase
+              .from("areas")
+              .update({ is_delivery: false })
+              .in("id", ids);
+            if (!error) deactivatedCount += chunk.length;
+          }
+
+          // 5. Also deactivate parent districts where ALL child areas are now is_delivery=false
+          const affectedDistrictIds = [...new Set(toDeactivate.map(a => a.district_id))];
+          for (const districtId of affectedDistrictIds) {
+            const { count: activeChildCount } = await supabase
+              .from("areas")
+              .select("id", { count: "exact", head: true })
+              .eq("district_id", districtId)
+              .eq("is_delivery", true);
+            
+            if (activeChildCount === 0) {
+              await supabase.from("districts").update({ is_delivery: false }).eq("id", districtId);
+            }
+          }
+
+          if (deactOpLogId) {
+            await supabase.from("navio_operation_log").update({
+              status: "success",
+              completed_at: new Date().toISOString(),
+              details: {
+                message: `Deactivated ${deactivatedCount} areas linked to ${removedIds.size} removed zones`,
+                deactivatedAreas: deactivatedCount,
+                removedZones: removedIds.size,
+              },
+            }).eq("id", deactOpLogId);
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              deactivatedAreas: deactivatedCount,
+              removedZones: removedIds.size,
+              message: `Deactivated ${deactivatedCount} areas linked to ${removedIds.size} removed zones`,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        } catch (error) {
+          if (deactOpLogId) {
+            await supabase.from("navio_operation_log").update({
+              status: "failed",
+              completed_at: new Date().toISOString(),
+              details: { message: "Deactivation failed", error: error instanceof Error ? error.message : "Unknown" },
+            }).eq("id", deactOpLogId);
           }
           throw error;
         }
