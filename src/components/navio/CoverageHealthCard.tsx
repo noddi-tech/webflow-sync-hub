@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { 
   AlertTriangle, 
   RefreshCw, 
@@ -37,18 +38,23 @@ interface OrphanedArea {
   removedNavioId: string;
 }
 
-interface GeocodeValidation {
-  checked: number;
+interface DeepVerifyProgress {
+  total: number;
+  processed: number;
+  remaining: number;
+  batchProcessed: number;
   verified: number;
   mismatched: number;
   notFound: number;
   errors: number;
-  mismatches: Array<{
+  threshold: number;
+  complete: boolean;
+  mismatches?: Array<{
     areaName: string;
     city: string;
+    overlapPercent: number | null;
     geocodedLat?: number;
     geocodedLon?: number;
-    assignedZone?: string;
   }>;
 }
 
@@ -75,7 +81,7 @@ interface CoverageCheckResult {
   };
   cityBreakdown?: CityBreakdownEntry[];
   orphanedAreas?: OrphanedArea[];
-  geocodeValidation?: GeocodeValidation;
+  deepVerifyProgress?: DeepVerifyProgress;
   healthStatus: "healthy" | "warning" | "needs_attention";
   areasNeedingAttention: Array<{ id: string; name: string; city: string; issue: string }>;
 }
@@ -171,7 +177,7 @@ export function CoverageHealthCard() {
   const isDeactivating = deactivateOrphansMutation.isPending;
   const orphanedAreas = result?.orphanedAreas || [];
   const orphanedZoneCount = new Set(orphanedAreas.map(a => a.removedNavioId)).size;
-  const geocodeValidation = result?.geocodeValidation;
+  const deepVerifyProgress = result?.deepVerifyProgress;
 
   const deepVerifyMutation = useMutation({
     mutationFn: async () => {
@@ -185,10 +191,16 @@ export function CoverageHealthCard() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
       queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
-      const gv = data.geocodeValidation as GeocodeValidation;
-      toast.success("Deep verification complete", {
-        description: `${gv.verified}/${gv.checked} areas verified, ${gv.mismatched} mismatched`,
-      });
+      const p = data.deepVerifyProgress as DeepVerifyProgress;
+      if (p.complete) {
+        toast.success("Deep verification complete", {
+          description: `${p.verified}/${p.total} areas verified, ${p.mismatched} below ${p.threshold}% threshold`,
+        });
+      } else {
+        toast.success(`Batch complete: ${p.batchProcessed} areas processed`, {
+          description: `${p.processed}/${p.total} total — ${p.remaining} remaining`,
+        });
+      }
     },
     onError: (error) => {
       toast.error("Deep verification failed", {
@@ -340,41 +352,71 @@ export function CoverageHealthCard() {
               All neighborhoods inherit their parent Navio zone polygon
             </p>
 
-            {/* Geocode Validation / Deep Verify */}
-            {geocodeValidation ? (
+            {/* Deep Verify Progress */}
+            {deepVerifyProgress ? (
               <Collapsible open={showGeocode} onOpenChange={setShowGeocode}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-7 text-xs px-1.5">
                     <span className="flex items-center gap-1.5">
                       <MapPin className="h-3.5 w-3.5" />
-                      Location Verification
+                      Area Verification
                     </span>
                     <span className="text-muted-foreground">
-                      {geocodeValidation.verified}/{geocodeValidation.checked} verified
+                      {deepVerifyProgress.verified}/{deepVerifyProgress.total} verified
                       {showGeocode ? <ChevronUp className="h-3 w-3 inline ml-1" /> : <ChevronDown className="h-3 w-3 inline ml-1" />}
                     </span>
                   </Button>
                 </CollapsibleTrigger>
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground pl-5">
-                  {geocodeValidation.mismatched > 0 ? (
-                    <span className="text-amber-500">{geocodeValidation.mismatched} outside delivery zones</span>
-                  ) : (
-                    <span className="text-green-500">All sampled areas fall within delivery zones</span>
-                  )}
+                <div className="space-y-1.5 mt-1 pl-5 pr-1">
+                  <Progress value={(deepVerifyProgress.processed / deepVerifyProgress.total) * 100} className="h-1.5" />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>{deepVerifyProgress.processed.toLocaleString()} / {deepVerifyProgress.total.toLocaleString()} checked</span>
+                    <span>{Math.round((deepVerifyProgress.processed / deepVerifyProgress.total) * 100)}%</span>
+                  </div>
+                  <div className="flex gap-3 text-[10px]">
+                    <span className="text-green-600">✓ {deepVerifyProgress.verified} verified</span>
+                    {deepVerifyProgress.mismatched > 0 && (
+                      <span className="text-amber-500">✗ {deepVerifyProgress.mismatched} below {deepVerifyProgress.threshold}%</span>
+                    )}
+                    {deepVerifyProgress.notFound > 0 && (
+                      <span className="text-muted-foreground">{deepVerifyProgress.notFound} not found</span>
+                    )}
+                  </div>
                 </div>
                 <CollapsibleContent className="space-y-1 pt-1">
-                  {geocodeValidation.mismatches.map((m, i) => (
-                    <div key={i} className="text-[10px] pl-5 text-muted-foreground">
-                      <span className="text-amber-500">✗</span> {m.areaName} <span className="text-muted-foreground/60">({m.city})</span>
-                      {m.assignedZone && <span className="text-muted-foreground/60"> — {m.assignedZone}</span>}
-                    </div>
-                  ))}
-                  {geocodeValidation.notFound > 0 && (
-                    <div className="text-[10px] pl-5 text-muted-foreground/60">
-                      {geocodeValidation.notFound} areas could not be geocoded
+                  {deepVerifyProgress.mismatches && deepVerifyProgress.mismatches.length > 0 && (
+                    <div className="space-y-0.5 pl-5">
+                      <div className="text-[10px] font-medium text-muted-foreground">Recent mismatches:</div>
+                      {deepVerifyProgress.mismatches.slice(0, 10).map((m, i) => (
+                        <div key={i} className="text-[10px] text-muted-foreground">
+                          <span className="text-amber-500">✗</span> {m.areaName}
+                          <span className="text-muted-foreground/60"> ({m.city})</span>
+                          {m.overlapPercent !== null && (
+                            <span className="text-muted-foreground/60"> — {m.overlapPercent}% overlap</span>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </CollapsibleContent>
+                {!deepVerifyProgress.complete && (
+                  <Button
+                    onClick={() => deepVerifyMutation.mutate()}
+                    disabled={isDeepVerifying}
+                    size="sm"
+                    variant="outline"
+                    className="w-full h-7 text-xs mt-2"
+                  >
+                    {isDeepVerifying ? (
+                      <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />
+                    ) : (
+                      <MapPin className="mr-1.5 h-3 w-3" />
+                    )}
+                    {isDeepVerifying
+                      ? "Verifying..."
+                      : `Continue Verification (${deepVerifyProgress.remaining.toLocaleString()} remaining)`}
+                  </Button>
+                )}
               </Collapsible>
             ) : result.navioLinkage.aiDiscoveredIds > 0 ? (
               <Button
@@ -389,7 +431,7 @@ export function CoverageHealthCard() {
                 ) : (
                   <MapPin className="mr-1.5 h-3 w-3" />
                 )}
-                {isDeepVerifying ? "Verifying locations..." : `Deep Verify ${result.navioLinkage.aiDiscoveredIds.toLocaleString()} AI Areas`}
+                {isDeepVerifying ? "Verifying areas..." : `Start Deep Verify (${result.navioLinkage.aiDiscoveredIds.toLocaleString()} AI areas)`}
               </Button>
             ) : null}
 

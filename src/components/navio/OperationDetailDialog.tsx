@@ -55,7 +55,7 @@ export function OperationDetailDialog({ log, open, onOpenChange }: OperationDeta
   if (!log) return null;
 
   const details = log.details as Record<string, unknown> | null;
-  const isDeepVerify = log.operation_type === "coverage_check" && details && ("checked" in details || "mismatches" in details);
+  const isDeepVerify = log.operation_type === "coverage_check" && details && ("checked" in details || "mismatches" in details || "threshold" in details);
   const isCoverageCheck = log.operation_type === "coverage_check" && !isDeepVerify;
   const isDeactivateOrphans = log.operation_type === "deactivate_orphans";
 
@@ -280,17 +280,63 @@ function CoverageCheckDetails({ details, log, onOpenChange }: {
 // ── Deep Verify Details ─────────────────────────────────────
 
 function DeepVerifyDetails({ details }: { details: Record<string, unknown> }) {
-  const checked = (details.checked as number) || 0;
+  const total = (details.total as number) || 0;
+  const processed = (details.processed as number) || 0;
   const verified = (details.verified as number) || 0;
   const mismatched = (details.mismatched as number) || 0;
-  const notFound = checked - verified - mismatched;
+  const notFound = (details.notFound as number) || 0;
+  const errors = (details.errors as number) || 0;
+  const remaining = (details.remaining as number) || 0;
+  const threshold = (details.threshold as number) || 90;
+  const batchProcessed = (details.batchProcessed as number) || 0;
+  const complete = (details.complete as boolean) || false;
   const mismatches = (details.mismatches as Array<{
     areaName: string;
     city: string;
-    geocodedLat: number;
-    geocodedLon: number;
-    assignedZone?: string;
+    overlapPercent: number | null;
+    geocodedLat?: number;
+    geocodedLon?: number;
   }>) || [];
+
+  // Legacy format support (old geocode-only results)
+  const checked = (details.checked as number) || 0;
+  const isLegacy = checked > 0 && total === 0;
+
+  if (isLegacy) {
+    // Old format: just show basic counts
+    const legacyMismatches = (details.mismatches as Array<{
+      areaName: string;
+      city: string;
+      geocodedLat?: number;
+      geocodedLon?: number;
+      assignedZone?: string;
+    }>) || [];
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-primary" />
+          <span className="text-sm font-medium">{checked} areas geocoded (legacy)</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <MetricItem label="Verified" value={String(verified)} />
+          <MetricItem label="Mismatched" value={String(mismatched)} />
+          <MetricItem label="Not Found" value={String(checked - verified - mismatched)} />
+        </div>
+        {legacyMismatches.length > 0 && (
+          <div className="space-y-1.5 max-h-48 overflow-auto">
+            {legacyMismatches.map((m, i) => (
+              <div key={i} className="rounded-md border p-2 text-xs">
+                <span className="font-medium">{m.areaName}</span>
+                <span className="text-muted-foreground ml-1">({m.city})</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const progressPercent = total > 0 ? Math.round((processed / total) * 100) : 0;
 
   return (
     <div className="space-y-4">
@@ -298,36 +344,56 @@ function DeepVerifyDetails({ details }: { details: Record<string, unknown> }) {
       <div className="flex items-center gap-2">
         <Search className="h-4 w-4 text-primary" />
         <span className="text-sm font-medium">
-          {checked} areas geocoded
+          {complete ? "Verification Complete" : `Batch: ${batchProcessed} areas processed`}
         </span>
       </div>
 
+      {/* Progress */}
+      <div className="space-y-1">
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>{processed.toLocaleString()} / {total.toLocaleString()} areas checked</span>
+          <span>{progressPercent}%</span>
+        </div>
+        <div className="h-2 bg-secondary rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary transition-all"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        {remaining > 0 && (
+          <div className="text-[10px] text-muted-foreground">
+            {remaining.toLocaleString()} areas remaining — run Deep Verify again to continue
+          </div>
+        )}
+      </div>
+
       {/* Metrics */}
-      <div className="grid grid-cols-3 gap-2 text-xs">
-        <MetricItem label="Verified" value={String(verified)} />
-        <MetricItem label="Mismatched" value={String(mismatched)} />
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <MetricItem label={`Verified (≥${threshold}%)`} value={String(verified)} />
+        <MetricItem label={`Below ${threshold}%`} value={String(mismatched)} />
         <MetricItem label="Not Found" value={String(notFound)} />
+        <MetricItem label="Errors" value={String(errors)} />
       </div>
 
       {/* Verified indicator */}
       {verified > 0 && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-          {verified} area{verified !== 1 ? "s" : ""} confirmed inside their assigned delivery zone
+          {verified} area{verified !== 1 ? "s" : ""} have ≥{threshold}% overlap with their delivery zone
         </div>
       )}
 
-      {/* Mismatches */}
+      {/* Mismatches with overlap % */}
       {mismatches.length > 0 && (
         <>
           <Separator />
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm font-medium text-destructive">
               <AlertTriangle className="h-4 w-4" />
-              {mismatches.length} area{mismatches.length !== 1 ? "s" : ""} outside assigned zone
+              {mismatches.length} area{mismatches.length !== 1 ? "s" : ""} below {threshold}% overlap
             </div>
             <p className="text-xs text-muted-foreground">
-              These AI-discovered areas geocode to coordinates outside their assigned Navio delivery zone:
+              These areas have been set to <code className="bg-muted px-1 rounded">is_delivery = false</code>. Parent district/city flags cascade automatically.
             </p>
             <div className="space-y-1.5 max-h-48 overflow-auto">
               {mismatches.map((m, i) => (
@@ -337,8 +403,14 @@ function DeepVerifyDetails({ details }: { details: Record<string, unknown> }) {
                     <Badge variant="outline" className="text-[10px]">{m.city}</Badge>
                   </div>
                   <div className="text-muted-foreground text-[10px]">
-                    Geocoded to ({m.geocodedLat?.toFixed(4)}, {m.geocodedLon?.toFixed(4)})
-                    {m.assignedZone && <> — expected in zone "{m.assignedZone}"</>}
+                    {m.overlapPercent !== null ? (
+                      <span className="text-amber-500 font-medium">{m.overlapPercent}% overlap</span>
+                    ) : (
+                      <span>Point check failed</span>
+                    )}
+                    {m.geocodedLat && m.geocodedLon && (
+                      <span className="ml-2">({m.geocodedLat.toFixed(4)}, {m.geocodedLon.toFixed(4)})</span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -352,7 +424,7 @@ function DeepVerifyDetails({ details }: { details: Record<string, unknown> }) {
           <Separator />
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-            All geocoded areas are correctly placed within their delivery zones
+            All checked areas have sufficient overlap with their delivery zones
           </div>
         </>
       )}
