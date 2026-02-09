@@ -1,122 +1,78 @@
 
 
-# Clickable Operation Details + Real Spatial Validation
+# Fix Deep Verify: Coordinate Swap + Dialog Display
 
-## Two Problems to Solve
+## Root Cause Analysis
 
-### Problem 1: Operation History lacks detail
-Clicking a Coverage Check entry in "Recent Operations" does nothing. You see a one-line summary but no explanation of WHY 105 areas should be deactivated, which zones were removed, or what cities are affected.
+### Bug 1: 0/39 verified, 28 mismatched -- all wrong
+The Navio API returns polygon coordinates in **[lat, lon] order** instead of the standard GeoJSON [lon, lat]. When these are stored in PostGIS via `ST_GeomFromGeoJSON`, PostGIS interprets the first value as X (longitude) and second as Y (latitude), so the stored geometries have **lat and lon swapped**.
 
-### Problem 2: No way to verify AI-discovered areas are real
-The current spatial check is meaningless: every area inherits the exact same polygon as its parent Navio zone, so the center point is always inside the polygon by definition. There are only 188 unique center points across 4,898 areas.
+The deep verify geocodes an area name (e.g., "Thorvald Meyers gate, Oslo") and gets correct coordinates (lat=59.918, lon=10.759). It then calls `find_delivery_areas(lat=59.918, lng=10.759)` which creates `ST_MakePoint(10.759, 59.918)` -- correct WGS84. But the stored polygons are in swapped space, so nothing matches.
 
-**What we actually need**: geocode each AI-discovered area name independently (e.g., "is Grünerløkka actually inside Oslo's delivery zone?") and check if the resulting coordinates fall within the assigned Navio polygon.
+**Proof**: Querying with swapped coordinates `ST_MakePoint(59.918, 10.759)` returns a match; correct coordinates return zero.
 
----
+**Fix**: Swap the arguments in the deep verify call to match the stored coordinate order.
 
-## Solution
+### Bug 2: Dialog shows all zeros
+The deep verify logs with `operation_type: "coverage_check"` but only stores geocode-specific fields (`checked`, `verified`, `mismatched`, `mismatches`). The dialog's `CoverageCheckDetails` component tries to read `apiZones`, `coveragePercent`, etc. which are all undefined, rendering as "0".
 
-### Part 1: Clickable Operation Detail Dialog
-
-Add a detail dialog that opens when clicking any operation row in Recent Operations.
-
-**What it shows for Coverage Check:**
-- Health status badge with explanation
-- Orphaned areas section: lists removed Navio zone names, the affected production areas per zone, and WHY they should be deactivated ("Navio zone `Norway Oslo Bygdøy` is no longer active in the API")
-- City breakdown table (same as in the Coverage Health Card)
-- Navio linkage summary
-- Deactivate button (if orphans exist) directly in the dialog
-
-**What it shows for other operations (AI Import, Geo Sync, etc.):**
-- All stored JSON details rendered as a readable summary
-- Key metrics highlighted
-- Error message (if failed)
-
-### Part 2: Geocoding Validation in Coverage Check
-
-Add a new validation step to the coverage check that:
-
-1. Takes a sample of AI-discovered areas (e.g., 5 per city to stay within API limits)
-2. Geocodes each area name using Nominatim (free, no API key needed): `"Grünerløkka, Oslo, Norway"`
-3. Checks if the returned coordinates fall within the assigned Navio polygon using PostGIS `ST_Within`
-4. Reports mismatches: "Grünerløkka geocodes to (59.92, 10.76) which is OUTSIDE its assigned zone"
-
-This creates a new section in the coverage result: **"Location Verification"** showing validated vs mismatched areas.
+**Fix**: Detect deep verify results and render a dedicated geocode validation view.
 
 ---
 
-## Technical Changes
+## Changes
 
-### New File: `src/components/navio/OperationDetailDialog.tsx`
+### 1. Edge Function: Swap coordinates (`supabase/functions/navio-import/index.ts`)
 
-A dialog component that:
-- Receives an `OperationLogEntry` and renders a detailed view
-- For `coverage_check` operations: parses the stored JSON details to show orphaned zones with full context (zone name, city, area count, reason for deactivation)
-- For `deactivate_orphans`: shows what was deactivated and cascading district changes
-- For other operations: renders details as a formatted key-value list
-- Includes action buttons where relevant (e.g., "Deactivate" for coverage checks with orphans)
-
-### Modified: `src/components/navio/OperationHistoryTable.tsx`
-
-- Make each operation row clickable (add cursor-pointer, hover state)
-- On click, open `OperationDetailDialog` with the log entry
-- Add a state variable for the selected log entry
-
-### Modified: `supabase/functions/navio-import/index.ts`
-
-In the `coverage_check` mode, add geocoding validation:
-
-1. After building the city breakdown, select up to 5 AI-discovered areas per city (max ~90 total across 18 cities)
-2. For each, call Nominatim: `https://nominatim.openstreetmap.org/search?q={areaName},{cityName},{country}&format=json&limit=1`
-3. Rate-limit to 1 request per second (Nominatim policy)
-4. For each successful geocode, run a PostGIS check: does the point fall within the assigned Navio polygon?
-5. Add results to the response as `geocodeValidation`:
+In the `coverage_check_deep` mode (~line 2741), change the `find_delivery_areas` call:
 
 ```typescript
-geocodeValidation: {
-  checked: number;        // e.g., 72
-  verified: number;       // geocoded + falls within zone
-  mismatched: number;     // geocoded but outside zone
-  notFound: number;       // Nominatim returned no results
-  mismatches: Array<{
-    areaName: string;
-    city: string;
-    geocodedLat: number;
-    geocodedLon: number;
-    assignedZone: string;
-  }>;
-}
+// Before (broken):
+const { data: containsResult } = await supabase.rpc("find_delivery_areas", {
+  lat,
+  lng: lon,
+});
+
+// After (matches swapped polygon storage):
+const { data: containsResult } = await supabase.rpc("find_delivery_areas", {
+  lat: lon,   // pass real lon as lat param -> becomes Y in ST_MakePoint
+  lng: lat,   // pass real lat as lng param -> becomes X in ST_MakePoint
+});
 ```
 
-**Important**: This adds ~90 seconds to the coverage check (90 areas at 1/sec). To keep the current check fast, this will be a separate optional mode: `coverage_check_deep` that the user can trigger via a "Deep Verify" button.
+This makes `ST_MakePoint(real_lat, real_lon)` which matches the swapped coordinate space of the stored polygons.
 
-### Modified: `src/components/navio/CoverageHealthCard.tsx`
+### 2. Dialog: Handle deep verify results (`src/components/navio/OperationDetailDialog.tsx`)
 
-- Store more detail in the operation log `details` JSON: include removed zone names (not just IDs), affected city names
-- Add a "Deep Verify" button that runs geocoding validation
-- Show geocode results section when available
+Detect deep verify operations by checking for `checked` or `mismatches` fields in the details JSON. When found, render a dedicated view:
 
-### Modified: Operation Log Details Storage
+- Summary: "39 areas geocoded, 28 verified, 3 mismatched, 8 not found"
+- Verified count with green indicator
+- Mismatched areas listed with their geocoded coordinates and which zone they were expected in
+- "Not found" count (Nominatim couldn't geocode the name)
 
-Enrich the `details` JSON saved to `navio_operation_log` for coverage checks to include:
-- `removedZoneNames`: array of zone display names that were removed
-- `orphanedAreasByZone`: grouped by zone name for readable display
-- `geocodeValidation` results (when deep check is run)
+This replaces the generic `CoverageCheckDetails` that currently renders zeros.
+
+### 3. Also fix the regular coverage check dialog
+
+The regular `coverage_check` details (not deep) currently show zeros for `apiZones`, `coveragePercent` etc. because those fields aren't stored in the operation log. Need to ensure the coverage_check mode stores these metrics when logging to `navio_operation_log`.
+
+Check the coverage_check log storage and add the missing fields if needed.
 
 ---
 
-## Files to Create/Edit
+## Files to Edit
 
 | File | Change |
 |------|--------|
-| `src/components/navio/OperationDetailDialog.tsx` | NEW -- detail dialog for operation log entries |
-| `src/components/navio/OperationHistoryTable.tsx` | Make rows clickable, open detail dialog |
-| `supabase/functions/navio-import/index.ts` | Enrich coverage_check details, add `coverage_check_deep` mode with Nominatim geocoding |
-| `src/components/navio/CoverageHealthCard.tsx` | Add "Deep Verify" button, show geocode results |
+| `supabase/functions/navio-import/index.ts` | Swap lat/lng in the `find_delivery_areas` call within `coverage_check_deep` |
+| `src/components/navio/OperationDetailDialog.tsx` | Add dedicated deep verify results view; fix coverage check details to handle missing fields |
 
-## Edge Cases Handled
+---
 
-- Nominatim rate limiting: 1 req/sec with retry on 429
-- Nominatim returns wrong location: compare country code to filter obviously wrong results
-- Edge function timeout: limit to 5 areas per city, abort if approaching 60s
-- Coordinate order: Navio GeoJSON uses [lat, lon] format -- geocoded coordinates must be stored in the same order for PostGIS comparison
+## Expected Result After Fix
+
+Deep verify should show realistic results like:
+- "39 areas geocoded: 28 verified, 3 mismatched, 8 not found"
+- Mismatched areas will be genuinely outside their assigned Navio zone polygon
+- Dialog will clearly show geocode validation results instead of zeros
