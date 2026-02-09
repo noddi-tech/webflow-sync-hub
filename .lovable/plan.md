@@ -1,120 +1,95 @@
 
+# Fix Deep Verify: Check Against ALL Navio Zones, Not Just Assigned One
 
-# Granular Per-Area Deep Verify with Polygon Overlap
+## Root Cause
 
-## The Problem
+The deep verify function compares each AI-discovered area's Nominatim polygon against the area's own `geofence` column -- which is the polygon inherited from whichever Navio zone the AI import assigned it to.
 
-Currently, deep verify only checks if a single geocoded **point** falls inside a Navio delivery zone. That's too crude -- a neighborhood like "Frogner" has actual boundaries, not just a center point. A point might land just outside a polygon edge while 95% of the neighborhood is inside.
+The problem: AI import assigned many areas to the **wrong** Navio zone. For example, "Boler" in Oslo was assigned to zone 130 (centroid ~10.50 lon) but actually belongs to zone 123 "Norway Oslo Boler" (centroid ~10.84 lon). The overlap is correctly calculated as 0% because the area genuinely doesn't overlap with zone 130.
 
-You need: **"Does the actual boundary of this AI-discovered area overlap with the Navio delivery zone by at least 90%?"**
+**Proof from database:**
+- Boler (lat 59.88, lon 10.84) was assigned to zone 130 (bbox lon 10.46-10.54) -- wrong zone
+- Querying the navio_snapshot directly: Boler's coordinates fall within zone 123 "Norway Oslo Boler" -- the correct zone
+- 22 out of 24 "mismatched" areas show 0% overlap, meaning they're in completely wrong zones
 
-And you need this for **all 4,710 AI-discovered areas**, not just a sample.
+## The Fix
 
-## The Delivery Logic
+Instead of checking against the single assigned zone, check the Nominatim polygon against **all active Navio zones in the same city**. If the area overlaps >= 90% with ANY zone, it's verified. If it matches a different zone than assigned, reassign it.
 
-```text
-Area is verified    -> is_delivery = true for area
-Area NOT verified   -> is_delivery = false for area
+## Changes
 
-Any area in district verified -> is_delivery = true for district
-No areas in district verified -> is_delivery = false for district
+### 1. New PostGIS function: `check_area_best_navio_overlap`
 
-Any district in city verified -> is_delivery = true for city
-No districts in city verified -> is_delivery = false for city
+Replaces per-area checking with a city-wide search:
+
+```sql
+-- Takes: Nominatim GeoJSON polygon + city name
+-- Returns: best overlap %, matching zone ID, matching zone name
+-- Logic:
+--   1. Flip Nominatim coordinates to match stored Navio format
+--   2. Check against ALL active navio_snapshot zones in that city  
+--   3. Return the zone with highest overlap
 ```
 
-## Solution Design
+This checks the navio_snapshot table directly (authoritative source) rather than the area's inherited geofence.
 
-### Why batching is necessary
+### 2. Edge function update (`supabase/functions/navio-import/index.ts`)
 
-4,710 areas at 1 request/second (Nominatim rate limit) = ~78 minutes. A single edge function times out at 60 seconds. So we need:
+In `coverage_check_deep`:
+- Call new `check_area_best_navio_overlap` instead of `check_area_navio_overlap`
+- If a match is found in a different zone than currently assigned, update the area's `navio_service_area_id` and `geofence` to the correct zone
+- For point-in-polygon fallback, also check against all zones via navio_snapshot
 
-1. **Persistent per-area verification status** stored in the database
-2. **Batch processing** -- each run verifies ~45 areas (45 seconds of geocoding + overhead)
-3. **Progress tracking** -- UI shows "1,200 / 4,710 verified" and a "Continue" button
-4. **Automatic cascading** -- after verification, update district and city `is_delivery` flags based on child results
+### 3. Reset existing verification results
 
-### Step 1: Database migration
+Since the previous batch of 34 results was computed against wrong zones, reset `geo_verified_at`, `geo_verified_status`, and `geo_overlap_percent` to NULL for all areas that were checked, so they get re-verified correctly.
 
-Add columns to the `areas` table to track verification:
+---
 
-- `geo_verified_at` (timestamptz, nullable) -- when this area was last verified
-- `geo_verified_status` (text, nullable) -- "verified", "mismatched", "not_found", "error"
-- `geo_overlap_percent` (numeric, nullable) -- 0-100, the actual overlap percentage
-- `geo_verified_point` (geometry, nullable) -- the geocoded center point from Nominatim
+## Technical Detail
 
-This lets us track progress across multiple runs and avoids re-verifying areas that are already done.
+### New PostGIS function
 
-### Step 2: Edge function changes (`supabase/functions/navio-import/index.ts`)
-
-Rewrite `coverage_check_deep` to:
-
-1. Query areas WHERE `geo_verified_at IS NULL` and `navio_service_area_id LIKE 'discovered_%'` -- only unverified areas
-2. Take the first 45 (sorted by city for locality)
-3. For each area:
-   a. Call Nominatim with `polygon_geojson=1` to get the actual neighborhood boundary
-   b. If polygon returned: use a new PostGIS function to compute overlap % with the Navio delivery zone
-   c. If only point returned: fall back to point-in-polygon check (treat as 100% or 0%)
-   d. Store results in the area row (`geo_verified_status`, `geo_overlap_percent`, `geo_verified_at`)
-4. Apply the 90% threshold: areas with >= 90% overlap are "verified", below are "mismatched"
-5. Return progress: `{ verified: X, remaining: Y, total: Z }`
-
-### Step 3: New PostGIS function
-
-Create `check_area_navio_overlap(area_geojson jsonb, navio_zone_id text)` that:
-
-1. Converts the Nominatim GeoJSON polygon to a PostGIS geometry
-2. Finds the Navio zone polygon from the `areas` table (the parent zone polygon assigned to this area)
-3. Computes `ST_Area(ST_Intersection(area_poly, zone_poly)) / ST_Area(area_poly) * 100`
-4. Returns the overlap percentage
-
-Note: Since Navio polygons are stored with swapped coordinates, the function must handle coordinate consistency.
-
-### Step 4: Cascade `is_delivery` flags
-
-After each batch completes, run cascading updates:
-
-```text
-For each area with geo_overlap_percent < 90:
-  -> SET is_delivery = false
-
-For each district:
-  -> SET is_delivery = (any child area has is_delivery = true)
-
-For each city:
-  -> SET is_delivery = (any child district has is_delivery = true)
+```sql
+CREATE OR REPLACE FUNCTION check_area_best_navio_overlap(
+  area_geojson jsonb,
+  p_city_name text
+) RETURNS TABLE(overlap_percent numeric, zone_id integer, zone_name text)
+AS $$
+  -- Convert Nominatim polygon and flip coordinates
+  -- Loop through navio_snapshot WHERE city_name matches
+  -- Extract geometry from geofence_json->'geometry'
+  -- Compute overlap for each zone
+  -- Return the best match
+$$;
 ```
 
-This ensures the CMS accurately reflects where you actually deliver.
+### Point-in-polygon fallback
 
-### Step 5: UI updates
+```sql
+CREATE OR REPLACE FUNCTION check_point_best_navio_zone(
+  p_lat float, p_lon float, p_city_name text
+) RETURNS TABLE(zone_id integer, zone_name text)
+-- Checks swapped point (p_lat, p_lon) against all zones in city
+```
 
-**CoverageHealthCard.tsx:**
-- Replace the current "Deep Verify" button with a progress-aware version
-- Show: "Verified: 1,200 / 4,710 areas (25%)" with a progress bar
-- Button text changes: "Start Deep Verify" -> "Continue Verification (3,510 remaining)" -> "All Verified"
-- Show summary stats: X verified, Y mismatched, Z not found
+### Edge function changes
 
-**OperationDetailDialog.tsx:**
-- Update deep verify details to show per-area results with overlap percentages
-- Show mismatched areas with their actual overlap % (e.g., "Frogner: 42% overlap -- below 90% threshold")
-- Include the cascade impact: "Setting is_delivery=false for 23 areas, 2 districts"
+After getting the best overlap:
+- If overlap >= 90%: mark verified, update area's zone assignment if different
+- If overlap < 90% but > 0%: mark mismatched with actual percentage  
+- If no overlap with any zone: mark mismatched with 0%
 
 ## Files to Edit
 
 | File | Change |
 |------|--------|
-| New migration | Add `geo_verified_at`, `geo_verified_status`, `geo_overlap_percent`, `geo_verified_point` columns to `areas`; create `check_area_navio_overlap` PostGIS function |
-| `supabase/functions/navio-import/index.ts` | Rewrite `coverage_check_deep` for batched processing with polygon overlap + cascading |
-| `src/components/navio/CoverageHealthCard.tsx` | Add progress bar, batch continuation, summary stats |
-| `src/components/navio/OperationDetailDialog.tsx` | Show per-area overlap percentages and cascade impact |
+| New SQL migration | Create `check_area_best_navio_overlap` + `check_point_best_navio_zone` functions; reset bad verification data |
+| `supabase/functions/navio-import/index.ts` | Use new city-wide overlap functions instead of per-area check |
 
 ## Expected Result
 
-After running Deep Verify several times (or letting it auto-continue):
-- Every AI-discovered area has a verified overlap percentage
-- Areas below 90% overlap are automatically set to `is_delivery = false`
-- Districts and cities cascade accordingly
-- The UI shows exactly which areas passed/failed and by how much
-- You can re-run verification at any time (it only processes unverified areas)
-
+After re-running Deep Verify:
+- Areas like "Boler" will match zone 123 at high overlap and be marked "verified"
+- Areas that genuinely don't fall within any Navio zone will be correctly marked "mismatched"
+- Wrongly-assigned zones get corrected automatically
