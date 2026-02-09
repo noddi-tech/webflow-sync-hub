@@ -33,6 +33,26 @@ interface GeoJSONPolygon {
   coordinates: number[][][] | number[][][][];
 }
 
+// Helper to paginate past Supabase's 1,000-row default limit
+// deno-lint-ignore no-explicit-any
+async function fetchAllRows<T>(queryFn: () => any, batchSize = 1000): Promise<T[]> {
+  const allData: T[] = [];
+  let offset = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const { data, error } = await queryFn().range(offset, offset + batchSize - 1);
+    if (error) throw error;
+    if (data && data.length > 0) {
+      allData.push(...data);
+      offset += batchSize;
+      hasMore = data.length === batchSize;
+    } else {
+      hasMore = false;
+    }
+  }
+  return allData;
+}
+
 // Helper to create MD5-like hash for geofence comparison
 function hashGeofence(geofence: GeoJSONPolygon | null | undefined): string | null {
   if (!geofence || !geofence.coordinates || !Array.isArray(geofence.coordinates)) {
@@ -2262,17 +2282,20 @@ serve(async (req) => {
           console.log(`Fetched ${liveAreas.length} live zones from Navio API`);
 
           // 2. Fetch snapshot for API status comparison
-          const { data: snapshotData } = await supabase
-            .from("navio_snapshot")
-            .select("navio_service_area_id, name, city_name, is_active")
-            .eq("is_active", true);
+          const snapshotData = await fetchAllRows<{ navio_service_area_id: number; name: string; city_name: string | null; is_active: boolean | null }>(() =>
+            supabase
+              .from("navio_snapshot")
+              .select("navio_service_area_id, name, city_name, is_active")
+              .eq("is_active", true)
+              .order("id")
+          );
 
-          const snapshotCount = snapshotData?.length || 0;
-          const snapshotIds = new Set(snapshotData?.map(s => s.navio_service_area_id) || []);
+          const snapshotCount = snapshotData.length;
+          const snapshotIds = new Set(snapshotData.map(s => s.navio_service_area_id));
           const apiIds = new Set(liveAreas.map(a => a.id));
           
           const missingFromSnapshot = liveAreas.filter(a => !snapshotIds.has(a.id)).length;
-          const removedFromApi = snapshotData?.filter(s => !apiIds.has(s.navio_service_area_id)).length || 0;
+          const removedFromApi = snapshotData.filter(s => !apiIds.has(s.navio_service_area_id)).length;
           const zonesWithGeofence = liveAreas.filter(a => a.geofence_geojson).length;
           
           const apiStatus = {
@@ -2286,60 +2309,40 @@ serve(async (req) => {
           
           console.log(`API Status: ${liveAreas.length} zones, ${snapshotCount} in snapshot, ${missingFromSnapshot} new, ${removedFromApi} removed`);
 
-          // 3. Fetch ALL production areas (not just those with geofences)
-          const { data: allProductionAreas, error: prodError } = await supabase
-            .from("areas")
-            .select("id, name, navio_service_area_id, geofence_json, city:cities!areas_city_id_fkey(name)");
+          // 3. Use COUNT queries for geofence stats (avoids fetching large geofence_json payloads)
+          const [totalCountRes, withGeofenceCountRes] = await Promise.all([
+            supabase.from("areas").select("id", { count: "exact", head: true }),
+            supabase.from("areas").select("id", { count: "exact", head: true }).not("geofence_json", "is", null),
+          ]);
           
-          if (prodError) {
-            console.error("Error fetching production areas:", prodError);
-            throw prodError;
-          }
+          const totalAreas = totalCountRes.count || 0;
+          const withGeofenceCount = withGeofenceCountRes.count || 0;
+          const missingGeofenceCount = totalAreas - withGeofenceCount;
           
-          const totalAreas = allProductionAreas?.length || 0;
-          console.log(`Fetched ${totalAreas} total production areas`);
+          console.log(`Area counts: ${totalAreas} total, ${withGeofenceCount} with geofence, ${missingGeofenceCount} missing`);
 
-          // 4. Analyze geofence coverage
-          const areasWithGeofence = allProductionAreas?.filter(a => a.geofence_json) || [];
-          const areasMissingGeofence = allProductionAreas?.filter(a => !a.geofence_json) || [];
+          // 4. Fetch area metadata (without geofence_json) using pagination for linkage analysis
+          const allProductionAreas = await fetchAllRows<{ id: string; name: string; navio_service_area_id: string | null; geofence_json: null; city: { name: string } | null }>(() =>
+            supabase
+              .from("areas")
+              .select("id, name, navio_service_area_id, city:cities!areas_city_id_fkey(name)")
+              .order("id")
+          );
           
-          // Count unique geofences by hashing them
-          const geofenceHashes = new Set<string>();
-          for (const area of areasWithGeofence) {
-            if (area.geofence_json) {
-              const hash = hashGeofence(area.geofence_json as GeoJSONPolygon);
-              if (hash) geofenceHashes.add(hash);
-            }
-          }
-          
-          const coveragePercent = totalAreas > 0 
-            ? Math.round((areasWithGeofence.length / totalAreas) * 100) 
-            : 0;
-          
-          const geofenceCoverage = {
-            totalAreas,
-            withGeofence: areasWithGeofence.length,
-            missingGeofence: areasMissingGeofence.length,
-            coveragePercent,
-            uniquePolygons: geofenceHashes.size,
-          };
-          
-          console.log(`Geofence Coverage: ${areasWithGeofence.length}/${totalAreas} (${coveragePercent}%), ${geofenceHashes.size} unique polygons`);
+          console.log(`Fetched ${allProductionAreas.length} area records for linkage analysis`);
 
           // 5. Analyze Navio ID linkage
-          // Real Navio IDs are numeric (like "123")
-          // AI-discovered IDs start with "discovered_"
-          const areasWithRealNavioId = allProductionAreas?.filter(a => {
+          const areasWithRealNavioId = allProductionAreas.filter(a => {
             if (!a.navio_service_area_id) return false;
             return /^\d+$/.test(a.navio_service_area_id);
-          }) || [];
+          });
           
-          const areasWithAiDiscoveredId = allProductionAreas?.filter(a => {
+          const areasWithAiDiscoveredId = allProductionAreas.filter(a => {
             if (!a.navio_service_area_id) return false;
             return a.navio_service_area_id.startsWith("discovered_");
-          }) || [];
+          });
           
-          const areasWithNoNavioId = allProductionAreas?.filter(a => !a.navio_service_area_id) || [];
+          const areasWithNoNavioId = allProductionAreas.filter(a => !a.navio_service_area_id);
           
           const navioLinkage = {
             realNavioIds: areasWithRealNavioId.length,
@@ -2349,32 +2352,62 @@ serve(async (req) => {
           
           console.log(`Navio Linkage: ${navioLinkage.realNavioIds} real IDs, ${navioLinkage.aiDiscoveredIds} AI-discovered, ${navioLinkage.noNavioId} no ID`);
 
-          // 6. Identify areas that actually need attention (missing geofence or no ID at all)
-          const areasNeedingAttention = areasMissingGeofence
-            .slice(0, 50)
-            .map(a => {
-              const cityData = a.city as { name: string } | { name: string }[] | null;
-              let cityName = "Unknown";
-              if (cityData) {
-                if (Array.isArray(cityData)) {
-                  cityName = cityData[0]?.name || "Unknown";
-                } else {
-                  cityName = cityData.name || "Unknown";
-                }
+          // 6. Unique polygon count - fetch geofence hashes from snapshot (much smaller dataset)
+          const snapshotGeofenceData = await fetchAllRows<{ geofence_hash: string | null }>(() =>
+            supabase
+              .from("navio_snapshot")
+              .select("geofence_hash")
+              .eq("is_active", true)
+              .not("geofence_hash", "is", null)
+              .order("id")
+          );
+          const uniquePolygons = new Set(snapshotGeofenceData.map(s => s.geofence_hash)).size;
+          
+          const coveragePercent = totalAreas > 0 
+            ? Math.round((withGeofenceCount / totalAreas) * 100) 
+            : 0;
+          
+          const geofenceCoverage = {
+            totalAreas,
+            withGeofence: withGeofenceCount,
+            missingGeofence: missingGeofenceCount,
+            coveragePercent,
+            uniquePolygons,
+          };
+          
+          console.log(`Geofence Coverage: ${withGeofenceCount}/${totalAreas} (${coveragePercent}%), ${uniquePolygons} unique polygons`);
+
+          // 7. Identify areas needing attention (fetch a small sample of areas missing geofences)
+          const { data: attentionAreas } = await supabase
+            .from("areas")
+            .select("id, name, city:cities!areas_city_id_fkey(name)")
+            .is("geofence_json", null)
+            .order("name")
+            .limit(50);
+          
+          const areasNeedingAttention = (attentionAreas || []).map(a => {
+            const cityData = a.city as { name: string } | { name: string }[] | null;
+            let cityName = "Unknown";
+            if (cityData) {
+              if (Array.isArray(cityData)) {
+                cityName = cityData[0]?.name || "Unknown";
+              } else {
+                cityName = cityData.name || "Unknown";
               }
-              return {
-                id: a.id,
-                name: a.name,
-                city: cityName,
-                issue: "missing_geofence",
-              };
-            });
+            }
+            return {
+              id: a.id,
+              name: a.name,
+              city: cityName,
+              issue: "missing_geofence",
+            };
+          });
 
           // Determine overall health status
           let healthStatus: "healthy" | "warning" | "needs_attention" = "healthy";
           if (coveragePercent < 80 || apiStatus.snapshotStale) {
             healthStatus = "needs_attention";
-          } else if (coveragePercent < 95 || areasMissingGeofence.length > 100) {
+          } else if (coveragePercent < 95 || missingGeofenceCount > 100) {
             healthStatus = "warning";
           }
 
@@ -2397,7 +2430,7 @@ serve(async (req) => {
               navioAreasCovered: navioLinkage.realNavioIds,
               navioAreasUncovered: zonesWithGeofence - navioLinkage.realNavioIds,
               productionAreasTotal: totalAreas,
-              productionAreasAligned: areasWithGeofence.length,
+              productionAreasAligned: withGeofenceCount,
               productionAreasOrphaned: navioLinkage.aiDiscoveredIds,
             },
             uncoveredNavioAreas: [],
