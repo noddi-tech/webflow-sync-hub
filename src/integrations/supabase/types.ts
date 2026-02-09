@@ -1693,9 +1693,24 @@ export type Database = {
             Returns: string
           }
       cascade_delivery_flags: { Args: never; Returns: undefined }
+      check_area_best_navio_overlap: {
+        Args: { area_geojson: Json; p_city_name: string }
+        Returns: {
+          overlap_percent: number
+          zone_id: number
+          zone_name: string
+        }[]
+      }
       check_area_navio_overlap: {
         Args: { area_geojson: Json; zone_area_id: string }
         Returns: number
+      }
+      check_point_best_navio_zone: {
+        Args: { p_city_name: string; p_lat: number; p_lon: number }
+        Returns: {
+          zone_id: number
+          zone_name: string
+        }[]
       }
       check_point_in_zone: {
         Args: { p_lat: number; p_lon: number; zone_area_id: string }

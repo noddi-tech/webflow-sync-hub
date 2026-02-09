@@ -2782,48 +2782,76 @@ serve(async (req) => {
               let overlapPercent: number | null = null;
               let status: "verified" | "mismatched" = "mismatched";
 
+              let bestZoneId: number | null = null;
+              let bestZoneName: string | null = null;
+
               if (geojson && (geojson.type === "Polygon" || geojson.type === "MultiPolygon")) {
-                // Has polygon boundary - compute overlap with PostGIS function
-                const { data: overlapData, error: overlapError } = await supabase.rpc("check_area_navio_overlap", {
+                // Has polygon boundary - check against ALL zones in this city
+                const { data: overlapData, error: overlapError } = await supabase.rpc("check_area_best_navio_overlap", {
                   area_geojson: geojson,
-                  zone_area_id: area.id,
+                  p_city_name: cityName,
                 });
 
                 if (overlapError) {
-                  console.error(`Overlap check error for ${area.name}:`, overlapError.message);
-                  // Fall back to point check
-                } else if (overlapData !== null) {
-                  overlapPercent = Number(overlapData);
+                  console.error(`Best overlap check error for ${area.name}:`, overlapError.message);
+                } else if (overlapData && overlapData.length > 0) {
+                  const best = overlapData[0];
+                  overlapPercent = Number(best.overlap_percent);
+                  bestZoneId = best.zone_id;
+                  bestZoneName = best.zone_name;
                   status = overlapPercent >= OVERLAP_THRESHOLD ? "verified" : "mismatched";
-                  console.log(`${area.name}: ${overlapPercent}% overlap -> ${status}`);
+                  console.log(`${area.name}: ${overlapPercent}% overlap with zone ${bestZoneId} (${bestZoneName}) -> ${status}`);
                 }
               }
 
-              // If no polygon or overlap check failed, fall back to point-in-polygon
+              // If no polygon or overlap check failed, fall back to point-in-polygon against all zones
               if (overlapPercent === null) {
-                const { data: pointCheck } = await supabase.rpc("check_point_in_zone", {
+                const { data: pointData } = await supabase.rpc("check_point_best_navio_zone", {
                   p_lat: lat,
                   p_lon: lon,
-                  zone_area_id: area.id,
+                  p_city_name: cityName,
                 });
-                overlapPercent = pointCheck ? 100 : 0;
-                status = pointCheck ? "verified" : "mismatched";
-                console.log(`${area.name}: point-in-polygon fallback -> ${status}`);
+                if (pointData && pointData.length > 0 && pointData[0].zone_id) {
+                  overlapPercent = 100;
+                  bestZoneId = pointData[0].zone_id;
+                  bestZoneName = pointData[0].zone_name;
+                  status = "verified";
+                } else {
+                  overlapPercent = 0;
+                  status = "mismatched";
+                }
+                console.log(`${area.name}: point fallback -> ${status} (zone: ${bestZoneId})`);
               }
 
-              // Store results
-              await supabase.from("areas").update({
+              // If verified and matched a different zone than assigned, reassign
+              const updateData: Record<string, unknown> = {
                 geo_verified_at: new Date().toISOString(),
                 geo_verified_status: status,
                 geo_overlap_percent: overlapPercent,
-              }).eq("id", area.id);
+              };
 
-              // Update is_delivery based on threshold
-              if (status === "mismatched") {
-                await supabase.from("areas").update({
-                  is_delivery: false,
-                }).eq("id", area.id);
+              if (status === "verified" && bestZoneId !== null) {
+                const currentNavioId = area.navio_service_area_id;
+                const newNavioId = String(bestZoneId);
+                if (currentNavioId !== newNavioId) {
+                  console.log(`Reassigning ${area.name}: ${currentNavioId} -> ${newNavioId} (${bestZoneName})`);
+                  updateData.navio_service_area_id = newNavioId;
+                  // Fetch the correct zone's geofence from navio_snapshot
+                  const { data: zoneData } = await supabase
+                    .from("navio_snapshot")
+                    .select("geofence_json")
+                    .eq("navio_service_area_id", bestZoneId)
+                    .maybeSingle();
+                  if (zoneData?.geofence_json) {
+                    updateData.geofence_json = zoneData.geofence_json;
+                  }
+                }
+                updateData.is_delivery = true;
+              } else if (status === "mismatched") {
+                updateData.is_delivery = false;
               }
+
+              await supabase.from("areas").update(updateData).eq("id", area.id);
 
               batchResults.push({
                 areaId: area.id,
