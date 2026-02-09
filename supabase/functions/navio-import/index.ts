@@ -2534,6 +2534,25 @@ serve(async (req) => {
             value: JSON.stringify(result),
           }, { onConflict: "key" });
 
+          // Build enriched details for operation log -- include zone names and grouping for the detail dialog
+          const removedZoneNames: string[] = [];
+          const orphanedAreasByZone: Record<string, { zoneName: string; city: string; areas: string[] }> = {};
+
+          for (const navioId of removedNavioIds) {
+            const snapshot = snapshotData.find(s => String(s.navio_service_area_id) === navioId);
+            const zoneName = snapshot?.display_name || snapshot?.name || `Zone ${navioId}`;
+            removedZoneNames.push(zoneName);
+
+            const areasForZone = orphanedAreas.filter(a => a.removedNavioId === navioId);
+            if (areasForZone.length > 0) {
+              orphanedAreasByZone[navioId] = {
+                zoneName,
+                city: areasForZone[0].city,
+                areas: areasForZone.map(a => a.areaName),
+              };
+            }
+          }
+
           // Update operation log with clear success message
           if (opLogId) {
             await supabase
@@ -2556,6 +2575,10 @@ serve(async (req) => {
                   snapshotStale: apiStatus.snapshotStale,
                   orphanedAreas: orphanedAreas.length,
                   removedZones: removedNavioIds.size,
+                  removedZoneNames,
+                  orphanedAreasByZone,
+                  healthStatus,
+                  cityBreakdown,
                 },
               })
               .eq("id", opLogId);
@@ -2582,6 +2605,232 @@ serve(async (req) => {
                 },
               })
               .eq("id", opLogId);
+          }
+          throw error;
+        }
+      }
+
+      case "coverage_check_deep": {
+        // Deep spatial validation: geocode AI-discovered area names and verify they fall within assigned Navio polygons
+        console.log("Starting coverage_check_deep (geocoding validation)...");
+
+        const { data: deepOpLog } = await supabase
+          .from("navio_operation_log")
+          .insert({
+            operation_type: "coverage_check",
+            status: "started",
+            batch_id: batchId,
+            details: { message: "Deep spatial verification starting..." },
+          })
+          .select("id")
+          .single();
+        const deepOpLogId = deepOpLog?.id;
+
+        try {
+          // 1. Get AI-discovered areas with their city and navio_service_area_id
+          const aiAreas = await fetchAllRows<{
+            id: string;
+            name: string;
+            navio_service_area_id: string | null;
+            city: { name: string; country_code: string | null } | null;
+          }>(() =>
+            supabase
+              .from("areas")
+              .select("id, name, navio_service_area_id, city:cities!areas_city_id_fkey(name, country_code)")
+              .like("navio_service_area_id", "discovered_%")
+              .eq("is_delivery", true)
+              .order("id")
+          );
+
+          console.log(`Found ${aiAreas.length} AI-discovered areas`);
+
+          // 2. Group by city and sample up to 5 per city
+          const byCity = new Map<string, typeof aiAreas>();
+          for (const a of aiAreas) {
+            const cityData = a.city as { name: string; country_code: string | null } | { name: string; country_code: string | null }[] | null;
+            let cityName = "Unknown";
+            if (cityData) {
+              if (Array.isArray(cityData)) {
+                cityName = cityData[0]?.name || "Unknown";
+              } else {
+                cityName = cityData.name || "Unknown";
+              }
+            }
+            if (!byCity.has(cityName)) byCity.set(cityName, []);
+            byCity.get(cityName)!.push(a);
+          }
+
+          // Sample 5 per city
+          const sampled: typeof aiAreas = [];
+          for (const [, areas] of byCity) {
+            // Shuffle and take 5
+            const shuffled = areas.sort(() => Math.random() - 0.5);
+            sampled.push(...shuffled.slice(0, 5));
+          }
+
+          console.log(`Sampled ${sampled.length} areas across ${byCity.size} cities for geocoding`);
+
+          // 3. Geocode each area and check against polygon
+          const startTime = Date.now();
+          const results: {
+            areaName: string;
+            city: string;
+            status: "verified" | "mismatched" | "not_found" | "error";
+            geocodedLat?: number;
+            geocodedLon?: number;
+            assignedZone?: string;
+          }[] = [];
+
+          for (const area of sampled) {
+            // Check time budget
+            if (Date.now() - startTime > 50000) {
+              console.log("Approaching timeout, stopping geocoding");
+              break;
+            }
+
+            const cityData = area.city as { name: string; country_code: string | null } | { name: string; country_code: string | null }[] | null;
+            let cityName = "Unknown";
+            let countryCode = "NO";
+            if (cityData) {
+              if (Array.isArray(cityData)) {
+                cityName = cityData[0]?.name || "Unknown";
+                countryCode = cityData[0]?.country_code || "NO";
+              } else {
+                cityName = cityData.name || "Unknown";
+                countryCode = cityData.country_code || "NO";
+              }
+            }
+
+            const countryMap: Record<string, string> = { NO: "Norway", SE: "Sweden", DE: "Germany", DK: "Denmark", FI: "Finland", CA: "Canada" };
+            const countryName = countryMap[countryCode] || countryCode;
+
+            try {
+              // Rate limit: 1 req/sec for Nominatim
+              await new Promise(resolve => setTimeout(resolve, 1100));
+
+              const query = encodeURIComponent(`${area.name}, ${cityName}, ${countryName}`);
+              const geocodeResp = await fetch(
+                `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&countrycodes=${countryCode.toLowerCase()}`,
+                { headers: { "User-Agent": "NoddiCMS/1.0" } }
+              );
+
+              if (geocodeResp.status === 429) {
+                console.log("Rate limited by Nominatim, waiting...");
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                continue;
+              }
+
+              if (!geocodeResp.ok) {
+                results.push({ areaName: area.name, city: cityName, status: "error" });
+                continue;
+              }
+
+              const geocodeData = await geocodeResp.json();
+              if (!geocodeData || geocodeData.length === 0) {
+                results.push({ areaName: area.name, city: cityName, status: "not_found" });
+                continue;
+              }
+
+              const lat = parseFloat(geocodeData[0].lat);
+              const lon = parseFloat(geocodeData[0].lon);
+
+              // Check if this point falls within the assigned Navio zone polygon
+              // The navio_service_area_id for AI-discovered areas is "discovered_XXXX"
+              // We need to find which snapshot zone this area's parent district maps to
+              // For simplicity, check if the geocoded point falls within ANY active snapshot zone for this city
+              const { data: containsResult } = await supabase.rpc("find_delivery_areas", {
+                lat,
+                lng: lon,
+              });
+
+              const isInDeliveryArea = containsResult && containsResult.length > 0;
+
+              // Get the zone name for display
+              const matchedCity = containsResult?.find((r: { city_name: string }) => 
+                r.city_name?.toLowerCase() === cityName.toLowerCase()
+              );
+
+              if (isInDeliveryArea && matchedCity) {
+                results.push({
+                  areaName: area.name,
+                  city: cityName,
+                  status: "verified",
+                  geocodedLat: lat,
+                  geocodedLon: lon,
+                });
+              } else {
+                results.push({
+                  areaName: area.name,
+                  city: cityName,
+                  status: "mismatched",
+                  geocodedLat: lat,
+                  geocodedLon: lon,
+                  assignedZone: isInDeliveryArea ? "different city zone" : "outside all delivery zones",
+                });
+              }
+            } catch (e) {
+              console.error(`Geocode error for ${area.name}:`, e);
+              results.push({ areaName: area.name, city: cityName, status: "error" });
+            }
+          }
+
+          const geocodeValidation = {
+            checked: results.length,
+            verified: results.filter(r => r.status === "verified").length,
+            mismatched: results.filter(r => r.status === "mismatched").length,
+            notFound: results.filter(r => r.status === "not_found").length,
+            errors: results.filter(r => r.status === "error").length,
+            mismatches: results
+              .filter(r => r.status === "mismatched")
+              .map(r => ({
+                areaName: r.areaName,
+                city: r.city,
+                geocodedLat: r.geocodedLat,
+                geocodedLon: r.geocodedLon,
+                assignedZone: r.assignedZone,
+              })),
+          };
+
+          console.log(`Geocode validation: ${geocodeValidation.checked} checked, ${geocodeValidation.verified} verified, ${geocodeValidation.mismatched} mismatched`);
+
+          // Save to settings
+          const { data: existingCheck } = await supabase
+            .from("settings")
+            .select("value")
+            .eq("key", "navio_coverage_check")
+            .maybeSingle();
+
+          if (existingCheck?.value) {
+            const existing = JSON.parse(existingCheck.value);
+            existing.geocodeValidation = geocodeValidation;
+            await supabase.from("settings").upsert({
+              key: "navio_coverage_check",
+              value: JSON.stringify(existing),
+            }, { onConflict: "key" });
+          }
+
+          if (deepOpLogId) {
+            await supabase.from("navio_operation_log").update({
+              status: "success",
+              completed_at: new Date().toISOString(),
+              details: {
+                message: `Deep verify: ${geocodeValidation.verified}/${geocodeValidation.checked} areas verified, ${geocodeValidation.mismatched} mismatched`,
+                ...geocodeValidation,
+              },
+            }).eq("id", deepOpLogId);
+          }
+
+          return new Response(
+            JSON.stringify({ success: true, geocodeValidation }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        } catch (error) {
+          if (deepOpLogId) {
+            await supabase.from("navio_operation_log").update({
+              status: "failed",
+              completed_at: new Date().toISOString(),
+              details: { message: "Deep verify failed", error: error instanceof Error ? error.message : "Unknown" },
+            }).eq("id", deepOpLogId);
           }
           throw error;
         }

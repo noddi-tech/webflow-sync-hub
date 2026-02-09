@@ -37,6 +37,21 @@ interface OrphanedArea {
   removedNavioId: string;
 }
 
+interface GeocodeValidation {
+  checked: number;
+  verified: number;
+  mismatched: number;
+  notFound: number;
+  errors: number;
+  mismatches: Array<{
+    areaName: string;
+    city: string;
+    geocodedLat?: number;
+    geocodedLon?: number;
+    assignedZone?: string;
+  }>;
+}
+
 interface CoverageCheckResult {
   apiStatus: {
     liveZoneCount: number;
@@ -60,6 +75,7 @@ interface CoverageCheckResult {
   };
   cityBreakdown?: CityBreakdownEntry[];
   orphanedAreas?: OrphanedArea[];
+  geocodeValidation?: GeocodeValidation;
   healthStatus: "healthy" | "warning" | "needs_attention";
   areasNeedingAttention: Array<{ id: string; name: string; city: string; issue: string }>;
 }
@@ -69,6 +85,7 @@ export function CoverageHealthCard() {
   const [showCities, setShowCities] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [showOrphans, setShowOrphans] = useState(false);
+  const [showGeocode, setShowGeocode] = useState(false);
 
   const { data: lastCheck } = useQuery({
     queryKey: ["coverage-check-last"],
@@ -154,6 +171,32 @@ export function CoverageHealthCard() {
   const isDeactivating = deactivateOrphansMutation.isPending;
   const orphanedAreas = result?.orphanedAreas || [];
   const orphanedZoneCount = new Set(orphanedAreas.map(a => a.removedNavioId)).size;
+  const geocodeValidation = result?.geocodeValidation;
+
+  const deepVerifyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await supabase.functions.invoke("navio-import", {
+        body: { mode: "coverage_check_deep", batch_id: crypto.randomUUID() },
+      });
+      if (response.error) throw response.error;
+      if (response.data?.error) throw new Error(response.data.error);
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+      queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
+      const gv = data.geocodeValidation as GeocodeValidation;
+      toast.success("Deep verification complete", {
+        description: `${gv.verified}/${gv.checked} areas verified, ${gv.mismatched} mismatched`,
+      });
+    },
+    onError: (error) => {
+      toast.error("Deep verification failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    },
+  });
+  const isDeepVerifying = deepVerifyMutation.isPending;
 
   const getHealthBadge = () => {
     if (!result) return { label: "Check Needed", variant: "secondary" as const };
@@ -296,6 +339,59 @@ export function CoverageHealthCard() {
             <p className="text-[10px] text-muted-foreground pl-5">
               All neighborhoods inherit their parent Navio zone polygon
             </p>
+
+            {/* Geocode Validation / Deep Verify */}
+            {geocodeValidation ? (
+              <Collapsible open={showGeocode} onOpenChange={setShowGeocode}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between h-7 text-xs px-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <MapPin className="h-3.5 w-3.5" />
+                      Location Verification
+                    </span>
+                    <span className="text-muted-foreground">
+                      {geocodeValidation.verified}/{geocodeValidation.checked} verified
+                      {showGeocode ? <ChevronUp className="h-3 w-3 inline ml-1" /> : <ChevronDown className="h-3 w-3 inline ml-1" />}
+                    </span>
+                  </Button>
+                </CollapsibleTrigger>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground pl-5">
+                  {geocodeValidation.mismatched > 0 ? (
+                    <span className="text-amber-500">{geocodeValidation.mismatched} outside delivery zones</span>
+                  ) : (
+                    <span className="text-green-500">All sampled areas fall within delivery zones</span>
+                  )}
+                </div>
+                <CollapsibleContent className="space-y-1 pt-1">
+                  {geocodeValidation.mismatches.map((m, i) => (
+                    <div key={i} className="text-[10px] pl-5 text-muted-foreground">
+                      <span className="text-amber-500">✗</span> {m.areaName} <span className="text-muted-foreground/60">({m.city})</span>
+                      {m.assignedZone && <span className="text-muted-foreground/60"> — {m.assignedZone}</span>}
+                    </div>
+                  ))}
+                  {geocodeValidation.notFound > 0 && (
+                    <div className="text-[10px] pl-5 text-muted-foreground/60">
+                      {geocodeValidation.notFound} areas could not be geocoded
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            ) : result.navioLinkage.aiDiscoveredIds > 0 ? (
+              <Button
+                onClick={() => deepVerifyMutation.mutate()}
+                disabled={isDeepVerifying}
+                size="sm"
+                variant="outline"
+                className="w-full h-7 text-xs"
+              >
+                {isDeepVerifying ? (
+                  <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />
+                ) : (
+                  <MapPin className="mr-1.5 h-3 w-3" />
+                )}
+                {isDeepVerifying ? "Verifying locations..." : `Deep Verify ${result.navioLinkage.aiDiscoveredIds.toLocaleString()} AI Areas`}
+              </Button>
+            ) : null}
 
             {/* Areas needing attention */}
             {result.areasNeedingAttention.length > 0 && (

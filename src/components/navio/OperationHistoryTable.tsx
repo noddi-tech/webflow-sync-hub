@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,9 +16,10 @@ import {
   History,
   Shield,
 } from "lucide-react";
-import { useNavioOperationLog, type OperationType, type OperationStatus } from "@/hooks/useNavioOperationLog";
+import { useNavioOperationLog, type OperationType, type OperationStatus, type OperationLogEntry } from "@/hooks/useNavioOperationLog";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
+import { OperationDetailDialog } from "./OperationDetailDialog";
 
 const operationIcons: Record<OperationType, React.ReactNode> = {
   delta_check: <Search className="h-4 w-4" />,
@@ -65,6 +66,7 @@ interface OperationHistoryTableProps {
 export const OperationHistoryTable = forwardRef<HTMLDivElement, OperationHistoryTableProps>(
   ({ limit = 10, showHeader = true }, ref) => {
     const { logs, isLoading } = useNavioOperationLog(limit);
+    const [selectedLog, setSelectedLog] = useState<OperationLogEntry | null>(null);
 
     if (isLoading) {
       return (
@@ -178,7 +180,8 @@ export const OperationHistoryTable = forwardRef<HTMLDivElement, OperationHistory
               return (
                 <div 
                   key={log.id} 
-                  className="flex items-start gap-3 py-2 border-b border-border/50 last:border-0"
+                  className="flex items-start gap-3 py-2 border-b border-border/50 last:border-0 cursor-pointer hover:bg-muted/50 rounded-sm px-1 -mx-1 transition-colors"
+                  onClick={() => setSelectedLog(log)}
                 >
                   <div className="flex-shrink-0 p-2 rounded-full bg-muted/50">
                     {operationIcons[log.operation_type] || <Activity className="h-4 w-4" />}
@@ -215,6 +218,11 @@ export const OperationHistoryTable = forwardRef<HTMLDivElement, OperationHistory
             })}
           </div>
         </CardContent>
+        <OperationDetailDialog
+          log={selectedLog}
+          open={!!selectedLog}
+          onOpenChange={(open) => { if (!open) setSelectedLog(null); }}
+        />
       </Card>
     );
   }
