@@ -133,9 +133,12 @@ export const OperationHistoryTable = forwardRef<HTMLDivElement, OperationHistory
               const formatDetails = () => {
                 if (!details) return null;
                 
-                // Coverage check - show the main message
-                if (log.operation_type === "coverage_check" && details.message) {
-                  return String(details.message);
+                // Coverage check - show city-level message
+                if (log.operation_type === "coverage_check") {
+                  if (details.cities !== undefined && details.uniquePolygons !== undefined) {
+                    return `${details.cities} cities verified — ${details.uniquePolygons} unique zones across ${Number(details.geofenceCoverage?.toString().split("/")[1] || 0).toLocaleString()} areas`;
+                  }
+                  if (details.message) return String(details.message);
                 }
                 
                 // For other operations, show key metrics

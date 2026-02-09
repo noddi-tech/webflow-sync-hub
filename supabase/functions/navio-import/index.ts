@@ -2403,11 +2403,53 @@ serve(async (req) => {
             };
           });
 
+          // 8. Build city-level breakdown
+          const cityBreakdownMap = new Map<string, { areas: number; navioIds: Set<string> }>();
+          for (const area of allProductionAreas) {
+            const cityData = area.city as { name: string } | { name: string }[] | null;
+            let cityName = "Unknown";
+            if (cityData) {
+              if (Array.isArray(cityData)) {
+                cityName = cityData[0]?.name || "Unknown";
+              } else {
+                cityName = cityData.name || "Unknown";
+              }
+            }
+            if (!cityBreakdownMap.has(cityName)) {
+              cityBreakdownMap.set(cityName, { areas: 0, navioIds: new Set() });
+            }
+            const entry = cityBreakdownMap.get(cityName)!;
+            entry.areas++;
+            if (area.navio_service_area_id && /^\d+$/.test(area.navio_service_area_id)) {
+              entry.navioIds.add(area.navio_service_area_id);
+            }
+          }
+
+          // Count snapshot zones per city
+          const snapshotCityMap = new Map<string, number>();
+          for (const s of snapshotData) {
+            const city = s.city_name || "Unknown";
+            snapshotCityMap.set(city, (snapshotCityMap.get(city) || 0) + 1);
+          }
+
+          const cityBreakdown = Array.from(cityBreakdownMap.entries())
+            .map(([city, data]) => ({
+              city,
+              areas: data.areas,
+              uniqueZones: data.navioIds.size,
+              snapshotZones: snapshotCityMap.get(city) || 0,
+              synced: data.navioIds.size === (snapshotCityMap.get(city) || 0),
+            }))
+            .sort((a, b) => b.areas - a.areas);
+
+          console.log(`City breakdown: ${cityBreakdown.length} cities`);
+
           // Determine overall health status
           let healthStatus: "healthy" | "warning" | "needs_attention" = "healthy";
-          if (coveragePercent < 80 || apiStatus.snapshotStale) {
+          const unsyncedCities = cityBreakdown.filter(c => !c.synced);
+          if (missingGeofenceCount > 0 || unsyncedCities.length > 0) {
             healthStatus = "needs_attention";
-          } else if (coveragePercent < 95 || missingGeofenceCount > 100) {
+          } else if (apiStatus.snapshotStale) {
             healthStatus = "warning";
           }
 
@@ -2415,6 +2457,7 @@ serve(async (req) => {
             apiStatus,
             geofenceCoverage,
             navioLinkage,
+            cityBreakdown,
             healthStatus,
             areasNeedingAttention,
             // Keep legacy fields for backward compatibility during transition
@@ -2451,7 +2494,8 @@ serve(async (req) => {
                 status: "success",
                 completed_at: new Date().toISOString(),
                 details: {
-                  message: `${coveragePercent}% geofence coverage (${withGeofenceCount}/${totalAreas} areas)`,
+                  message: `${cityBreakdown.length} cities verified — ${uniquePolygons} unique zones across ${totalAreas.toLocaleString()} areas`,
+                  cities: cityBreakdown.length,
                   geofenceCoverage: `${withGeofenceCount}/${totalAreas}`,
                   coveragePercent,
                   uniquePolygons: uniquePolygons,
