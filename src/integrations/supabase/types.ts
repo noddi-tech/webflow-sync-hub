@@ -19,6 +19,10 @@ export type Database = {
           city_id: string | null
           created_at: string
           district_id: string
+          geo_overlap_percent: number | null
+          geo_verified_at: string | null
+          geo_verified_point: unknown
+          geo_verified_status: string | null
           geofence: unknown
           geofence_center: unknown
           geofence_json: Json | null
@@ -52,6 +56,10 @@ export type Database = {
           city_id?: string | null
           created_at?: string
           district_id: string
+          geo_overlap_percent?: number | null
+          geo_verified_at?: string | null
+          geo_verified_point?: unknown
+          geo_verified_status?: string | null
           geofence?: unknown
           geofence_center?: unknown
           geofence_json?: Json | null
@@ -85,6 +93,10 @@ export type Database = {
           city_id?: string | null
           created_at?: string
           district_id?: string
+          geo_overlap_percent?: number | null
+          geo_verified_at?: string | null
+          geo_verified_point?: unknown
+          geo_verified_status?: string | null
           geofence?: unknown
           geofence_center?: unknown
           geofence_json?: Json | null
@@ -1680,6 +1692,15 @@ export type Database = {
             }
             Returns: string
           }
+      cascade_delivery_flags: { Args: never; Returns: undefined }
+      check_area_navio_overlap: {
+        Args: { area_geojson: Json; zone_area_id: string }
+        Returns: number
+      }
+      check_point_in_zone: {
+        Args: { p_lat: number; p_lon: number; zone_area_id: string }
+        Returns: boolean
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {

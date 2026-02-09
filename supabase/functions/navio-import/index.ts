@@ -2611,8 +2611,12 @@ serve(async (req) => {
       }
 
       case "coverage_check_deep": {
-        // Deep spatial validation: geocode AI-discovered area names and verify they fall within assigned Navio polygons
-        console.log("Starting coverage_check_deep (geocoding validation)...");
+        // Granular per-area deep verify with polygon overlap
+        // Processes ~45 unverified areas per run (Nominatim rate limit: 1 req/sec)
+        console.log("Starting coverage_check_deep (batched polygon overlap)...");
+
+        const OVERLAP_THRESHOLD = 90; // percent
+        const BATCH_SIZE = 45;
 
         const { data: deepOpLog } = await supabase
           .from("navio_operation_log")
@@ -2620,71 +2624,100 @@ serve(async (req) => {
             operation_type: "coverage_check",
             status: "started",
             batch_id: batchId,
-            details: { message: "Deep spatial verification starting..." },
+            details: { message: "Deep verify (polygon overlap) starting..." },
           })
           .select("id")
           .single();
         const deepOpLogId = deepOpLog?.id;
 
         try {
-          // 1. Get AI-discovered areas with their city and navio_service_area_id
-          const aiAreas = await fetchAllRows<{
+          // 1. Count total and already-verified AI-discovered areas
+          const allDiscovered = await fetchAllRows<{
             id: string;
-            name: string;
-            navio_service_area_id: string | null;
-            city: { name: string; country_code: string | null } | null;
+            geo_verified_at: string | null;
+            geo_verified_status: string | null;
           }>(() =>
             supabase
               .from("areas")
-              .select("id, name, navio_service_area_id, city:cities!areas_city_id_fkey(name, country_code)")
+              .select("id, geo_verified_at, geo_verified_status")
               .like("navio_service_area_id", "discovered_%")
-              .eq("is_delivery", true)
               .order("id")
           );
 
-          console.log(`Found ${aiAreas.length} AI-discovered areas`);
+          const totalDiscovered = allDiscovered.length;
+          const alreadyVerified = allDiscovered.filter(a => a.geo_verified_at).length;
+          const remaining = totalDiscovered - alreadyVerified;
 
-          // 2. Group by city and sample up to 5 per city
-          const byCity = new Map<string, typeof aiAreas>();
-          for (const a of aiAreas) {
-            const cityData = a.city as { name: string; country_code: string | null } | { name: string; country_code: string | null }[] | null;
-            let cityName = "Unknown";
-            if (cityData) {
-              if (Array.isArray(cityData)) {
-                cityName = cityData[0]?.name || "Unknown";
-              } else {
-                cityName = cityData.name || "Unknown";
-              }
+          console.log(`Total AI-discovered: ${totalDiscovered}, already verified: ${alreadyVerified}, remaining: ${remaining}`);
+
+          if (remaining === 0) {
+            // All done - compute final stats
+            const verified = allDiscovered.filter(a => a.geo_verified_status === "verified").length;
+            const mismatched = allDiscovered.filter(a => a.geo_verified_status === "mismatched").length;
+            const notFound = allDiscovered.filter(a => a.geo_verified_status === "not_found").length;
+            const errors = allDiscovered.filter(a => a.geo_verified_status === "error").length;
+
+            const responseData = {
+              success: true,
+              deepVerifyProgress: {
+                total: totalDiscovered,
+                processed: totalDiscovered,
+                remaining: 0,
+                batchProcessed: 0,
+                verified,
+                mismatched,
+                notFound,
+                errors,
+                threshold: OVERLAP_THRESHOLD,
+                complete: true,
+              },
+            };
+
+            if (deepOpLogId) {
+              await supabase.from("navio_operation_log").update({
+                status: "success",
+                completed_at: new Date().toISOString(),
+                details: {
+                  message: `All ${totalDiscovered} areas already verified`,
+                  ...responseData.deepVerifyProgress,
+                },
+              }).eq("id", deepOpLogId);
             }
-            if (!byCity.has(cityName)) byCity.set(cityName, []);
-            byCity.get(cityName)!.push(a);
+
+            return new Response(
+              JSON.stringify(responseData),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
           }
 
-          // Sample 5 per city
-          const sampled: typeof aiAreas = [];
-          for (const [, areas] of byCity) {
-            // Shuffle and take 5
-            const shuffled = areas.sort(() => Math.random() - 0.5);
-            sampled.push(...shuffled.slice(0, 5));
-          }
+          // 2. Get next batch of unverified areas with city info
+          const { data: unverifiedBatch } = await supabase
+            .from("areas")
+            .select("id, name, navio_service_area_id, city_id, district_id, city:cities!areas_city_id_fkey(name, country_code)")
+            .like("navio_service_area_id", "discovered_%")
+            .is("geo_verified_at", null)
+            .order("city_id")
+            .limit(BATCH_SIZE);
 
-          console.log(`Sampled ${sampled.length} areas across ${byCity.size} cities for geocoding`);
+          const batch = unverifiedBatch || [];
+          console.log(`Processing batch of ${batch.length} areas`);
 
-          // 3. Geocode each area and check against polygon
+          // 3. Process each area: geocode with polygon, compute overlap
           const startTime = Date.now();
-          const results: {
+          const batchResults: Array<{
+            areaId: string;
             areaName: string;
             city: string;
             status: "verified" | "mismatched" | "not_found" | "error";
+            overlapPercent: number | null;
             geocodedLat?: number;
             geocodedLon?: number;
-            assignedZone?: string;
-          }[] = [];
+          }> = [];
 
-          for (const area of sampled) {
-            // Check time budget
-            if (Date.now() - startTime > 50000) {
-              console.log("Approaching timeout, stopping geocoding");
+          for (const area of batch) {
+            // Check time budget (leave 10s buffer)
+            if (Date.now() - startTime > 48000) {
+              console.log("Approaching timeout, stopping batch");
               break;
             }
 
@@ -2708,95 +2741,161 @@ serve(async (req) => {
               // Rate limit: 1 req/sec for Nominatim
               await new Promise(resolve => setTimeout(resolve, 1100));
 
+              // Request polygon_geojson=1 to get actual boundary
               const query = encodeURIComponent(`${area.name}, ${cityName}, ${countryName}`);
               const geocodeResp = await fetch(
-                `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&countrycodes=${countryCode.toLowerCase()}`,
+                `https://nominatim.openstreetmap.org/search?q=${query}&format=json&limit=1&polygon_geojson=1&countrycodes=${countryCode.toLowerCase()}`,
                 { headers: { "User-Agent": "NoddiCMS/1.0" } }
               );
 
               if (geocodeResp.status === 429) {
-                console.log("Rate limited by Nominatim, waiting...");
+                console.log("Rate limited by Nominatim, waiting 5s...");
                 await new Promise(resolve => setTimeout(resolve, 5000));
+                // Don't mark as verified, will retry next batch
                 continue;
               }
 
               if (!geocodeResp.ok) {
-                results.push({ areaName: area.name, city: cityName, status: "error" });
+                await supabase.from("areas").update({
+                  geo_verified_at: new Date().toISOString(),
+                  geo_verified_status: "error",
+                }).eq("id", area.id);
+                batchResults.push({ areaId: area.id, areaName: area.name, city: cityName, status: "error", overlapPercent: null });
                 continue;
               }
 
               const geocodeData = await geocodeResp.json();
               if (!geocodeData || geocodeData.length === 0) {
-                results.push({ areaName: area.name, city: cityName, status: "not_found" });
+                await supabase.from("areas").update({
+                  geo_verified_at: new Date().toISOString(),
+                  geo_verified_status: "not_found",
+                }).eq("id", area.id);
+                batchResults.push({ areaId: area.id, areaName: area.name, city: cityName, status: "not_found", overlapPercent: null });
                 continue;
               }
 
-              const lat = parseFloat(geocodeData[0].lat);
-              const lon = parseFloat(geocodeData[0].lon);
+              const result = geocodeData[0];
+              const lat = parseFloat(result.lat);
+              const lon = parseFloat(result.lon);
+              const geojson = result.geojson;
 
-              // Check if this point falls within the assigned Navio zone polygon
-              // The navio_service_area_id for AI-discovered areas is "discovered_XXXX"
-              // We need to find which snapshot zone this area's parent district maps to
-              // For simplicity, check if the geocoded point falls within ANY active snapshot zone for this city
-              // Swap lat/lng to match the stored polygon coordinate space
-              // Navio polygons are stored with [lat,lon] interpreted as [x,y] by PostGIS
-              // so we pass real lon as lat param (Y) and real lat as lng param (X)
-              const { data: containsResult } = await supabase.rpc("find_delivery_areas", {
-                lat: lon,
-                lng: lat,
-              });
+              let overlapPercent: number | null = null;
+              let status: "verified" | "mismatched" = "mismatched";
 
-              const isInDeliveryArea = containsResult && containsResult.length > 0;
-
-              // Get the zone name for display
-              const matchedCity = containsResult?.find((r: { city_name: string }) => 
-                r.city_name?.toLowerCase() === cityName.toLowerCase()
-              );
-
-              if (isInDeliveryArea && matchedCity) {
-                results.push({
-                  areaName: area.name,
-                  city: cityName,
-                  status: "verified",
-                  geocodedLat: lat,
-                  geocodedLon: lon,
+              if (geojson && (geojson.type === "Polygon" || geojson.type === "MultiPolygon")) {
+                // Has polygon boundary - compute overlap with PostGIS function
+                const { data: overlapData, error: overlapError } = await supabase.rpc("check_area_navio_overlap", {
+                  area_geojson: geojson,
+                  zone_area_id: area.id,
                 });
-              } else {
-                results.push({
-                  areaName: area.name,
-                  city: cityName,
-                  status: "mismatched",
-                  geocodedLat: lat,
-                  geocodedLon: lon,
-                  assignedZone: isInDeliveryArea ? "different city zone" : "outside all delivery zones",
-                });
+
+                if (overlapError) {
+                  console.error(`Overlap check error for ${area.name}:`, overlapError.message);
+                  // Fall back to point check
+                } else if (overlapData !== null) {
+                  overlapPercent = Number(overlapData);
+                  status = overlapPercent >= OVERLAP_THRESHOLD ? "verified" : "mismatched";
+                  console.log(`${area.name}: ${overlapPercent}% overlap -> ${status}`);
+                }
               }
+
+              // If no polygon or overlap check failed, fall back to point-in-polygon
+              if (overlapPercent === null) {
+                const { data: pointCheck } = await supabase.rpc("check_point_in_zone", {
+                  p_lat: lat,
+                  p_lon: lon,
+                  zone_area_id: area.id,
+                });
+                overlapPercent = pointCheck ? 100 : 0;
+                status = pointCheck ? "verified" : "mismatched";
+                console.log(`${area.name}: point-in-polygon fallback -> ${status}`);
+              }
+
+              // Store results
+              await supabase.from("areas").update({
+                geo_verified_at: new Date().toISOString(),
+                geo_verified_status: status,
+                geo_overlap_percent: overlapPercent,
+              }).eq("id", area.id);
+
+              // Update is_delivery based on threshold
+              if (status === "mismatched") {
+                await supabase.from("areas").update({
+                  is_delivery: false,
+                }).eq("id", area.id);
+              }
+
+              batchResults.push({
+                areaId: area.id,
+                areaName: area.name,
+                city: cityName,
+                status,
+                overlapPercent,
+                geocodedLat: lat,
+                geocodedLon: lon,
+              });
             } catch (e) {
-              console.error(`Geocode error for ${area.name}:`, e);
-              results.push({ areaName: area.name, city: cityName, status: "error" });
+              console.error(`Error processing ${area.name}:`, e);
+              await supabase.from("areas").update({
+                geo_verified_at: new Date().toISOString(),
+                geo_verified_status: "error",
+              }).eq("id", area.id);
+              batchResults.push({ areaId: area.id, areaName: area.name, city: cityName, status: "error", overlapPercent: null });
             }
           }
 
-          const geocodeValidation = {
-            checked: results.length,
-            verified: results.filter(r => r.status === "verified").length,
-            mismatched: results.filter(r => r.status === "mismatched").length,
-            notFound: results.filter(r => r.status === "not_found").length,
-            errors: results.filter(r => r.status === "error").length,
-            mismatches: results
-              .filter(r => r.status === "mismatched")
-              .map(r => ({
-                areaName: r.areaName,
-                city: r.city,
-                geocodedLat: r.geocodedLat,
-                geocodedLon: r.geocodedLon,
-                assignedZone: r.assignedZone,
-              })),
+          // 4. Cascade is_delivery flags to districts and cities
+          console.log("Cascading is_delivery flags...");
+          await supabase.rpc("cascade_delivery_flags");
+
+          // 5. Compute updated totals
+          const updatedAll = await fetchAllRows<{
+            geo_verified_status: string | null;
+            geo_verified_at: string | null;
+            geo_overlap_percent: number | null;
+          }>(() =>
+            supabase
+              .from("areas")
+              .select("geo_verified_status, geo_verified_at, geo_overlap_percent")
+              .like("navio_service_area_id", "discovered_%")
+              .order("id")
+          );
+
+          const totalProcessed = updatedAll.filter(a => a.geo_verified_at).length;
+          const totalVerified = updatedAll.filter(a => a.geo_verified_status === "verified").length;
+          const totalMismatched = updatedAll.filter(a => a.geo_verified_status === "mismatched").length;
+          const totalNotFound = updatedAll.filter(a => a.geo_verified_status === "not_found").length;
+          const totalErrors = updatedAll.filter(a => a.geo_verified_status === "error").length;
+          const newRemaining = totalDiscovered - totalProcessed;
+
+          const mismatches = batchResults
+            .filter(r => r.status === "mismatched")
+            .map(r => ({
+              areaName: r.areaName,
+              city: r.city,
+              overlapPercent: r.overlapPercent,
+              geocodedLat: r.geocodedLat,
+              geocodedLon: r.geocodedLon,
+            }));
+
+          const responseData = {
+            success: true,
+            deepVerifyProgress: {
+              total: totalDiscovered,
+              processed: totalProcessed,
+              remaining: newRemaining,
+              batchProcessed: batchResults.length,
+              verified: totalVerified,
+              mismatched: totalMismatched,
+              notFound: totalNotFound,
+              errors: totalErrors,
+              threshold: OVERLAP_THRESHOLD,
+              complete: newRemaining === 0,
+              mismatches,
+            },
           };
 
-          console.log(`Geocode validation: ${geocodeValidation.checked} checked, ${geocodeValidation.verified} verified, ${geocodeValidation.mismatched} mismatched`);
-
-          // Save to settings
+          // Save progress to settings for the UI card
           const { data: existingCheck } = await supabase
             .from("settings")
             .select("value")
@@ -2805,7 +2904,9 @@ serve(async (req) => {
 
           if (existingCheck?.value) {
             const existing = JSON.parse(existingCheck.value);
-            existing.geocodeValidation = geocodeValidation;
+            existing.deepVerifyProgress = responseData.deepVerifyProgress;
+            // Remove old geocodeValidation if present
+            delete existing.geocodeValidation;
             await supabase.from("settings").upsert({
               key: "navio_coverage_check",
               value: JSON.stringify(existing),
@@ -2817,14 +2918,14 @@ serve(async (req) => {
               status: "success",
               completed_at: new Date().toISOString(),
               details: {
-                message: `Deep verify: ${geocodeValidation.verified}/${geocodeValidation.checked} areas verified, ${geocodeValidation.mismatched} mismatched`,
-                ...geocodeValidation,
+                message: `Batch: ${batchResults.length} areas processed. Overall: ${totalVerified}/${totalDiscovered} verified (${newRemaining} remaining)`,
+                ...responseData.deepVerifyProgress,
               },
             }).eq("id", deepOpLogId);
           }
 
           return new Response(
-            JSON.stringify({ success: true, geocodeValidation }),
+            JSON.stringify(responseData),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         } catch (error) {
