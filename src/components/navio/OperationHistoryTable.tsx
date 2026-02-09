@@ -28,6 +28,7 @@ const operationIcons: Record<OperationType, React.ReactNode> = {
   approve: <Check className="h-4 w-4" />,
   reject: <X className="h-4 w-4" />,
   coverage_check: <Shield className="h-4 w-4" />,
+  deactivate_orphans: <X className="h-4 w-4" />,
 };
 
 const operationLabels: Record<OperationType, string> = {
@@ -38,6 +39,7 @@ const operationLabels: Record<OperationType, string> = {
   approve: "Approve",
   reject: "Reject",
   coverage_check: "Coverage Check",
+  deactivate_orphans: "Deactivate Orphans",
 };
 
 const statusStyles: Record<OperationStatus, { badge: string; icon: React.ReactNode }> = {
