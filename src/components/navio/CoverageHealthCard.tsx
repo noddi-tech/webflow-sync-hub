@@ -3,24 +3,30 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { 
-  CheckCircle2, 
   AlertTriangle, 
   RefreshCw, 
   Shield,
   MapPin,
-  Database,
   Radio,
   ChevronDown,
   ChevronUp,
   Brain,
   Link2,
+  Database,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+interface CityBreakdownEntry {
+  city: string;
+  areas: number;
+  uniqueZones: number;
+  snapshotZones: number;
+  synced: boolean;
+}
 
 interface CoverageCheckResult {
   apiStatus: {
@@ -43,31 +49,16 @@ interface CoverageCheckResult {
     aiDiscoveredIds: number;
     noNavioId: number;
   };
+  cityBreakdown?: CityBreakdownEntry[];
   healthStatus: "healthy" | "warning" | "needs_attention";
   areasNeedingAttention: Array<{ id: string; name: string; city: string; issue: string }>;
-  // Legacy fields for backwards compatibility
-  snapshotFreshness?: {
-    isUpToDate: boolean;
-    apiCount: number;
-    snapshotCount: number;
-    missingFromSnapshot: number;
-    removedFromApi: number;
-  };
-  coverageAlignment?: {
-    navioAreasTotal: number;
-    navioAreasCovered: number;
-    navioAreasUncovered: number;
-    productionAreasTotal: number;
-    productionAreasAligned: number;
-    productionAreasOrphaned: number;
-  };
 }
 
 export function CoverageHealthCard() {
   const queryClient = useQueryClient();
+  const [showCities, setShowCities] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
-  // Query for last check result from settings
   const { data: lastCheck } = useQuery({
     queryKey: ["coverage-check-last"],
     queryFn: async () => {
@@ -102,17 +93,11 @@ export function CoverageHealthCard() {
       queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
       queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
       
-      const { geofenceCoverage, navioLinkage } = data;
-      
-      if (geofenceCoverage.coveragePercent >= 95) {
-        toast.success("Coverage check complete", {
-          description: `${geofenceCoverage.coveragePercent}% geofence coverage (${geofenceCoverage.withGeofence.toLocaleString()} areas)`,
-        });
-      } else {
-        toast.warning("Coverage gaps detected", {
-          description: `${geofenceCoverage.coveragePercent}% coverage, ${geofenceCoverage.missingGeofence} areas missing geofences`,
-        });
-      }
+      const cities = data.cityBreakdown?.length || 0;
+      const { uniquePolygons, totalAreas } = data.geofenceCoverage;
+      toast.success("Coverage check complete", {
+        description: `${cities} cities verified — ${uniquePolygons} unique zones across ${totalAreas.toLocaleString()} areas`,
+      });
     },
     onError: (error) => {
       toast.error("Coverage check failed", {
@@ -124,68 +109,23 @@ export function CoverageHealthCard() {
   const result = checkCoverageMutation.data || lastCheck?.result;
   const isLoading = checkCoverageMutation.isPending;
 
-  // Handle both new and legacy data structures
-  const getDisplayData = () => {
-    if (!result) return null;
-    
-    // New structure
-    if (result.geofenceCoverage) {
-      return {
-        apiStatus: result.apiStatus,
-        geofenceCoverage: result.geofenceCoverage,
-        navioLinkage: result.navioLinkage,
-        healthStatus: result.healthStatus,
-        areasNeedingAttention: result.areasNeedingAttention || [],
-      };
-    }
-    
-    // Legacy structure - convert
-    const legacy = result as unknown as {
-      snapshotFreshness: { isUpToDate: boolean; apiCount: number; snapshotCount: number };
-      coverageAlignment: { productionAreasTotal: number; productionAreasAligned: number; productionAreasOrphaned: number };
-    };
-    
-    return {
-      apiStatus: {
-        liveZoneCount: legacy.snapshotFreshness?.apiCount || 0,
-        zonesWithGeofence: legacy.snapshotFreshness?.apiCount || 0,
-        snapshotCount: legacy.snapshotFreshness?.snapshotCount || 0,
-        snapshotStale: !legacy.snapshotFreshness?.isUpToDate,
-        missingFromSnapshot: 0,
-        removedFromApi: 0,
-      },
-      geofenceCoverage: {
-        totalAreas: legacy.coverageAlignment?.productionAreasTotal || 0,
-        withGeofence: legacy.coverageAlignment?.productionAreasAligned || 0,
-        missingGeofence: (legacy.coverageAlignment?.productionAreasTotal || 0) - (legacy.coverageAlignment?.productionAreasAligned || 0),
-        coveragePercent: Math.round(((legacy.coverageAlignment?.productionAreasAligned || 0) / Math.max(legacy.coverageAlignment?.productionAreasTotal || 1, 1)) * 100),
-        uniquePolygons: 0,
-      },
-      navioLinkage: {
-        realNavioIds: 0,
-        aiDiscoveredIds: legacy.coverageAlignment?.productionAreasOrphaned || 0,
-        noNavioId: 0,
-      },
-      healthStatus: "warning" as const,
-      areasNeedingAttention: [],
-    };
-  };
-
-  const displayData = getDisplayData();
-
-  // Determine health badge
   const getHealthBadge = () => {
-    if (!displayData) return { label: "Check Needed", variant: "secondary" as const };
+    if (!result) return { label: "Check Needed", variant: "secondary" as const };
     
-    if (displayData.healthStatus === "healthy" || displayData.geofenceCoverage.coveragePercent >= 95) {
-      return { label: "Healthy", variant: "default" as const };
-    } else if (displayData.healthStatus === "warning" || displayData.geofenceCoverage.coveragePercent >= 80) {
-      return { label: "Warning", variant: "secondary" as const };
+    switch (result.healthStatus) {
+      case "healthy":
+        return { label: "Healthy", variant: "default" as const };
+      case "warning":
+        return { label: "Warning", variant: "secondary" as const };
+      case "needs_attention":
+        return { label: "Needs Attention", variant: "destructive" as const };
+      default:
+        return { label: "Check Needed", variant: "secondary" as const };
     }
-    return { label: "Needs Attention", variant: "destructive" as const };
   };
 
   const healthBadge = getHealthBadge();
+  const cityBreakdown = result?.cityBreakdown || [];
 
   return (
     <Card className="flex flex-col">
@@ -194,13 +134,13 @@ export function CoverageHealthCard() {
           <div className="flex items-center gap-2">
             <Shield className={cn(
               "h-4 w-4",
-              !displayData ? "text-muted-foreground" :
-              displayData.geofenceCoverage.coveragePercent >= 95 ? "text-green-500" :
-              displayData.geofenceCoverage.coveragePercent >= 80 ? "text-amber-500" : "text-red-500"
+              !result ? "text-muted-foreground" :
+              result.healthStatus === "healthy" ? "text-green-500" :
+              result.healthStatus === "warning" ? "text-amber-500" : "text-red-500"
             )} />
             <CardTitle className="text-sm">Data Alignment Check</CardTitle>
           </div>
-          {displayData && (
+          {result && (
             <Badge variant={healthBadge.variant} className="text-xs">
               {healthBadge.label}
             </Badge>
@@ -211,48 +151,61 @@ export function CoverageHealthCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col flex-1 space-y-3">
-        {displayData ? (
+        {result ? (
           <>
             {/* API Status */}
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-1.5">
                 <Radio className={cn(
                   "h-3.5 w-3.5",
-                  displayData.apiStatus.snapshotStale ? "text-amber-500" : "text-green-500"
+                  result.apiStatus.snapshotStale ? "text-amber-500" : "text-green-500"
                 )} />
-                <span>Navio API Status</span>
+                <span>Navio API</span>
               </div>
               <span className="text-muted-foreground">
-                {displayData.apiStatus.liveZoneCount} zones
-                {displayData.apiStatus.snapshotStale && (
+                {result.apiStatus.liveZoneCount} zones
+                {result.apiStatus.snapshotStale ? (
                   <span className="text-amber-500 ml-1">• stale</span>
+                ) : (
+                  <span className="text-green-500 ml-1">• in sync</span>
                 )}
               </span>
             </div>
 
-            {/* Geofence Coverage - Primary Metric */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5" />
-                  <span>Geofence Coverage</span>
-                </div>
-                <span className={cn(
-                  "font-medium",
-                  displayData.geofenceCoverage.coveragePercent >= 95 ? "text-green-500" :
-                  displayData.geofenceCoverage.coveragePercent >= 80 ? "text-amber-500" : "text-red-500"
-                )}>
-                  {displayData.geofenceCoverage.coveragePercent}%
-                </span>
+            {/* City Coverage - Collapsible Table */}
+            <Collapsible open={showCities} onOpenChange={setShowCities}>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full justify-between h-7 text-xs px-1.5">
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" />
+                    City Coverage ({cityBreakdown.length} cities)
+                  </span>
+                  {showCities ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </Button>
+              </CollapsibleTrigger>
+              
+              {/* Always show top 5 */}
+              <div className="space-y-0.5 mt-1">
+                {cityBreakdown.slice(0, 5).map((city) => (
+                  <CityRow key={city.city} city={city} />
+                ))}
               </div>
-              <Progress value={displayData.geofenceCoverage.coveragePercent} className="h-1.5" />
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>{displayData.geofenceCoverage.withGeofence.toLocaleString()} with polygons</span>
-                {displayData.geofenceCoverage.uniquePolygons > 0 && (
-                  <span>{displayData.geofenceCoverage.uniquePolygons} unique shapes</span>
-                )}
-              </div>
-            </div>
+
+              <CollapsibleContent className="space-y-0.5">
+                {cityBreakdown.slice(5).map((city) => (
+                  <CityRow key={city.city} city={city} />
+                ))}
+              </CollapsibleContent>
+              
+              {cityBreakdown.length > 5 && !showCities && (
+                <button 
+                  onClick={() => setShowCities(true)}
+                  className="text-[10px] text-muted-foreground hover:text-foreground mt-1 pl-5"
+                >
+                  +{cityBreakdown.length - 5} more cities…
+                </button>
+              )}
+            </Collapsible>
 
             {/* Navio ID Linkage */}
             <div className="space-y-1">
@@ -262,64 +215,58 @@ export function CoverageHealthCard() {
                   <span>Navio ID Linkage</span>
                 </div>
                 <span className="text-muted-foreground">
-                  {displayData.navioLinkage.realNavioIds.toLocaleString()} linked
+                  {result.navioLinkage.realNavioIds.toLocaleString()} linked
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground pl-5">
                 <Brain className="h-3 w-3" />
                 <span>
-                  {displayData.navioLinkage.aiDiscoveredIds.toLocaleString()} AI-discovered 
-                  <span className="text-muted-foreground/70"> (share parent geofences)</span>
+                  {result.navioLinkage.aiDiscoveredIds.toLocaleString()} AI-discovered
                 </span>
               </div>
             </div>
 
-            {/* Production Areas Summary */}
+            {/* Summary line */}
             <div className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-1.5">
                 <Database className="h-3.5 w-3.5" />
-                <span>Production Areas</span>
+                <span>Total</span>
               </div>
               <span className="text-muted-foreground">
-                {displayData.geofenceCoverage.totalAreas.toLocaleString()} total
+                {result.geofenceCoverage.uniquePolygons} unique geofences across {result.geofenceCoverage.totalAreas.toLocaleString()} areas
               </span>
             </div>
+            <p className="text-[10px] text-muted-foreground pl-5">
+              All neighborhoods inherit their parent Navio zone polygon
+            </p>
 
-            {/* Expandable Details - Only show if there are issues */}
-            {displayData.areasNeedingAttention.length > 0 && (
+            {/* Areas needing attention */}
+            {result.areasNeedingAttention.length > 0 && (
               <Collapsible open={showDetails} onOpenChange={setShowDetails}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-7 text-xs">
                     <span className="flex items-center gap-1">
                       <AlertTriangle className="h-3 w-3 text-amber-500" />
-                      {displayData.areasNeedingAttention.length} areas need attention
+                      {result.areasNeedingAttention.length} areas need attention
                     </span>
                     {showDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-2 pt-2">
                   <div className="max-h-24 overflow-auto text-[10px] space-y-0.5 pl-4">
-                    {displayData.areasNeedingAttention.slice(0, 10).map((area) => (
+                    {result.areasNeedingAttention.slice(0, 10).map((area) => (
                       <div key={area.id} className="text-muted-foreground">
                         {area.name} <span className="text-muted-foreground/60">({area.city})</span>
                       </div>
                     ))}
-                    {displayData.areasNeedingAttention.length > 10 && (
+                    {result.areasNeedingAttention.length > 10 && (
                       <div className="text-muted-foreground/60">
-                        +{displayData.areasNeedingAttention.length - 10} more...
+                        +{result.areasNeedingAttention.length - 10} more...
                       </div>
                     )}
                   </div>
                 </CollapsibleContent>
               </Collapsible>
-            )}
-
-            {/* Success message when no issues */}
-            {displayData.areasNeedingAttention.length === 0 && displayData.geofenceCoverage.coveragePercent >= 95 && (
-              <div className="flex items-center gap-1.5 text-xs text-green-600">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>All areas have geofence coverage</span>
-              </div>
             )}
 
             {/* Last checked time */}
@@ -340,7 +287,7 @@ export function CoverageHealthCard() {
           onClick={() => checkCoverageMutation.mutate()}
           disabled={isLoading}
           size="sm"
-          variant={displayData ? "outline" : "default"}
+          variant={result ? "outline" : "default"}
           className="w-full"
         >
           {isLoading ? (
@@ -348,9 +295,20 @@ export function CoverageHealthCard() {
           ) : (
             <Shield className="mr-2 h-3 w-3" />
           )}
-          {displayData ? "Recheck Coverage" : "Check Coverage"}
+          {result ? "Recheck Coverage" : "Check Coverage"}
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+function CityRow({ city }: { city: CityBreakdownEntry }) {
+  return (
+    <div className="flex items-center justify-between text-[11px] pl-5 pr-1">
+      <span className="truncate flex-1 min-w-0">{city.city}</span>
+      <span className="text-muted-foreground whitespace-nowrap ml-2">
+        {city.areas.toLocaleString()} areas / {city.uniqueZones} zones
+      </span>
+    </div>
   );
 }
