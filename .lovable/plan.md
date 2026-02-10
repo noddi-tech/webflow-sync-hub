@@ -1,95 +1,91 @@
 
-# Fix Deep Verify: Check Against ALL Navio Zones, Not Just Assigned One
 
-## Root Cause
+# Fix Deep Verify: Two Critical Bugs
 
-The deep verify function compares each AI-discovered area's Nominatim polygon against the area's own `geofence` column -- which is the polygon inherited from whichever Navio zone the AI import assigned it to.
+## Root Cause Analysis
 
-The problem: AI import assigned many areas to the **wrong** Navio zone. For example, "Boler" in Oslo was assigned to zone 130 (centroid ~10.50 lon) but actually belongs to zone 123 "Norway Oslo Boler" (centroid ~10.84 lon). The overlap is correctly calculated as 0% because the area genuinely doesn't overlap with zone 130.
+### Bug 1: `ROUND(double precision, integer)` does not exist (CRITICAL)
 
-**Proof from database:**
-- Boler (lat 59.88, lon 10.84) was assigned to zone 130 (bbox lon 10.46-10.54) -- wrong zone
-- Querying the navio_snapshot directly: Boler's coordinates fall within zone 123 "Norway Oslo Boler" -- the correct zone
-- 22 out of 24 "mismatched" areas show 0% overlap, meaning they're in completely wrong zones
+The PostGIS function `check_area_best_navio_overlap` silently fails on **every single zone** because PostgreSQL's `ROUND()` with a precision argument only accepts `numeric`, not `double precision`. Since `ST_Area()` returns `double precision`, the call `ROUND(ST_Area(...) * 100, 1)` throws an error.
 
-## The Fix
+The function has `EXCEPTION WHEN OTHERS THEN CONTINUE` around each zone check, so it swallows this error and skips to the next zone -- meaning **zero zones are ever successfully compared**. The function always returns `overlap_percent=0, zone_id=NULL`.
 
-Instead of checking against the single assigned zone, check the Nominatim polygon against **all active Navio zones in the same city**. If the area overlaps >= 90% with ANY zone, it's verified. If it matches a different zone than assigned, reassign it.
+**This is why every area shows 0% overlap and zone "null".**
+
+**Fix**: Cast the expression to `numeric` before rounding:
+```sql
+ROUND(
+  ((ST_Area(...)::numeric / NULLIF(ST_Area(...)::numeric, 0)) * 100),
+  1
+)
+```
+
+### Bug 2: Edge function timeout after ~22 areas
+
+The function processes 45 areas per batch but the time budget check uses `48000ms` (48s). With Nominatim's 1.1s delay per area plus PostGIS RPC calls plus geocoding fetch time, each area takes ~2-3 seconds. The function only gets through ~22 areas before hitting the wall clock timeout and being killed.
+
+The "Failed to fetch" console errors are the client-side symptom -- the edge function is killed by the runtime before it can return a response.
+
+**Fix**: Reduce batch size to 25 and lower the time guard to 40s to ensure the function always completes and returns a response.
+
+### Bug 3: `check_point_best_navio_zone` same ROUND issue (secondary)
+
+While this function doesn't use ROUND, checking for consistency -- actually it doesn't calculate overlap, just containment. But it does have the same pattern of silently swallowing errors. No fix needed here but worth noting.
 
 ## Changes
 
-### 1. New PostGIS function: `check_area_best_navio_overlap`
+### 1. SQL Migration: Fix the PostGIS function
 
-Replaces per-area checking with a city-wide search:
-
-```sql
--- Takes: Nominatim GeoJSON polygon + city name
--- Returns: best overlap %, matching zone ID, matching zone name
--- Logic:
---   1. Flip Nominatim coordinates to match stored Navio format
---   2. Check against ALL active navio_snapshot zones in that city  
---   3. Return the zone with highest overlap
-```
-
-This checks the navio_snapshot table directly (authoritative source) rather than the area's inherited geofence.
-
-### 2. Edge function update (`supabase/functions/navio-import/index.ts`)
-
-In `coverage_check_deep`:
-- Call new `check_area_best_navio_overlap` instead of `check_area_navio_overlap`
-- If a match is found in a different zone than currently assigned, update the area's `navio_service_area_id` and `geofence` to the correct zone
-- For point-in-polygon fallback, also check against all zones via navio_snapshot
-
-### 3. Reset existing verification results
-
-Since the previous batch of 34 results was computed against wrong zones, reset `geo_verified_at`, `geo_verified_status`, and `geo_overlap_percent` to NULL for all areas that were checked, so they get re-verified correctly.
-
----
-
-## Technical Detail
-
-### New PostGIS function
+Replace `check_area_best_navio_overlap` with a corrected version that casts `ST_Area` results to `numeric` before calling `ROUND`:
 
 ```sql
 CREATE OR REPLACE FUNCTION check_area_best_navio_overlap(
   area_geojson jsonb,
   p_city_name text
 ) RETURNS TABLE(overlap_percent numeric, zone_id integer, zone_name text)
-AS $$
-  -- Convert Nominatim polygon and flip coordinates
-  -- Loop through navio_snapshot WHERE city_name matches
-  -- Extract geometry from geofence_json->'geometry'
-  -- Compute overlap for each zone
-  -- Return the best match
-$$;
+...
+  -- Fix: cast to numeric
+  cur_overlap := ROUND(
+    (ST_Area(ST_Intersection(area_geom, zone_geom)::geography)::numeric / 
+     NULLIF(ST_Area(area_geom::geography)::numeric, 0)) * 100,
+    1
+  );
 ```
 
-### Point-in-polygon fallback
+Also reset all existing verification results (since they were all computed with the broken function):
 
 ```sql
-CREATE OR REPLACE FUNCTION check_point_best_navio_zone(
-  p_lat float, p_lon float, p_city_name text
-) RETURNS TABLE(zone_id integer, zone_name text)
--- Checks swapped point (p_lat, p_lon) against all zones in city
+UPDATE areas
+SET geo_verified_at = NULL,
+    geo_verified_status = NULL,
+    geo_overlap_percent = NULL
+WHERE geo_verified_at IS NOT NULL
+  AND navio_service_area_id LIKE 'discovered_%';
 ```
 
-### Edge function changes
+### 2. Edge function: Reduce batch size and time guard
 
-After getting the best overlap:
-- If overlap >= 90%: mark verified, update area's zone assignment if different
-- If overlap < 90% but > 0%: mark mismatched with actual percentage  
-- If no overlap with any zone: mark mismatched with 0%
+In `supabase/functions/navio-import/index.ts`, change:
+
+- `BATCH_SIZE` from `45` to `25` -- ensures each batch completes within timeout
+- Time guard from `48000` to `40000` -- leaves 20s buffer for finalization (cascade, stats, response)
+
+### 3. Edge function: Add error logging in PostGIS calls
+
+Currently if the RPC call to `check_area_best_navio_overlap` returns an error, it logs the message but falls through to the point fallback without context. Add the actual error to the log so debugging is easier.
 
 ## Files to Edit
 
 | File | Change |
 |------|--------|
-| New SQL migration | Create `check_area_best_navio_overlap` + `check_point_best_navio_zone` functions; reset bad verification data |
-| `supabase/functions/navio-import/index.ts` | Use new city-wide overlap functions instead of per-area check |
+| New SQL migration | Fix `ROUND()` cast bug in `check_area_best_navio_overlap`; reset bad verification data |
+| `supabase/functions/navio-import/index.ts` | Reduce batch size to 25, lower time guard to 40s |
 
 ## Expected Result
 
-After re-running Deep Verify:
-- Areas like "Boler" will match zone 123 at high overlap and be marked "verified"
-- Areas that genuinely don't fall within any Navio zone will be correctly marked "mismatched"
-- Wrongly-assigned zones get corrected automatically
+After applying:
+- Each batch processes ~25 areas and completes within the timeout
+- Areas in Drammen will actually match zones 140/141/142 with real overlap percentages
+- No more "Failed to fetch" errors -- the function always returns before timeout
+- Progress will advance steadily: ~25 areas per click of "Continue Verification"
+
