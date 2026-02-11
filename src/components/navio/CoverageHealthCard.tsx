@@ -186,30 +186,77 @@ export function CoverageHealthCard() {
     return response.data.deepVerifyProgress as DeepVerifyProgress;
   }, []);
 
-  // Auto-verification loop
+  // Poll progress from settings (fallback when fetch times out)
+  const pollProgressFromSettings = useCallback(async (): Promise<DeepVerifyProgress | null> => {
+    const { data } = await supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "navio_coverage_check")
+      .maybeSingle();
+    if (data?.value) {
+      try {
+        const parsed = JSON.parse(data.value);
+        return parsed.deepVerifyProgress as DeepVerifyProgress ?? null;
+      } catch { return null; }
+    }
+    return null;
+  }, []);
+
+  // Auto-verification loop with timeout resilience
   const startAutoVerify = useCallback(async () => {
     stopRef.current = false;
     setIsAutoVerifying(true);
     setShowGeocode(true);
 
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+
     try {
       let keepGoing = true;
       while (keepGoing && !stopRef.current) {
-        const progress = await runDeepVerifyBatch();
-        setAutoStats(progress);
+        try {
+          const progress = await runDeepVerifyBatch();
+          setAutoStats(progress);
+          retryCount = 0; // Reset on success
 
-        // Update the settings cache so the card reflects progress
-        queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
-        queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
+          queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+          queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
 
-        if (progress.complete || progress.remaining === 0) {
-          keepGoing = false;
-          toast.success("Deep verification complete", {
-            description: `${progress.verified}/${progress.total} verified, ${progress.mismatched} mismatched`,
-          });
-        } else {
-          // Brief pause between batches
-          await new Promise(r => setTimeout(r, 2000));
+          if (progress.complete || progress.remaining === 0) {
+            keepGoing = false;
+            toast.success("Deep verification complete", {
+              description: `${progress.verified}/${progress.total} verified, ${progress.mismatched} mismatched`,
+            });
+          } else {
+            // Brief pause between batches
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        } catch (batchError) {
+          retryCount++;
+          console.warn(`Batch call failed (attempt ${retryCount}/${MAX_RETRIES}):`, batchError);
+
+          if (retryCount >= MAX_RETRIES) {
+            toast.error("Deep verification stopped", {
+              description: `Failed after ${MAX_RETRIES} consecutive retries. You can resume later.`,
+            });
+            keepGoing = false;
+            break;
+          }
+
+          // Wait and poll settings for saved progress (server may have completed)
+          await new Promise(r => setTimeout(r, 3000));
+          const savedProgress = await pollProgressFromSettings();
+          if (savedProgress) {
+            setAutoStats(savedProgress);
+            queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+            if (savedProgress.complete || savedProgress.remaining === 0) {
+              keepGoing = false;
+              toast.success("Deep verification complete", {
+                description: `${savedProgress.verified}/${savedProgress.total} verified`,
+              });
+            }
+            // Continue loop — batch likely completed server-side
+          }
         }
       }
 
@@ -224,10 +271,9 @@ export function CoverageHealthCard() {
       });
     } finally {
       setIsAutoVerifying(false);
-      // Refresh data
       queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
     }
-  }, [runDeepVerifyBatch, queryClient]);
+  }, [runDeepVerifyBatch, queryClient, pollProgressFromSettings]);
 
   const stopAutoVerify = useCallback(() => {
     stopRef.current = true;

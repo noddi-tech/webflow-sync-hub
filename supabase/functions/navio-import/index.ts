@@ -2616,7 +2616,7 @@ serve(async (req) => {
         console.log("Starting coverage_check_deep (batched polygon overlap)...");
 
         const OVERLAP_THRESHOLD = 90; // percent
-        const BATCH_SIZE = 25;
+        const BATCH_SIZE = 10;
 
         const { data: deepOpLog } = await supabase
           .from("navio_operation_log")
@@ -2731,8 +2731,8 @@ serve(async (req) => {
           }> = [];
 
           for (const area of batch) {
-            // Check time budget (leave 20s buffer for cascade + stats + response)
-            if (Date.now() - startTime > 40000) {
+            // Check time budget (leave buffer for cascade + stats + response)
+            if (Date.now() - startTime > 25000) {
               console.log("Approaching timeout, stopping batch");
               break;
             }
