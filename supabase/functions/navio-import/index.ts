@@ -2612,7 +2612,7 @@ serve(async (req) => {
 
       case "coverage_check_deep": {
         // Granular per-area deep verify with polygon overlap
-        // Processes ~45 unverified areas per run (Nominatim rate limit: 1 req/sec)
+        // Processes ~25 unverified areas per run (Nominatim rate limit: 1 req/sec)
         console.log("Starting coverage_check_deep (batched polygon overlap)...");
 
         const OVERLAP_THRESHOLD = 90; // percent
@@ -2631,8 +2631,9 @@ serve(async (req) => {
         const deepOpLogId = deepOpLog?.id;
 
         try {
-          // 1. Count total and already-verified AI-discovered areas
-          const allDiscovered = await fetchAllRows<{
+          // 1. Count total discovered areas using TWO queries to include reassigned ones
+          // Areas still with discovered_ prefix (not yet verified OR verified but kept prefix)
+          const stillDiscovered = await fetchAllRows<{
             id: string;
             geo_verified_at: string | null;
             geo_verified_status: string | null;
@@ -2644,11 +2645,26 @@ serve(async (req) => {
               .order("id")
           );
 
+          // Areas that WERE discovered but got reassigned (have geo_verified_status set, no longer discovered_ prefix)
+          const reassigned = await fetchAllRows<{
+            id: string;
+            geo_verified_at: string | null;
+            geo_verified_status: string | null;
+          }>(() =>
+            supabase
+              .from("areas")
+              .select("id, geo_verified_at, geo_verified_status")
+              .not("geo_verified_status", "is", null)
+              .not("navio_service_area_id", "like", "discovered_%")
+              .order("id")
+          );
+
+          const allDiscovered = [...stillDiscovered, ...reassigned];
           const totalDiscovered = allDiscovered.length;
           const alreadyVerified = allDiscovered.filter(a => a.geo_verified_at).length;
           const remaining = totalDiscovered - alreadyVerified;
 
-          console.log(`Total AI-discovered: ${totalDiscovered}, already verified: ${alreadyVerified}, remaining: ${remaining}`);
+          console.log(`Total AI-discovered: ${totalDiscovered} (${stillDiscovered.length} still discovered + ${reassigned.length} reassigned), already verified: ${alreadyVerified}, remaining: ${remaining}`);
 
           if (remaining === 0) {
             // All done - compute final stats
@@ -2877,7 +2893,8 @@ serve(async (req) => {
           await supabase.rpc("cascade_delivery_flags");
 
           // 5. Compute updated totals
-          const updatedAll = await fetchAllRows<{
+          // Re-count including reassigned areas (same logic as initial count)
+          const updatedStillDiscovered = await fetchAllRows<{
             geo_verified_status: string | null;
             geo_verified_at: string | null;
             geo_overlap_percent: number | null;
@@ -2888,6 +2905,19 @@ serve(async (req) => {
               .like("navio_service_area_id", "discovered_%")
               .order("id")
           );
+          const updatedReassigned = await fetchAllRows<{
+            geo_verified_status: string | null;
+            geo_verified_at: string | null;
+            geo_overlap_percent: number | null;
+          }>(() =>
+            supabase
+              .from("areas")
+              .select("geo_verified_status, geo_verified_at, geo_overlap_percent")
+              .not("geo_verified_status", "is", null)
+              .not("navio_service_area_id", "like", "discovered_%")
+              .order("id")
+          );
+          const updatedAll = [...updatedStillDiscovered, ...updatedReassigned];
 
           const totalProcessed = updatedAll.filter(a => a.geo_verified_at).length;
           const totalVerified = updatedAll.filter(a => a.geo_verified_status === "verified").length;
