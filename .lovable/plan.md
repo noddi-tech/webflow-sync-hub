@@ -1,91 +1,107 @@
 
 
-# Bulletproof Deep Verify: Fix Counting Bug and Add Auto-Continuation
+# Fix Deep Verify: Client Timeout Kills Auto-Loop
 
-## Problems Found
+## What's Actually Happening
 
-### Bug 1: Verified areas disappear from counts (CRITICAL)
+The deep verify function **is working correctly**. Evidence from the last run:
+- 30 areas verified and reassigned to correct zones
+- 15 mismatched, 9 not found
+- Boler correctly reassigned to zone 123
+- Progress saved to database after each batch
 
-The system IS working -- 14 areas were verified, 12 mismatched, 9 not found. But the UI shows "0 verified" because:
+But the user sees "nothing happening" because:
+1. Each batch of 25 areas takes ~45 seconds (1.1s Nominatim delay per area + PostGIS + overhead)
+2. The browser's `fetch()` times out before the function returns its response
+3. The auto-loop's `catch` block fires with "Failed to fetch", shows an error toast, and stops the loop
+4. The user sees no progress because `autoStats` never gets updated
 
-When an area is verified, the code changes its `navio_service_area_id` from `discovered_abc123` to the actual zone ID (e.g., `75`). Every counting query in the edge function filters by `LIKE 'discovered_%'`, so verified areas vanish from all progress stats.
+## The Fix: Smaller Batches + Timeout Resilience
 
-**Fix**: Change all counting queries to use `geo_verified_at IS NOT NULL` instead of relying on the `discovered_` prefix. Or better: track all areas that have EVER had a `discovered_` prefix by querying based on `geo_verified_at` or `geo_verified_status` being set, regardless of current `navio_service_area_id`.
+### 1. Reduce batch size from 25 to 10 (`supabase/functions/navio-import/index.ts`)
 
-The simplest fix: count ALL areas that have `geo_verified_status IS NOT NULL` (these were all originally `discovered_` areas). For the "total discovered" count, sum `areas where navio_service_area_id LIKE 'discovered_%'` PLUS `areas where geo_verified_status IS NOT NULL AND navio_service_area_id NOT LIKE 'discovered_%'` (reassigned ones).
+At 10 areas per batch:
+- ~1.1s Nominatim delay x 10 = 11 seconds
+- PostGIS calls + overhead = ~5 seconds
+- Total: ~16-18 seconds per batch -- safely under any timeout
 
-### Bug 2: No auto-continuation -- user must click 188 times
+Also lower the time guard from 40s to 25s to match.
 
-4,700 areas at 25 per batch = 188 button clicks. Currently there is zero auto-loop logic. Each batch completes, shows a toast, and waits for another manual click.
+### 2. Make auto-loop resilient to timeouts (`src/components/navio/CoverageHealthCard.tsx`)
 
-**Fix**: Add auto-continuation in the frontend. After each successful batch, if `remaining > 0`, automatically trigger the next batch with a short delay. Show a running progress indicator and a "Stop" button.
+If a batch call fails (timeout), don't abort the whole loop. Instead:
+- Catch the error
+- Wait 3 seconds
+- Poll the settings table for the latest `deepVerifyProgress` (the function saves progress even if the client doesn't get the response)
+- If progress advanced, continue the loop
+- If progress didn't advance after 3 retries, then actually stop with an error
 
-### Bug 3: Not ready for cron automation
+This makes the system truly bulletproof -- even if the occasional batch takes longer than expected, the loop recovers automatically.
 
-For a nightly cron to work end-to-end, the edge function needs a mode that runs multiple batches within a single invocation (processing as many as the timeout allows), or the cron job needs to call the function in a loop.
+### 3. Add retry counter display
 
-**Fix**: Add a `coverage_check_deep_auto` mode that processes multiple internal batches within a single edge function call, using the time guard to process as many areas as possible before returning. This way a single cron invocation processes 20-25 areas, and the cron can run every few minutes during the overnight window.
+Show "Batch X completed" / "Retrying..." status in the progress area so the user knows it's working.
 
-## Implementation Plan
+## Technical Details
 
-### 1. Fix counting in edge function (`supabase/functions/navio-import/index.ts`)
-
-Replace the counting logic in `coverage_check_deep`:
-
-```text
-Before (broken):
-  COUNT WHERE navio_service_area_id LIKE 'discovered_%'
-  -> misses verified areas that got reassigned
-
-After (correct):
-  Total = COUNT WHERE navio_service_area_id LIKE 'discovered_%'
-        + COUNT WHERE geo_verified_status IS NOT NULL 
-          AND navio_service_area_id NOT LIKE 'discovered_%'
-  
-  Unverified = COUNT WHERE navio_service_area_id LIKE 'discovered_%'
-               AND geo_verified_at IS NULL
-```
-
-This correctly accounts for areas that started as `discovered_` but were reassigned upon verification.
-
-### 2. Add auto-continuation in frontend (`src/components/navio/CoverageHealthCard.tsx`)
-
-Replace the current single-shot mutation with a looping mechanism:
-
-- Add state: `isAutoVerifying`, `autoVerifyStats`
-- After each batch completes successfully and `remaining > 0`, automatically call the next batch after a 2-second delay
-- Show a persistent progress bar with live stats (verified/mismatched/remaining)
-- Add a "Stop" button to halt the auto-loop
-- When all done or stopped, show final summary
-
-### 3. Improve the "Continue Verification" button UX
+### Edge function change
 
 ```text
-Before first run:   "Start Deep Verify"
-During auto-run:    Progress bar + "Stop Verification" button
-After stopping:     "Continue Verification (X remaining)"  
-All complete:       "All Verified" (disabled, green check)
+BATCH_SIZE: 25 -> 10
+Time guard: 40000 -> 25000
 ```
 
-### 4. Make it cron-ready
+### Frontend auto-loop change
 
-The existing edge function structure already works for cron -- each call processes one batch and returns. A cron job calling `coverage_check_deep` every 5 minutes would process ~25 areas per call, completing all 4,700 in ~16 hours. No additional edge function changes needed beyond the counting fix.
+```typescript
+// Pseudo-code for resilient loop
+while (keepGoing && !stopRef.current) {
+  try {
+    const progress = await runDeepVerifyBatch();
+    setAutoStats(progress);
+    retryCount = 0;
+  } catch (error) {
+    retryCount++;
+    if (retryCount >= 3) { stop with error; break; }
+    // Wait and poll settings for progress
+    await sleep(3000);
+    const savedProgress = await pollProgressFromSettings();
+    if (savedProgress) setAutoStats(savedProgress);
+    // Continue loop -- the batch likely completed server-side
+  }
+  await sleep(2000);
+}
+```
 
-For the cron setup, add a new edge function `navio-deep-verify-cron` (simple wrapper) or reuse the existing `webflow-health-cron` pattern to invoke `navio-import` with `mode: coverage_check_deep`.
+### New helper: poll progress from settings
+
+```typescript
+const pollProgressFromSettings = async () => {
+  const { data } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "navio_coverage_check")
+    .maybeSingle();
+  if (data?.value) {
+    const parsed = JSON.parse(data.value);
+    return parsed.deepVerifyProgress as DeepVerifyProgress;
+  }
+  return null;
+};
+```
 
 ## Files to Edit
 
 | File | Change |
 |------|--------|
-| `supabase/functions/navio-import/index.ts` | Fix all `discovered_%` counting queries to include reassigned areas |
-| `src/components/navio/CoverageHealthCard.tsx` | Add auto-continuation loop with progress UI and stop button |
+| `supabase/functions/navio-import/index.ts` | Reduce BATCH_SIZE to 10, time guard to 25s |
+| `src/components/navio/CoverageHealthCard.tsx` | Add timeout resilience with retry logic and settings polling |
 
 ## Expected Result
 
-- Progress shows correct numbers (14 verified, not 0)
-- Clicking "Start Deep Verify" runs continuously through all batches automatically
-- User can stop at any time and resume later
-- Each batch processes 25 areas in ~40 seconds
-- Full verification of 4,700 areas completes in ~3 hours of auto-running
-- System is ready for cron automation
-
+- Each batch completes in ~16-18 seconds (no more timeouts)
+- If a batch does time out, the loop recovers automatically by polling saved progress
+- Progress bar updates smoothly after each batch
+- Full verification of ~4,700 areas completes in ~470 batches over ~3-4 hours of auto-running
+- User can stop and resume at any point
+- Ready for cron automation (each cron call processes 10 areas in ~18 seconds)
