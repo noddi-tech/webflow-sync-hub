@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -93,6 +93,11 @@ export function CoverageHealthCard() {
   const [showOrphans, setShowOrphans] = useState(false);
   const [showGeocode, setShowGeocode] = useState(false);
 
+  // Auto-verification state
+  const [isAutoVerifying, setIsAutoVerifying] = useState(false);
+  const [autoStats, setAutoStats] = useState<DeepVerifyProgress | null>(null);
+  const stopRef = useRef(false);
+
   const { data: lastCheck } = useQuery({
     queryKey: ["coverage-check-last"],
     queryFn: async () => {
@@ -162,7 +167,6 @@ export function CoverageHealthCard() {
       toast.success("Areas deactivated", {
         description: data.message,
       });
-      // Re-run coverage check to refresh the card
       checkCoverageMutation.mutate();
     },
     onError: (error) => {
@@ -172,43 +176,70 @@ export function CoverageHealthCard() {
     },
   });
 
+  // Single batch deep verify call
+  const runDeepVerifyBatch = useCallback(async (): Promise<DeepVerifyProgress> => {
+    const response = await supabase.functions.invoke("navio-import", {
+      body: { mode: "coverage_check_deep", batch_id: crypto.randomUUID() },
+    });
+    if (response.error) throw response.error;
+    if (response.data?.error) throw new Error(response.data.error);
+    return response.data.deepVerifyProgress as DeepVerifyProgress;
+  }, []);
+
+  // Auto-verification loop
+  const startAutoVerify = useCallback(async () => {
+    stopRef.current = false;
+    setIsAutoVerifying(true);
+    setShowGeocode(true);
+
+    try {
+      let keepGoing = true;
+      while (keepGoing && !stopRef.current) {
+        const progress = await runDeepVerifyBatch();
+        setAutoStats(progress);
+
+        // Update the settings cache so the card reflects progress
+        queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+        queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
+
+        if (progress.complete || progress.remaining === 0) {
+          keepGoing = false;
+          toast.success("Deep verification complete", {
+            description: `${progress.verified}/${progress.total} verified, ${progress.mismatched} mismatched`,
+          });
+        } else {
+          // Brief pause between batches
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
+      if (stopRef.current) {
+        toast.info("Verification paused", {
+          description: "You can resume anytime",
+        });
+      }
+    } catch (error) {
+      toast.error("Deep verification failed", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+    } finally {
+      setIsAutoVerifying(false);
+      // Refresh data
+      queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
+    }
+  }, [runDeepVerifyBatch, queryClient]);
+
+  const stopAutoVerify = useCallback(() => {
+    stopRef.current = true;
+  }, []);
+
   const result = checkCoverageMutation.data || lastCheck?.result;
   const isLoading = checkCoverageMutation.isPending;
   const isDeactivating = deactivateOrphansMutation.isPending;
   const orphanedAreas = result?.orphanedAreas || [];
   const orphanedZoneCount = new Set(orphanedAreas.map(a => a.removedNavioId)).size;
-  const deepVerifyProgress = result?.deepVerifyProgress;
-
-  const deepVerifyMutation = useMutation({
-    mutationFn: async () => {
-      const response = await supabase.functions.invoke("navio-import", {
-        body: { mode: "coverage_check_deep", batch_id: crypto.randomUUID() },
-      });
-      if (response.error) throw response.error;
-      if (response.data?.error) throw new Error(response.data.error);
-      return response.data;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["coverage-check-last"] });
-      queryClient.invalidateQueries({ queryKey: ["navio-operation-log"] });
-      const p = data.deepVerifyProgress as DeepVerifyProgress;
-      if (p.complete) {
-        toast.success("Deep verification complete", {
-          description: `${p.verified}/${p.total} areas verified, ${p.mismatched} below ${p.threshold}% threshold`,
-        });
-      } else {
-        toast.success(`Batch complete: ${p.batchProcessed} areas processed`, {
-          description: `${p.processed}/${p.total} total — ${p.remaining} remaining`,
-        });
-      }
-    },
-    onError: (error) => {
-      toast.error("Deep verification failed", {
-        description: error instanceof Error ? error.message : "Unknown error",
-      });
-    },
-  });
-  const isDeepVerifying = deepVerifyMutation.isPending;
+  // Use auto-verify stats if running, otherwise fall back to saved data
+  const deepVerifyProgress = autoStats || result?.deepVerifyProgress;
 
   const getHealthBadge = () => {
     if (!result) return { label: "Check Needed", variant: "secondary" as const };
@@ -370,7 +401,10 @@ export function CoverageHealthCard() {
                 <div className="space-y-1.5 mt-1 pl-5 pr-1">
                   <Progress value={(deepVerifyProgress.processed / deepVerifyProgress.total) * 100} className="h-1.5" />
                   <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>{deepVerifyProgress.processed.toLocaleString()} / {deepVerifyProgress.total.toLocaleString()} checked</span>
+                    <span>
+                      {isAutoVerifying && <RefreshCw className="h-2.5 w-2.5 animate-spin inline mr-1" />}
+                      {deepVerifyProgress.processed.toLocaleString()} / {deepVerifyProgress.total.toLocaleString()} checked
+                    </span>
                     <span>{Math.round((deepVerifyProgress.processed / deepVerifyProgress.total) * 100)}%</span>
                   </div>
                   <div className="flex gap-3 text-[10px]">
@@ -400,39 +434,57 @@ export function CoverageHealthCard() {
                   )}
                 </CollapsibleContent>
                 {!deepVerifyProgress.complete && (
-                  <Button
-                    onClick={() => deepVerifyMutation.mutate()}
-                    disabled={isDeepVerifying}
-                    size="sm"
-                    variant="outline"
-                    className="w-full h-7 text-xs mt-2"
-                  >
-                    {isDeepVerifying ? (
-                      <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />
-                    ) : (
+                  isAutoVerifying ? (
+                    <Button
+                      onClick={stopAutoVerify}
+                      size="sm"
+                      variant="destructive"
+                      className="w-full h-7 text-xs mt-2"
+                    >
+                      <XCircle className="mr-1.5 h-3 w-3" />
+                      Stop Verification
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={startAutoVerify}
+                      size="sm"
+                      variant="outline"
+                      className="w-full h-7 text-xs mt-2"
+                    >
                       <MapPin className="mr-1.5 h-3 w-3" />
-                    )}
-                    {isDeepVerifying
-                      ? "Verifying..."
-                      : `Continue Verification (${deepVerifyProgress.remaining.toLocaleString()} remaining)`}
-                  </Button>
+                      Continue Verification ({deepVerifyProgress.remaining.toLocaleString()} remaining)
+                    </Button>
+                  )
+                )}
+                {deepVerifyProgress.complete && (
+                  <div className="flex items-center gap-1.5 text-xs text-green-600 mt-2 justify-center">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    All areas verified
+                  </div>
                 )}
               </Collapsible>
             ) : result.navioLinkage.aiDiscoveredIds > 0 ? (
-              <Button
-                onClick={() => deepVerifyMutation.mutate()}
-                disabled={isDeepVerifying}
-                size="sm"
-                variant="outline"
-                className="w-full h-7 text-xs"
-              >
-                {isDeepVerifying ? (
-                  <RefreshCw className="mr-1.5 h-3 w-3 animate-spin" />
-                ) : (
+              isAutoVerifying ? (
+                <Button
+                  onClick={stopAutoVerify}
+                  size="sm"
+                  variant="destructive"
+                  className="w-full h-7 text-xs"
+                >
+                  <XCircle className="mr-1.5 h-3 w-3" />
+                  Stop Verification
+                </Button>
+              ) : (
+                <Button
+                  onClick={startAutoVerify}
+                  size="sm"
+                  variant="outline"
+                  className="w-full h-7 text-xs"
+                >
                   <MapPin className="mr-1.5 h-3 w-3" />
-                )}
-                {isDeepVerifying ? "Verifying areas..." : `Start Deep Verify (${result.navioLinkage.aiDiscoveredIds.toLocaleString()} AI areas)`}
-              </Button>
+                  Start Deep Verify ({result.navioLinkage.aiDiscoveredIds.toLocaleString()} AI areas)
+                </Button>
+              )
             ) : null}
 
             {/* Areas needing attention */}
