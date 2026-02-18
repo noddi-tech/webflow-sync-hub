@@ -1,107 +1,83 @@
 
 
-# Fix Deep Verify: Client Timeout Kills Auto-Loop
+# Create Detailed Project README
 
-## What's Actually Happening
+## Overview
 
-The deep verify function **is working correctly**. Evidence from the last run:
-- 30 areas verified and reassigned to correct zones
-- 15 mismatched, 9 not found
-- Boler correctly reassigned to zone 123
-- Progress saved to database after each batch
+Replace the current generic README with a comprehensive technical document explaining the entire CMS Manager system -- what it does, why it exists, its architecture, how data flows between Navio, the local database, and Webflow, and how every subsystem works.
 
-But the user sees "nothing happening" because:
-1. Each batch of 25 areas takes ~45 seconds (1.1s Nominatim delay per area + PostGIS + overhead)
-2. The browser's `fetch()` times out before the function returns its response
-3. The auto-loop's `catch` block fires with "Failed to fetch", shows an error toast, and stops the loop
-4. The user sees no progress because `autoStats` never gets updated
+## README Structure
 
-## The Fix: Smaller Batches + Timeout Resilience
+The new `README.md` will contain the following sections:
 
-### 1. Reduce batch size from 25 to 10 (`supabase/functions/navio-import/index.ts`)
+### 1. Project Overview
+- **What**: A Webflow CMS Manager for Noddi -- an admin dashboard that manages geographic entities (Cities, Districts, Areas), Services, Service Categories, Partners, and computed Service Locations
+- **Why**: Noddi delivers car care services across multiple countries. The website (Webflow) needs thousands of SEO-optimized location pages. Manually managing this in Webflow is impossible at scale. This system automates the entire pipeline: ingesting delivery zones from Navio (the operations API), enriching them with AI-discovered neighborhoods, verifying them spatially with PostGIS, then syncing everything to Webflow with full localization and SEO content
 
-At 10 areas per batch:
-- ~1.1s Nominatim delay x 10 = 11 seconds
-- PostGIS calls + overhead = ~5 seconds
-- Total: ~16-18 seconds per batch -- safely under any timeout
+### 2. Architecture Overview
+- Tech stack: React + Vite + TypeScript + shadcn/ui + Tailwind CSS frontend, Lovable Cloud (Supabase) backend with PostgreSQL + PostGIS, Deno edge functions
+- Diagram of the three-system relationship: **Navio API** (source of truth for delivery zones) -> **Local Database** (enrichment, verification, editorial control) -> **Webflow CMS** (public website)
 
-Also lower the time guard from 40s to 25s to match.
+### 3. Data Model
+- **Geographic hierarchy**: Cities > Districts > Areas (with `is_delivery`, geofence polygons, Navio IDs)
+- **Services**: Service Categories > Services (with pricing, steps, rich content in 3 locales)
+- **Partners**: Partner profiles with coverage mappings (partner_service_locations)
+- **Service Locations**: Computed SEO collection joining services + locations + partner coverage
+- **Staging tables**: `navio_staging_cities/districts/areas` for review before commit
+- **Tracking columns**: `navio_service_area_id`, `navio_imported_at`, `navio_district_key`, `navio_city_key`
 
-### 2. Make auto-loop resilient to timeouts (`src/components/navio/CoverageHealthCard.tsx`)
+### 4. The Navio Pipeline (Edge Function: `navio-import`)
+Explain each mode of the multi-stage import process:
+- **`initialize`**: Fetches all service areas from Navio API, parses names (supports 6 countries with native terminology), groups by city, queues for processing
+- **`process_city`**: AI-powered discovery using Gemini + OpenAI in parallel to find districts and neighborhoods for each city. Time-budgeted with per-district checkpointing
+- **`finalize`**: Classifies all areas as either Navio-sourced or AI-discovered, saves to staging tables
+- **`commit`** / **`commit_incremental`**: Moves approved staging data to production tables with deduplication
+- **`coverage_check`**: Validates production data against live Navio API -- checks geofence coverage, Navio linkage, orphan detection
+- **`coverage_check_deep`**: Spatial verification using PostGIS -- geocodes each AI-discovered area via Nominatim, compares polygon overlap against active Navio zones using 90% threshold, reassigns or deactivates areas. Batch-processed (10 areas/batch) with timeout resilience
 
-If a batch call fails (timeout), don't abort the whole loop. Instead:
-- Catch the error
-- Wait 3 seconds
-- Poll the settings table for the latest `deepVerifyProgress` (the function saves progress even if the client doesn't get the response)
-- If progress advanced, continue the loop
-- If progress didn't advance after 3 retries, then actually stop with an error
+### 5. The Webflow Pipeline
+- **Import** (`webflow-import`): Pulls existing items from Webflow CMS across all 3 locales (NO, EN, SV), merges into local database. Rate-limited (900ms delay, exponential backoff for 429s)
+- **Sync** (`webflow-sync`): Pushes local database to Webflow. Generates SEO content (titles, meta descriptions, 200+ word rich text intros), JSON-LD structured data, canonical URLs. Handles multi-reference fields and all 3 locales
+- **Validate** (`webflow-validate`): Compares expected field schemas against actual Webflow collection fields. Reports missing/extra fields
+- **Health Cron** (`webflow-health-cron`): Scheduled wrapper that runs validation and stores results
 
-This makes the system truly bulletproof -- even if the occasional batch takes longer than expected, the loop recovers automatically.
+### 6. Localization
+- Three locales: Norwegian (default), English, Swedish
+- Webflow locale IDs and how they map
+- How `buildLocalizedFields()` works for sync
+- How `fetchLocalizedItems()` merges data during import
 
-### 3. Add retry counter display
+### 7. SEO Content Generation
+- Template system for service-specific content (dekkskift, bilvask, polering)
+- Canonical URL generation from `base_url` setting
+- JSON-LD structured data for Service Location pages
+- Sitemap priority and noindex controls
 
-Show "Batch X completed" / "Retrying..." status in the progress area so the user knows it's working.
+### 8. Delivery Checking (Edge Function: `check-delivery`)
+- PostGIS `find_delivery_areas` function
+- Takes lat/lng coordinates, returns matching delivery areas with full hierarchy
 
-## Technical Details
+### 9. Dashboard Features
+- Entity management pages (CRUD for all entity types)
+- System health panel with collection health, data completeness, SEO quality
+- Navio dashboard with staging review, operation history, coverage health
+- Sync history and progress tracking via `sync_logs` table with `batch_id`
 
-### Edge function change
+### 10. Configuration
+- Settings page for Webflow Collection IDs and base URL
+- Environment variables / secrets needed (Navio API token, Webflow API token, OpenAI API key)
+- `supabase/config.toml` edge function configuration
 
-```text
-BATCH_SIZE: 25 -> 10
-Time guard: 40000 -> 25000
-```
+### 11. Operational Workflows
+Step-by-step guides:
+1. **Initial Setup**: Configure settings -> Import from Webflow -> Run Navio import
+2. **Adding a new city**: Navio import detects it -> AI discovers neighborhoods -> Review staging -> Commit -> Sync to Webflow
+3. **Ongoing maintenance**: Coverage check detects orphans -> Deactivate -> Deep verify confirms -> Sync updates to Webflow
+4. **Cron automation**: How each edge function is designed for batch/cron operation
 
-### Frontend auto-loop change
+## File to Create
 
-```typescript
-// Pseudo-code for resilient loop
-while (keepGoing && !stopRef.current) {
-  try {
-    const progress = await runDeepVerifyBatch();
-    setAutoStats(progress);
-    retryCount = 0;
-  } catch (error) {
-    retryCount++;
-    if (retryCount >= 3) { stop with error; break; }
-    // Wait and poll settings for progress
-    await sleep(3000);
-    const savedProgress = await pollProgressFromSettings();
-    if (savedProgress) setAutoStats(savedProgress);
-    // Continue loop -- the batch likely completed server-side
-  }
-  await sleep(2000);
-}
-```
+| File | Description |
+|------|-------------|
+| `README.md` | Complete project documentation (replaces current placeholder) |
 
-### New helper: poll progress from settings
-
-```typescript
-const pollProgressFromSettings = async () => {
-  const { data } = await supabase
-    .from("settings")
-    .select("value")
-    .eq("key", "navio_coverage_check")
-    .maybeSingle();
-  if (data?.value) {
-    const parsed = JSON.parse(data.value);
-    return parsed.deepVerifyProgress as DeepVerifyProgress;
-  }
-  return null;
-};
-```
-
-## Files to Edit
-
-| File | Change |
-|------|--------|
-| `supabase/functions/navio-import/index.ts` | Reduce BATCH_SIZE to 10, time guard to 25s |
-| `src/components/navio/CoverageHealthCard.tsx` | Add timeout resilience with retry logic and settings polling |
-
-## Expected Result
-
-- Each batch completes in ~16-18 seconds (no more timeouts)
-- If a batch does time out, the loop recovers automatically by polling saved progress
-- Progress bar updates smoothly after each batch
-- Full verification of ~4,700 areas completes in ~470 batches over ~3-4 hours of auto-running
-- User can stop and resume at any point
-- Ready for cron automation (each cron call processes 10 areas in ~18 seconds)
