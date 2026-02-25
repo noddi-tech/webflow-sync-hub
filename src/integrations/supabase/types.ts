@@ -1116,6 +1116,7 @@ export type Database = {
           canonical_url: string
           canonical_url_en: string | null
           canonical_url_sv: string | null
+          city_2: string | null
           city_id: string
           created_at: string
           district_id: string | null
@@ -1149,6 +1150,7 @@ export type Database = {
           canonical_url: string
           canonical_url_en?: string | null
           canonical_url_sv?: string | null
+          city_2?: string | null
           city_id: string
           created_at?: string
           district_id?: string | null
@@ -1182,6 +1184,7 @@ export type Database = {
           canonical_url?: string
           canonical_url_en?: string | null
           canonical_url_sv?: string | null
+          city_2?: string | null
           city_id?: string
           created_at?: string
           district_id?: string | null
