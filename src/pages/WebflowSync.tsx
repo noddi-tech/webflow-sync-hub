@@ -49,28 +49,43 @@ export default function WebflowSync() {
 
   const syncMutation = useMutation({
     mutationFn: async ({ entities, batchId }: { entities: EntityType[]; batchId: string }) => {
-      const { data, error } = await supabase.functions.invoke("webflow-sync", {
-        body: { 
-          entity_type: entities.length === ENTITIES.length ? "all" : entities[0], 
-          batch_id: batchId,
-          entities: entities.length > 1 ? entities : undefined,
-        },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      return data;
+      const results: Record<string, { created: number; updated: number }> = {};
+      const errors: string[] = [];
+
+      for (const entity of entities) {
+        try {
+          const { data, error } = await supabase.functions.invoke("webflow-sync", {
+            body: { entity_type: entity, batch_id: batchId },
+          });
+          if (error) throw error;
+          if (data?.error) throw new Error(data.error);
+          if (data?.synced) {
+            Object.assign(results, data.synced);
+          }
+        } catch (err: any) {
+          console.error(`Sync failed for ${entity}:`, err);
+          errors.push(`${entity}: ${err.message || "Unknown error"}`);
+        }
+      }
+
+      if (Object.keys(results).length === 0 && errors.length > 0) {
+        throw new Error(errors.join("; "));
+      }
+
+      return { synced: results, errors };
     },
     onMutate: ({ batchId }) => {
       setCurrentBatchId(batchId);
       setProgressOpen(true);
     },
     onSuccess: (data) => {
-      const synced = data.synced as Record<string, { created: number; updated: number }>;
-      const totalCreated = Object.values(synced).reduce((sum, s) => sum + s.created, 0);
-      const totalUpdated = Object.values(synced).reduce((sum, s) => sum + s.updated, 0);
+      const totalCreated = Object.values(data.synced).reduce((sum, s) => sum + s.created, 0);
+      const totalUpdated = Object.values(data.synced).reduce((sum, s) => sum + s.updated, 0);
+      const errorNote = data.errors.length > 0 ? ` (${data.errors.length} failed)` : "";
       toast({
         title: "Sync Complete",
-        description: `Created ${totalCreated} and updated ${totalUpdated} items in Webflow.`,
+        description: `Created ${totalCreated} and updated ${totalUpdated} items in Webflow.${errorNote}`,
+        variant: data.errors.length > 0 ? "destructive" : "default",
       });
     },
     onError: (error: Error) => {
