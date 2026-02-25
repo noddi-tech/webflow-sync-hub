@@ -535,6 +535,7 @@ function generateTagline(data: LocationData): Record<string, string> {
   return taglines;
 }
 
+interface ServiceLocationGroup {
   service_id: string;
   city_id: string;
   district_id: string | null;
