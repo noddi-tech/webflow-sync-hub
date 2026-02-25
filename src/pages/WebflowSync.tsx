@@ -47,6 +47,8 @@ export default function WebflowSync() {
     },
   });
 
+  const CHUNK_SIZE = 50;
+
   const syncMutation = useMutation({
     mutationFn: async ({ entities, batchId }: { entities: EntityType[]; batchId: string }) => {
       const results: Record<string, { created: number; updated: number }> = {};
@@ -54,13 +56,37 @@ export default function WebflowSync() {
 
       for (const entity of entities) {
         try {
-          const { data, error } = await supabase.functions.invoke("webflow-sync", {
-            body: { entity_type: entity, batch_id: batchId },
-          });
-          if (error) throw error;
-          if (data?.error) throw new Error(data.error);
-          if (data?.synced) {
-            Object.assign(results, data.synced);
+          let offset = 0;
+          let hasMore = true;
+
+          while (hasMore) {
+            const { data, error } = await supabase.functions.invoke("webflow-sync", {
+              body: { entity_type: entity, batch_id: batchId, offset, limit: CHUNK_SIZE },
+            });
+            if (error) throw error;
+            if (data?.error) throw new Error(data.error);
+
+            // Merge synced counts
+            if (data?.synced) {
+              for (const [key, val] of Object.entries(data.synced) as [string, { created: number; updated: number }][]) {
+                if (!results[key]) results[key] = { created: 0, updated: 0 };
+                results[key].created += val.created;
+                results[key].updated += val.updated;
+              }
+            }
+
+            // Check if we need more chunks (only when offset/limit were used)
+            if (typeof data?.offset === "number" && typeof data?.limit === "number") {
+              offset += CHUNK_SIZE;
+              // If we got fewer items than the chunk size, we're done
+              const entitySynced = data.synced?.[entity];
+              const itemsInChunk = entitySynced ? (entitySynced.created + entitySynced.updated) : 0;
+              if (itemsInChunk < CHUNK_SIZE) {
+                hasMore = false;
+              }
+            } else {
+              hasMore = false;
+            }
           }
         } catch (err: any) {
           console.error(`Sync failed for ${entity}:`, err);

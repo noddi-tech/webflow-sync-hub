@@ -1112,6 +1112,9 @@ Deno.serve(async (req) => {
     const entityType = body.entity_type || "all";
     // Use client-provided batch_id for progress tracking, or generate fallback
     const batchId = body.batch_id || crypto.randomUUID();
+    // Chunked processing: accept offset and limit for paginated sync
+    const chunkOffset = typeof body.offset === "number" ? body.offset : null;
+    const chunkLimit = typeof body.limit === "number" ? body.limit : 50;
 
     const webflowApiToken = Deno.env.get("WEBFLOW_API_TOKEN");
     if (!webflowApiToken) {
@@ -1203,10 +1206,14 @@ Deno.serve(async (req) => {
 
         let items: Record<string, unknown>[] = [];
         let fieldMappings: Record<string, string> = {};
+        let totalCount: number | null = null;
 
         if (entity === "service_categories") {
-          const { data } = await supabase.from("service_categories").select("*");
+          const query = supabase.from("service_categories").select("*", { count: "exact" });
+          if (chunkOffset !== null) query.range(chunkOffset, chunkOffset + chunkLimit - 1);
+          const { data, count } = await query;
           items = data || [];
+          totalCount = count;
           fieldMappings = {
             name: "name",
             slug: "slug",
@@ -1216,10 +1223,13 @@ Deno.serve(async (req) => {
             tagline: "tagline",
           };
         } else if (entity === "services") {
-          const { data } = await supabase
+          const query = supabase
             .from("services")
-            .select("*, service_categories(webflow_item_id)");
+            .select("*, service_categories(webflow_item_id)", { count: "exact" });
+          if (chunkOffset !== null) query.range(chunkOffset, chunkOffset + chunkLimit - 1);
+          const { data, count } = await query;
           items = data || [];
+          totalCount = count;
           fieldMappings = {
             name: "name",
             slug: "slug",
@@ -1238,8 +1248,11 @@ Deno.serve(async (req) => {
             tagline: "tagline",
           };
         } else if (entity === "cities") {
-          const { data } = await supabase.from("cities").select("*");
+          const query = supabase.from("cities").select("*", { count: "exact" });
+          if (chunkOffset !== null) query.range(chunkOffset, chunkOffset + chunkLimit - 1);
+          const { data, count } = await query;
           items = data || [];
+          totalCount = count;
           fieldMappings = {
             name: "name",
             slug: "slug",
@@ -1249,10 +1262,13 @@ Deno.serve(async (req) => {
             tagline: "tagline",
           };
         } else if (entity === "districts") {
-          const { data } = await supabase
+          const query = supabase
             .from("districts")
-            .select("*, cities!inner(webflow_item_id)");
+            .select("*, cities!inner(webflow_item_id)", { count: "exact" });
+          if (chunkOffset !== null) query.range(chunkOffset, chunkOffset + chunkLimit - 1);
+          const { data, count } = await query;
           items = data || [];
+          totalCount = count;
           fieldMappings = {
             name: "name",
             slug: "slug",
@@ -1262,10 +1278,13 @@ Deno.serve(async (req) => {
             tagline: "tagline",
           };
         } else if (entity === "areas") {
-          const { data } = await supabase
+          const query = supabase
             .from("areas")
-            .select("*, districts!inner(webflow_item_id), cities(webflow_item_id)");
+            .select("*, districts!inner(webflow_item_id), cities(webflow_item_id)", { count: "exact" });
+          if (chunkOffset !== null) query.range(chunkOffset, chunkOffset + chunkLimit - 1);
+          const { data, count } = await query;
           items = data || [];
+          totalCount = count;
           fieldMappings = {
             name: "name",
             slug: "slug",
@@ -1275,7 +1294,7 @@ Deno.serve(async (req) => {
             tagline: "tagline",
           };
         } else if (entity === "partners") {
-          const { data } = await supabase
+          const query = supabase
             .from("partners")
             .select(`
               *,
@@ -1283,8 +1302,11 @@ Deno.serve(async (req) => {
               partner_cities(cities(webflow_item_id)),
               partner_districts(districts(webflow_item_id)),
               partner_services(services(webflow_item_id))
-            `);
+            `, { count: "exact" });
+          if (chunkOffset !== null) query.range(chunkOffset, chunkOffset + chunkLimit - 1);
+          const { data, count } = await query;
           items = data || [];
+          totalCount = count;
           fieldMappings = {
             name: "name",
             slug: "slug",
@@ -1504,7 +1526,12 @@ Deno.serve(async (req) => {
       batchId
     );
 
-    return new Response(JSON.stringify({ success: true, synced, batchId }), {
+    return new Response(JSON.stringify({ 
+      success: true, 
+      synced, 
+      batchId,
+      ...(chunkOffset !== null && { offset: chunkOffset, limit: chunkLimit }),
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
