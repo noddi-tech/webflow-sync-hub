@@ -1812,6 +1812,7 @@ export type Database = {
         | { Args: { table_name: string }; Returns: string }
       enablelongtransactions: { Args: never; Returns: string }
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
+      exec_sql: { Args: { sql_query: string }; Returns: undefined }
       find_delivery_areas: {
         Args: { lat: number; lng: number }
         Returns: {

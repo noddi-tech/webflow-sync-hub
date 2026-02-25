@@ -77,12 +77,33 @@ Deno.serve(async (req) => {
     // Localized field types that need _en and _sv columns
     const LOCALIZED_TYPES = ["PlainText", "RichText"];
 
+    // Load current overrides from settings
+    const { data: overrideSetting } = await supabaseAdmin
+      .from("settings")
+      .select("value")
+      .eq("key", "schema_expected_overrides")
+      .maybeSingle();
+
+    let overrides: Record<string, { added: string[]; removed: string[]; renamed: Record<string, string> }> = {};
+    try {
+      if (overrideSetting?.value) {
+        overrides = JSON.parse(overrideSetting.value);
+      }
+    } catch {
+      // Invalid JSON, start fresh
+    }
+
     for (const change of changes) {
       try {
         const tableName = TABLE_MAP[change.collection];
         if (!tableName) {
           results.push({ id: change.id, status: "skipped", message: `Unknown collection: ${change.collection}` });
           continue;
+        }
+
+        // Ensure overrides entry exists for this collection
+        if (!overrides[change.collection]) {
+          overrides[change.collection] = { added: [], removed: [], renamed: {} };
         }
 
         if (change.type === "added") {
@@ -95,7 +116,6 @@ Deno.serve(async (req) => {
           if (change.fieldType === "Number") sqlType = "numeric";
           if (change.fieldType === "Switch") sqlType = "boolean";
 
-          // Run migration for base column
           const migrations: string[] = [
             `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ${columnName} ${sqlType};`
           ];
@@ -106,20 +126,57 @@ Deno.serve(async (req) => {
           }
 
           for (const sql of migrations) {
-            const { error: migError } = await supabaseAdmin.rpc("exec_sql", { sql_query: sql }).maybeSingle();
-            // If exec_sql doesn't exist, try direct query (will only work with service role)
+            const { error: migError } = await supabaseAdmin.rpc("exec_sql", { sql_query: sql });
             if (migError) {
-              console.log(`Migration note: ${sql} - ${migError.message}`);
+              throw new Error(`Migration failed: ${migError.message}`);
             }
           }
 
+          // Track in overrides so validate knows about the new expected field
+          if (!overrides[change.collection].added.includes(change.fieldSlug)) {
+            overrides[change.collection].added.push(change.fieldSlug);
+          }
+
           results.push({ id: change.id, status: "applied", message: `Added column(s) for ${change.fieldSlug}` });
+
         } else if (change.type === "removed") {
-          // For removed fields, we just update the settings/config - don't drop columns
-          results.push({ id: change.id, status: "applied", message: `Marked ${change.fieldSlug} as removed from expected fields` });
+          // Don't drop columns - just update overrides so validate stops expecting it
+          if (!overrides[change.collection].removed.includes(change.fieldSlug)) {
+            overrides[change.collection].removed.push(change.fieldSlug);
+          }
+
+          results.push({ id: change.id, status: "applied", message: `Removed ${change.fieldSlug} from expected fields` });
+
         } else if (change.type === "renamed") {
-          // For renames, update references in settings
-          results.push({ id: change.id, status: "applied", message: `Updated references from ${change.oldFieldSlug} to ${change.fieldSlug}` });
+          // Rename the database column
+          const oldCol = change.oldFieldSlug.replace(/-/g, "_");
+          const newCol = change.fieldSlug.replace(/-/g, "_");
+
+          const renameSql = `ALTER TABLE ${tableName} RENAME COLUMN ${oldCol} TO ${newCol};`;
+          const { error: renameError } = await supabaseAdmin.rpc("exec_sql", { sql_query: renameSql });
+          
+          if (renameError) {
+            // Column might not exist or already renamed - log but don't fail
+            console.log(`Rename note: ${renameSql} - ${renameError.message}`);
+          }
+
+          // Also try renaming localized variants
+          for (const suffix of ["_en", "_sv"]) {
+            const localizedSql = `ALTER TABLE ${tableName} RENAME COLUMN ${oldCol}${suffix} TO ${newCol}${suffix};`;
+            await supabaseAdmin.rpc("exec_sql", { sql_query: localizedSql }).catch(() => {});
+          }
+
+          // Track in overrides
+          overrides[change.collection].renamed[change.oldFieldSlug] = change.fieldSlug;
+          // Also remove old from expected, add new
+          if (!overrides[change.collection].removed.includes(change.oldFieldSlug)) {
+            overrides[change.collection].removed.push(change.oldFieldSlug);
+          }
+          if (!overrides[change.collection].added.includes(change.fieldSlug)) {
+            overrides[change.collection].added.push(change.fieldSlug);
+          }
+
+          results.push({ id: change.id, status: "applied", message: `Renamed ${change.oldFieldSlug} → ${change.fieldSlug}` });
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
@@ -127,8 +184,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Store the applied changes as a schema_fix_log in settings for audit
-    await supabase.from("settings").upsert({
+    // Persist overrides to settings
+    await supabaseAdmin.from("settings").upsert({
+      key: "schema_expected_overrides",
+      value: JSON.stringify(overrides),
+    }, { onConflict: "key" });
+
+    // Store audit log
+    await supabaseAdmin.from("settings").upsert({
       key: "last_schema_fix",
       value: JSON.stringify({
         applied_at: new Date().toISOString(),
