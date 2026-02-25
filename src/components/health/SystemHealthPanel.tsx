@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RefreshCw, Activity, Clock, AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { RefreshCw, Activity, Clock, AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronUp, Wrench } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { CollectionHealthCard } from "./CollectionHealthCard";
 import { DataCompletenessCard } from "./DataCompletenessCard";
@@ -90,6 +91,7 @@ interface SystemHealthRecord {
 export function SystemHealthPanel() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [isExpanded, setIsExpanded] = useState(true);
 
   // Fetch latest health check from database
@@ -203,6 +205,16 @@ export function SystemHealthPanel() {
                 results={results || null} 
                 checkedAt={latestHealth?.checked_at} 
               />
+              {overallStatus !== "healthy" && overallStatus !== "unknown" && (
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => navigate("/schema-wizard")}
+                >
+                  <Wrench className="mr-2 h-4 w-4" />
+                  Fix Issues
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"

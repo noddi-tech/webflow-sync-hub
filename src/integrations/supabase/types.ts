@@ -49,6 +49,9 @@ export type Database = {
           slug: string
           slug_en: string | null
           slug_sv: string | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -86,6 +89,9 @@ export type Database = {
           slug: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -123,6 +129,9 @@ export type Database = {
           slug?: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -169,6 +178,9 @@ export type Database = {
           slug: string
           slug_en: string | null
           slug_sv: string | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -197,6 +209,9 @@ export type Database = {
           slug: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -225,6 +240,9 @@ export type Database = {
           slug?: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -256,6 +274,9 @@ export type Database = {
           slug: string
           slug_en: string | null
           slug_sv: string | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -284,6 +305,9 @@ export type Database = {
           slug: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -312,6 +336,9 @@ export type Database = {
           slug?: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -860,6 +887,9 @@ export type Database = {
           slug: string
           slug_en: string | null
           slug_sv: string | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
           website_url: string | null
@@ -898,6 +928,9 @@ export type Database = {
           slug: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
           website_url?: string | null
@@ -936,6 +969,9 @@ export type Database = {
           slug?: string
           slug_en?: string | null
           slug_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
           website_url?: string | null
@@ -968,6 +1004,9 @@ export type Database = {
           slug_en: string | null
           slug_sv: string | null
           sort_order: number | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -996,6 +1035,9 @@ export type Database = {
           slug_en?: string | null
           slug_sv?: string | null
           sort_order?: number | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -1024,6 +1066,9 @@ export type Database = {
           slug_en?: string | null
           slug_sv?: string | null
           sort_order?: number | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -1093,6 +1138,9 @@ export type Database = {
           structured_data_json: string | null
           structured_data_json_en: string | null
           structured_data_json_sv: string | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -1123,6 +1171,9 @@ export type Database = {
           structured_data_json?: string | null
           structured_data_json_en?: string | null
           structured_data_json_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -1153,6 +1204,9 @@ export type Database = {
           structured_data_json?: string | null
           structured_data_json_en?: string | null
           structured_data_json_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -1245,6 +1299,9 @@ export type Database = {
           step_3_text: string | null
           step_3_text_en: string | null
           step_3_text_sv: string | null
+          tagline: string | null
+          tagline_en: string | null
+          tagline_sv: string | null
           updated_at: string
           webflow_item_id: string | null
         }
@@ -1305,6 +1362,9 @@ export type Database = {
           step_3_text?: string | null
           step_3_text_en?: string | null
           step_3_text_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }
@@ -1365,6 +1425,9 @@ export type Database = {
           step_3_text?: string | null
           step_3_text_en?: string | null
           step_3_text_sv?: string | null
+          tagline?: string | null
+          tagline_en?: string | null
+          tagline_sv?: string | null
           updated_at?: string
           webflow_item_id?: string | null
         }

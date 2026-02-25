@@ -20,6 +20,7 @@ import NavioDashboard from "./pages/NavioDashboard";
 import WebflowImport from "./pages/WebflowImport";
 import WebflowSync from "./pages/WebflowSync";
 import NotFound from "./pages/NotFound";
+import SchemaWizard from "./pages/SchemaWizard";
 
 const queryClient = new QueryClient();
 
@@ -50,6 +51,7 @@ const App = () => (
             <Route path="/navio-preview" element={<Navigate to="/navio" replace />} />
             <Route path="/sync-history" element={<SyncHistory />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/schema-wizard" element={<SchemaWizard />} />
           </Route>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="*" element={<NotFound />} />
