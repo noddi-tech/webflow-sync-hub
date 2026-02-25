@@ -25,6 +25,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     // Navigation multi-refs (Webflow uses -2 suffix)
     { slug: "districts-2", type: "ItemRefSet", required: false, description: "Child districts for navigation and internal linking." },
     { slug: "areas-2", type: "ItemRefSet", required: false, description: "Child areas for navigational context." },
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1, describing Noddi's offering in this city." },
   ],
   districts: [
     // Core fields
@@ -43,6 +44,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed." },
     // Navigation multi-refs (Webflow uses -2 suffix)
     { slug: "areas-2", type: "ItemRefSet", required: false, description: "Child areas for navigation." },
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1, describing Noddi's offering in this district." },
   ],
   areas: [
     // Core fields
@@ -50,7 +52,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "slug", type: "PlainText", required: true, description: "URL fragment for the area page." },
     // References
     { slug: "district", type: "ItemRef", required: true, description: "Parent district reference for hierarchy." },
-    { slug: "city-2", type: "ItemRef", required: false, description: "Denormalized city reference for simpler querying." },
+    { slug: "city-3", type: "ItemRef", required: false, description: "Denormalized city reference for simpler querying." },
     // Identity
     { slug: "shared-key-area", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // SEO fields
@@ -63,6 +65,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "noindex", type: "Switch", required: false, description: "Signals pages that should NOT be indexed." },
     // Reverse reference
     { slug: "service-locations-reverse", type: "ItemRefSet", required: false, description: "Reverse reference listing Service Location pages in this area." },
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1, describing Noddi's offering in this area." },
   ],
   service_categories: [
     // Core fields
@@ -80,6 +83,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "active", type: "Switch", required: false, description: "Toggle visibility for unpublished categories." },
     // Navigation multi-refs (Webflow uses "associated-services" slug)
     { slug: "associated-services", type: "ItemRefSet", required: false, description: "Associated services in this category (computed from services table)." },
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1 for this service category." },
   ],
   services: [
     // Core fields
@@ -112,8 +116,8 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "sort-order", type: "Number", required: false, description: "Controls display order in listings." },
     { slug: "season-product", type: "Switch", required: false, description: "Indicates seasonal availability." },
     { slug: "service-type-schema", type: "PlainText", required: false, description: "Schema.org service type for structured data." },
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1 for this service." },
     // Note: shared-key, description, active are app-only fields (not in Webflow schema)
-    // active maps to Webflow's isDraft status during sync
   ],
   partners: [
     // Core fields
@@ -146,6 +150,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "seo-title", type: "PlainText", required: false, description: "The <title> tag for partner page." },
     { slug: "seo-meta-description", type: "PlainText", required: false, description: "Meta description for search engines." },
     // Note: intro-content does NOT exist in Webflow Partners schema - removed to align with actual schema
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1 for this partner." },
   ],
   service_locations: [
     // Core fields
@@ -155,7 +160,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "shared-key-service-location-2", type: "PlainText", required: false, description: "Internal stable identifier for sync matching." },
     // References (using -2 suffix per Webflow convention)
     { slug: "service", type: "ItemRef", required: true, description: "The service offered at this location." },
-    { slug: "city-2", type: "ItemRef", required: true, description: "City where the service is offered." },
+    { slug: "city-3", type: "ItemRef", required: true, description: "City where the service is offered." },
     { slug: "district-2", type: "ItemRef", required: false, description: "District (optional granularity)." },
     { slug: "area-2", type: "ItemRef", required: false, description: "Area (finest granularity)." },
     { slug: "partners-2", type: "ItemRefSet", required: false, description: "Partners that deliver this service in this location." },
@@ -169,6 +174,7 @@ const EXPECTED_FIELDS: Record<string, Array<{ slug: string; type: string; requir
     { slug: "sitemap-priority-2", type: "Number", required: false, description: "Sitemap priority value (0.0-1.0)." },
     // Control fields
     { slug: "noindex-2", type: "Switch", required: false, description: "Instructs search engines not to index (for sparse combos)." },
+    { slug: "tagline", type: "PlainText", required: false, description: "Short tagline shown below H1 for this service location page." },
   ],
 };
 

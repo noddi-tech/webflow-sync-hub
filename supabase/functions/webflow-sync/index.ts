@@ -494,7 +494,47 @@ function generateStructuredData(
   return JSON.stringify(structuredData, null, 2);
 }
 
-interface ServiceLocationCombination {
+function generateTagline(data: LocationData): Record<string, string> {
+  const { service, city, district, area } = data;
+  const taglines: Record<string, string> = {};
+  
+  const locales = ['no', 'en', 'sv'] as const;
+  
+  for (const locale of locales) {
+    const serviceName = locale === 'no' 
+      ? service.name 
+      : (service[`name_${locale}`] || service.name);
+    const areaName = area 
+      ? (locale === 'no' ? area.name : (area[`name_${locale}`] || area.name))
+      : null;
+    const districtName = district 
+      ? (locale === 'no' ? district.name : (district[`name_${locale}`] || district.name))
+      : null;
+    const cityName = locale === 'no' 
+      ? city.name 
+      : (city[`name_${locale}`] || city.name);
+    
+    let locationStr: string;
+    if (areaName && districtName) {
+      locationStr = `${areaName}, ${districtName}`;
+    } else if (districtName) {
+      locationStr = `${districtName}, ${cityName}`;
+    } else {
+      locationStr = cityName;
+    }
+    
+    if (locale === 'no') {
+      taglines[locale] = `Noddi leverer ${serviceName.toLowerCase()} i ${locationStr} – sammenlign partnere og bestill enkelt.`;
+    } else if (locale === 'en') {
+      taglines[locale] = `Noddi delivers ${serviceName.toLowerCase()} in ${locationStr} – compare partners and book easily.`;
+    } else {
+      taglines[locale] = `Noddi levererar ${serviceName.toLowerCase()} i ${locationStr} – jämför partners och boka enkelt.`;
+    }
+  }
+  
+  return taglines;
+}
+
   service_id: string;
   city_id: string;
   district_id: string | null;
@@ -687,8 +727,11 @@ async function generateServiceLocations(supabase: any, batchId: string): Promise
       structured_data_json: structuredDataNo,
       structured_data_json_en: structuredDataEn,
       structured_data_json_sv: structuredDataSv,
+      tagline: generateTagline(locationData).no,
+      tagline_en: generateTagline(locationData).en,
+      tagline_sv: generateTagline(locationData).sv,
       sitemap_priority: sitemapPriority,
-      noindex: !hasActivePartners, // Noindex if no active partners
+      noindex: !hasActivePartners,
       updated_at: new Date().toISOString()
     };
     
@@ -903,7 +946,8 @@ async function syncServiceLocationsToWebflow(
       seo_meta_description: "seo-meta-description-2",
       hero_content: "hero-intro-content-2",
       canonical_url: "canonical-path-2",
-      structured_data_json: "json-ld-structured-data-2"
+      structured_data_json: "json-ld-structured-data-2",
+      tagline: "tagline"
     });
     
     // Generate a descriptive name for the item (e.g., "Dekkskift i Oslo")
@@ -932,7 +976,7 @@ async function syncServiceLocationsToWebflow(
       baseFieldData["service"] = sl.services.webflow_item_id;
     }
     if (sl.cities?.webflow_item_id) {
-      baseFieldData["city-2"] = sl.cities.webflow_item_id;
+      baseFieldData["city-3"] = sl.cities.webflow_item_id;
     }
     if (sl.districts?.webflow_item_id) {
       baseFieldData["district-2"] = sl.districts.webflow_item_id;
@@ -1168,6 +1212,7 @@ Deno.serve(async (req) => {
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
             intro: "intro-content",
+            tagline: "tagline",
           };
         } else if (entity === "services") {
           const { data } = await supabase
@@ -1189,6 +1234,7 @@ Deno.serve(async (req) => {
             price_first_column: "price---first-column-description",
             price_second_column: "price---second-column-description",
             price_third_column: "price---third-column-description",
+            tagline: "tagline",
           };
         } else if (entity === "cities") {
           const { data } = await supabase.from("cities").select("*");
@@ -1199,6 +1245,7 @@ Deno.serve(async (req) => {
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
             intro: "intro-content",
+            tagline: "tagline",
           };
         } else if (entity === "districts") {
           const { data } = await supabase
@@ -1211,6 +1258,7 @@ Deno.serve(async (req) => {
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
             intro: "intro-content",
+            tagline: "tagline",
           };
         } else if (entity === "areas") {
           const { data } = await supabase
@@ -1223,6 +1271,7 @@ Deno.serve(async (req) => {
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
             intro: "intro-content",
+            tagline: "tagline",
           };
         } else if (entity === "partners") {
           const { data } = await supabase
@@ -1242,6 +1291,7 @@ Deno.serve(async (req) => {
             seo_title: "seo-title",
             seo_meta_description: "seo-meta-description",
             intro: "intro-content",
+            tagline: "tagline",
           };
         }
 
@@ -1327,7 +1377,7 @@ Deno.serve(async (req) => {
               baseFieldData["district"] = districtWebflowId;
             }
             if (cityWebflowId) {
-              baseFieldData["city-2"] = cityWebflowId;
+              baseFieldData["city-3"] = cityWebflowId;
             }
           } else if (entity === "partners") {
             const areaWebflowIds = ((item as any).partner_areas || [])

@@ -319,6 +319,9 @@ Deno.serve(async (req) => {
               icon_url: getString(noData["icon"]),
               sort_order: getNumber(noData["sort-order"]) ?? 0,
               active: getBoolean(noData.active) ?? true,
+              tagline: getString(noData["tagline"]),
+              tagline_en: getString(enData["tagline"]),
+              tagline_sv: getString(svData["tagline"]),
             };
           } else if (entity === "services") {
             // Look up service_category_id
@@ -392,6 +395,9 @@ Deno.serve(async (req) => {
               active: getBoolean(noData["active"]) ?? true,
               season_product: getBoolean(noData["season-product"]) ?? false,
               service_type_schema: getString(noData["service-type-schema"]),
+              tagline: getString(noData["tagline"]),
+              tagline_en: getString(enData["tagline"]),
+              tagline_sv: getString(svData["tagline"]),
             };
           } else if (entity === "cities") {
             upsertData = {
@@ -415,8 +421,10 @@ Deno.serve(async (req) => {
               intro_en: getString(enData["intro-content"]),
               intro_sv: getString(svData["intro-content"]),
               sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.7,
+              tagline: getString(noData["tagline"]),
+              tagline_en: getString(enData["tagline"]),
+              tagline_sv: getString(svData["tagline"]),
             };
-          } else if (entity === "districts") {
             const cityWebflowId = noData.city;
             let cityId = null;
             if (cityWebflowId) {
@@ -457,6 +465,9 @@ Deno.serve(async (req) => {
               intro_en: getString(enData["intro-content"]),
               intro_sv: getString(svData["intro-content"]),
               sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.6,
+              tagline: getString(noData["tagline"]),
+              tagline_en: getString(enData["tagline"]),
+              tagline_sv: getString(svData["tagline"]),
             };
           } else if (entity === "areas") {
             const districtWebflowId = noData.district;
@@ -473,8 +484,8 @@ Deno.serve(async (req) => {
               cityId = district?.city_id;
             }
 
-            // Also check city-2 reference if present
-            const cityWebflowId = noData["city-2"];
+            // Also check city-3 reference if present
+            const cityWebflowId = noData["city-3"];
             if (cityWebflowId && !cityId) {
               const { data: city } = await supabase
                 .from("cities")
@@ -514,6 +525,9 @@ Deno.serve(async (req) => {
               intro_en: getString(enData["intro-content"]),
               intro_sv: getString(svData["intro-content"]),
               sitemap_priority: getNumber(noData["sitemap-priority"]) ?? 0.5,
+              tagline: getString(noData["tagline"]),
+              tagline_en: getString(enData["tagline"]),
+              tagline_sv: getString(svData["tagline"]),
             };
           } else if (entity === "partners") {
             upsertData = {
@@ -553,6 +567,9 @@ Deno.serve(async (req) => {
               intro_sv: getString(svData["intro-content"]),
               rating: null,
               active: getBoolean(noData["partner-active"]) ?? true,
+              tagline: getString(noData["tagline"]),
+              tagline_en: getString(enData["tagline"]),
+              tagline_sv: getString(svData["tagline"]),
             };
           } else {
             continue;
