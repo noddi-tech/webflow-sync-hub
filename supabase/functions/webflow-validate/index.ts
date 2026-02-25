@@ -679,12 +679,40 @@ serve(async (req) => {
       if (s.value) settingsMap[s.key] = s.value;
     });
 
+    // Load dynamic overrides from settings
+    let overrides: Record<string, { added: string[]; removed: string[]; renamed: Record<string, string> }> = {};
+    try {
+      const overrideValue = settingsMap["schema_expected_overrides"];
+      if (overrideValue) {
+        overrides = JSON.parse(overrideValue);
+      }
+    } catch {
+      // Invalid JSON, ignore overrides
+    }
+
     const results: Record<string, CollectionValidationResult> = {};
 
     // Validate each collection
     for (const [collectionKey, settingsKey] of Object.entries(COLLECTION_SETTINGS_MAP)) {
       const collectionId = settingsMap[settingsKey];
-      const expectedFields = EXPECTED_FIELDS[collectionKey] || [];
+      let expectedFields = [...(EXPECTED_FIELDS[collectionKey] || [])];
+
+      // Apply overrides: remove fields marked as removed, add fields marked as added
+      const collOverrides = overrides[collectionKey];
+      if (collOverrides) {
+        // Remove fields that were marked as removed
+        if (collOverrides.removed?.length) {
+          expectedFields = expectedFields.filter(f => !collOverrides.removed.includes(f.slug));
+        }
+        // Add fields that were added via schema-fix (not already in list)
+        if (collOverrides.added?.length) {
+          for (const slug of collOverrides.added) {
+            if (!expectedFields.find(f => f.slug === slug)) {
+              expectedFields.push({ slug, type: "PlainText", required: false, description: "Dynamically added field." });
+            }
+          }
+        }
+      }
 
       if (!collectionId) {
         results[collectionKey] = {

@@ -53,6 +53,7 @@ const navigation: NavItem[] = [
       items: [
         { name: "Import", href: "/webflow/import", icon: Download },
         { name: "Sync", href: "/webflow/sync", icon: RefreshCw },
+        { name: "Schema Sync", href: "/schema-wizard", icon: RefreshCw },
       ],
     },
   },
